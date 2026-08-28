@@ -85,6 +85,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
@@ -115,7 +116,6 @@ from assessment_routes.v4.assessment_routes import ASSESSMENT_RETRY_AFTER_S
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
 from config import settings
-from database.dependencies import engine as app_engine
 from database.models import (
     Assessment,
     AssessmentResult,
@@ -3785,23 +3785,37 @@ def _ngram_strings(resp):
 
 @contextmanager
 def _captured_sql():
-    """Every statement the app's engine executes inside the block, with its parameters.
+    """Every statement executed inside the block, with its parameters.
 
-    Attached to the *app's* engine (``database.dependencies.engine``), not the fixtures'
-    own, so it sees exactly what a request issues. The #648 two-step is a performance
-    contract that a join would satisfy behaviourally, so it can only be pinned by looking
-    at the statements themselves.
+    The #648 two-step is a *performance* contract — a single join returns the same rows —
+    so it can only be pinned by looking at the statements themselves rather than at a
+    response body.
+
+    Registered on the ``Engine`` **class**, not on ``database.dependencies.engine``.
+    Binding to that instance at import time is what a reader expects and it is wrong here:
+    ``test_db_engine`` reloads ``database.dependencies`` to exercise both pool branches,
+    which rebinds the module's ``engine``, so a captured reference can go stale depending
+    on collection order — silently, since a stale engine simply records nothing and the
+    assertions then read as "the two-step is broken". The class-level hook is SQLAlchemy's
+    documented global listener and sees whichever engine actually serves the request.
+
+    Callers assert on statements matching a table name, so the fixtures' own sync engine
+    executing inside the block is harmless; :func:`_touching` filters it out.
     """
     captured = []
 
     def _record(conn, cursor, statement, parameters, context, executemany):
         captured.append((statement, parameters))
 
-    event.listen(app_engine.sync_engine, "before_cursor_execute", _record)
+    event.listen(Engine, "before_cursor_execute", _record)
     try:
         yield captured
     finally:
-        event.remove(app_engine.sync_engine, "before_cursor_execute", _record)
+        event.remove(Engine, "before_cursor_execute", _record)
+    # A capture that recorded nothing at all means the listener never fired, which is a
+    # broken test rather than a passing endpoint — every request in this module issues at
+    # least the auth lookup. Checked here so the failure names the real cause.
+    assert captured, "no SQL captured — the listener did not fire"
 
 
 def _touching(captured, table):

@@ -876,6 +876,13 @@ class NgramResultOut(V4BaseModel):
     a client discovers only by getting wrong answers, since nothing errors when they are
     confused. v3 called this field ``vrefs``; v4 renames it because there are no clients
     to inconvenience and the collision is silent.
+
+    ``ngram`` and ``ngram_size`` are required here even though both columns are nullable,
+    which is a deliberate match to v3's own ``NgramResult`` rather than an oversight. The
+    table's only writer is the runner-facing ``push_ngrams``, whose ``NgramItem`` requires
+    both, so a null can only come from a direct database write — and there is no honest
+    default to coerce a missing n-gram to, the way ``flag`` and ``hide`` coerce to false
+    on ``/results``. Such a row is corrupt data and surfaces as a 500, on both surfaces.
     """
 
     id: int = Field(
