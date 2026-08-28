@@ -1639,21 +1639,37 @@ async def _verse_texts(
     ``ix_verse_text_verse_reference_revision``.
 
     A revision is not guaranteed to hold every vref, so a missing entry is normal and the
-    caller reports ``null``. Where the same ``(revision, vref)`` has more than one row the
-    last wins, matching v3 — ``verse_text`` has no uniqueness constraint on the pair, and
-    an arbitrary pick among duplicate texts is not a decision worth a subquery here.
+    caller reports ``null``.
+
+    ``verse_text`` has no uniqueness constraint on ``(revision_id, verse_reference)``, so
+    duplicates are possible and the **lowest id wins, deterministically**. v3 builds the
+    same mapping from an unordered result and lets the last row seen overwrite, which is
+    not a rule at all: without an ``ORDER BY`` the row order is undefined, so the same
+    request can return different text on consecutive calls. That would quietly undo this
+    endpoint's stated contract that repeating a request repeats the answer — the reason
+    its ranking breaks ties on ``vref``. First-write-wins is also the convention the tree
+    already applies to this hazard (``_deduplicated_results``, ``train_routes``, and
+    #721's own ``ON CONFLICT DO NOTHING``). The ordering sorts at most one page's verses,
+    so it is free.
     """
     if revision_id is None or not vrefs:
         return {}
     rows = (
         await db.execute(
-            select(VerseText.verse_reference, VerseText.text).where(
+            select(VerseText.id, VerseText.verse_reference, VerseText.text)
+            .where(
                 VerseText.revision_id == revision_id,
                 VerseText.verse_reference.in_(vrefs),
             )
+            .order_by(VerseText.id)
         )
     ).all()
-    return {row.verse_reference: row.text for row in rows}
+    texts: dict[str, str | None] = {}
+    for row in rows:
+        # setdefault rather than assignment: ordered by id ascending, so the first row
+        # seen for a vref is the lowest-id one and later duplicates do not displace it.
+        texts.setdefault(row.verse_reference, row.text)
+    return texts
 
 
 async def get_similar_verses(
@@ -1673,8 +1689,14 @@ async def get_similar_verses(
     its vector is the thing everything else is ranked against. No vector for it means
     :class:`SimilarityVrefNotFound` rather than an empty ranking, because an empty list
     would be indistinguishable from "this assessment vectorized only one verse" and would
-    silently swallow a typo. ``limit(1)`` guards the pair having no uniqueness constraint,
-    as v3 does.
+    silently swallow a typo.
+
+    ``(assessment_id, vref)`` has no uniqueness constraint, so this takes the **lowest
+    id** rather than v3's bare ``limit(1)``. v3's form picks an undefined row among
+    duplicates, and this is the worst place in the read for that: the query point decides
+    *every* similarity in the response, so an arbitrary pick reorders the whole ranking
+    rather than changing one field. Ordering costs nothing — the lookup is already a
+    handful of rows behind an index.
 
     **3. Rank, exactly, within the assessment.** ``max_inner_product`` is pgvector's
     ``<#>``, which returns the *negated* inner product so that ascending order is
@@ -1689,14 +1711,17 @@ async def get_similar_verses(
     request can answer differently twice and the ``limit`` boundary can include either.
     It costs a second key on a top-N sort the scan is already doing.
 
-    **Deliberately not guarded: duplicate vectors for one ``(assessment, vref)``.** There
-    is no uniqueness constraint on the pair, so #721's retry-duplication class could in
-    principle produce two, which would surface as the same vref twice in one ranking. The
-    ``DISTINCT ON`` that :func:`_deduplicated_results` uses on the results read is free
-    there because it rides an existing index; here it would force the planner to
-    materialize and sort all of the assessment's vectors instead of taking a top-N over
-    the scan, turning a bounded cost into a full one for a defect nothing has observed on
-    this table. Recorded rather than silently omitted.
+    **Deliberately not guarded: a duplicate vector appearing twice in the ranked list.**
+    Step 2 pins which duplicate is the *query point*, but the ranked set is not
+    deduplicated, so #721's retry-duplication class could still surface one vref twice
+    among the hits. The ``DISTINCT ON`` that :func:`_deduplicated_results` uses on the
+    results read is free there because it rides an existing index; here it would force
+    the planner to materialize and sort all of the assessment's vectors instead of taking
+    a top-N over the scan, turning a bounded cost into a full one for a defect nothing has
+    observed on this table. The two halves are worth separating: making the query point
+    deterministic is free and decides every number in the response, while deduplicating
+    the results is not free and costs one duplicated row. Recorded rather than silently
+    omitted.
 
     Returns plain dicts for the router to shape — the row is a computed pairing, not an
     ORM row, so there is nothing to carry through.
@@ -1711,6 +1736,7 @@ async def get_similar_verses(
             TfidfPcaVector.assessment_id == assessment_id,
             TfidfPcaVector.vref == vref,
         )
+        .order_by(TfidfPcaVector.id)
         .limit(1)
     )
     if query_vector is None:

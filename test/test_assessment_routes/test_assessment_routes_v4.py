@@ -4334,6 +4334,28 @@ def _make_vector(db_session, assessment_id, vref, head):
     return row.id
 
 
+def _make_duplicate_verse_text(db_session, revision_id, vref, text):
+    """A second ``verse_text`` row for a ``(revision, vref)`` that already has one.
+
+    ``_make_verse_texts`` is keyed by vref and so cannot express this. The pair carries no
+    uniqueness constraint, which is the whole point of the tests that use it.
+    """
+    book, chapter, verse = _vref_parts(vref)
+    row = VerseText(
+        revision_id=revision_id,
+        verse_reference=vref,
+        text=text,
+        book=book,
+        chapter=chapter,
+        verse=verse,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    verse_range_service.clear_cache()
+    return row.id
+
+
 def _similar(client, token, assessment_id, **params):
     return client.get(
         f"{PREFIX}/assessments/{assessment_id}/similar-verses",
@@ -4656,6 +4678,34 @@ class TestSimilarVersesRanking:
             "GEN 1:9"
         ]
 
+    def test_a_duplicated_query_vector_resolves_to_the_lowest_id_every_time(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``(assessment_id, vref)`` carries no uniqueness constraint, and the query point
+        decides *every* similarity in the response — so an undefined pick among duplicates
+        would reorder the whole ranking, not change one field. v3's bare ``limit(1)`` does
+        exactly that; this pins the lowest-id row instead.
+
+        The two candidate vectors point opposite ways, so picking the wrong one inverts the
+        ranking rather than perturbing it.
+
+        Note this test **passes against the unordered form too**, on this data: with a
+        small freshly-written table Postgres happens to return the lowest-id row first. It
+        is kept precisely because of that — the behaviour is correct by accident today and
+        would flip silently under a different physical row order, which is the hardest kind
+        of bug to attribute later. The sibling test on ``verse_text`` does fail without its
+        ordering, so that one caught a live defect rather than pinning a lucky one.
+        """
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4}
+        )
+        # A second, later vector for the query vref itself, pointing the other way.
+        _make_vector(db_session, assessment_id, "GEN 1:1", -1)
+        for _ in range(3):
+            resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+            assert _hit_vrefs(resp) == ["GEN 1:2", "GEN 1:3"]
+            assert [hit["similarity"] for hit in _hits(resp)] == [3.0, -4.0]
+
     def test_the_query_point_is_this_assessments_vector_not_another_ones(
         self, client, regular_token1, db_session, group1_version
     ):
@@ -4749,6 +4799,26 @@ class TestSimilarVersesText:
         (hit,) = _hits(resp)
         assert hit["text"] == "revision text"
         assert hit["reference_text"] is None
+
+    def test_duplicate_verse_text_rows_resolve_to_the_lowest_id_every_time(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``verse_text`` has no uniqueness constraint on ``(revision_id, vref)``, and v3
+        builds its mapping from an unordered result — so which text wins is undefined and
+        can differ between two identical requests. Ordering by id makes it first-write-wins,
+        the convention the tree already applies to this hazard."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        )
+        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "first row"})
+        _make_duplicate_verse_text(
+            db_session, self.revision_id, "GEN 1:2", "second row"
+        )
+        for _ in range(3):
+            (hit,) = _hits(
+                _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+            )
+            assert hit["text"] == "first row"
 
     def test_reference_id_passed_as_a_query_parameter_is_ignored_not_honoured(
         self, client, regular_token1, db_session, group1_version
