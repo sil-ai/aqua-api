@@ -166,6 +166,12 @@ from pydantic import Field, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
 from api_v4.schemas.base import V4BaseModel
+
+# A book abbreviation being three characters is a fact about the *Bible* domain, not
+# about assessments, so it is defined once in ``api_v4.schemas.bible`` and imported
+# here rather than the other way round — the verses read (#892) scopes by book too.
+# It stays in this module's ``__all__``, so existing importers are unaffected.
+from api_v4.schemas.bible import BOOK_ABBREVIATION_LENGTH
 from schemas.assessment import AssessmentType
 
 #: Generous bound for a verse reference. The longest entry in ``fixtures/vref.txt``
@@ -589,13 +595,6 @@ class AssessmentJob(AssessmentOut, JobEnvelope):
     ``result`` is inherited untyped and is null in every state today, which the envelope
     explicitly permits for a ``SUCCEEDED`` job — see the module docstring.
     """
-
-
-#: Length of a USFM book abbreviation. Every entry in ``fixtures/book_reference.txt`` is
-#: exactly three characters (``GEN``, ``1SA``, ``3JN``), which is what makes an exact
-#: length the right validation: v3 checks only ``len(book) > 3``, so it accepts ``"G"``
-#: and turns it into an empty result set.
-BOOK_ABBREVIATION_LENGTH = 3
 
 
 class ResultAggregate(str, Enum):
