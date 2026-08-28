@@ -179,6 +179,31 @@ errors when a client confuses them; a client that met ``vrefs`` on ``/results`` 
 would reasonably assume they agree. The rename costs nothing because there are no v4
 clients, and it is a response field name only — the column stays
 ``ngram_vref_table.vref``.
+
+
+The similarity read: a ranking, which is not a list
+-----------------------------------------------------
+
+``GET /v4/assessments/{id}/similar-verses`` (:class:`SimilarVersesOut`) is the one read
+in this family that is not a listing at all, and every convention it breaks follows from
+that. It takes a required ``vref``, loads that verse's vector for this assessment, and
+ranks every *other* verse in the same assessment against it. The rows are computed
+pairings rather than stored rows, so there is no population to count and nothing to page
+through: no :class:`~api_v4.pagination.V4Page`, no ``total``, no ``offset``. The envelope
+names the query point and the ranking instead.
+
+**The path says what the endpoint does, not how.** ``/similar-verses`` rather than
+``/tfidf`` — the operation is "which verses are most like this one", and naming a
+resource after the algorithm that computes it describes the implementation. The type gate
+keeps it unambiguous (the parent is a ``tfidf`` assessment or the read 404s), and the
+same shape would serve any other type that ever offers similarity. A deliberate departure
+from guide §15.3's planned ``/tfidf``.
+
+**``reference_id`` is not a parameter.** v3 lets a caller name any revision whose text to
+attach, which makes the response depend on a display preference rather than on the
+assessment. v4 uses the assessment's own reference where it has one and returns
+``reference_text: null`` where it does not. A caller who wants arbitrary verse text
+already has the verses read (#892).
 """
 
 from datetime import datetime
@@ -911,6 +936,93 @@ class NgramResultOut(V4BaseModel):
     )
 
 
+class SimilarVerseOut(V4BaseModel):
+    """One neighbour in ``GET /v4/assessments/{id}/similar-verses``.
+
+    Not a stored resource. A row here is a *pairing* — this verse, ranked against the
+    verse the caller asked about — so it has no id and nothing addresses it. That is why
+    it carries neither the ``tfidf_pca_vector`` row's ``id`` nor ``assessment_id``, both
+    of which v3 returns: the id identifies a 300-dimensional vector that is not in the
+    response, and the assessment is already named by the path and echoed by the envelope.
+    ``similarity`` is a property of the pair rather than of the row, so the row is not a
+    stable entity an id could name — ask about a different ``vref`` and every number
+    changes.
+    """
+
+    vref: str = Field(
+        description=(
+            "The neighbouring verse, as a canonical vref. Never the queried verse "
+            "itself, which is excluded from its own ranking."
+        ),
+    )
+    similarity: float = Field(
+        description=(
+            "How close this verse is to the queried one — the inner product of their "
+            "300-dimensional PCA-reduced TF-IDF vectors, higher being more similar. "
+            "**A ranking score, not a calibrated one**: it has no fixed range, and "
+            "values are comparable within one response but not across assessments, "
+            "which are vectorized independently. Do not threshold on it."
+        ),
+    )
+    text: str | None = Field(
+        default=None,
+        description=(
+            "The assessed revision's text for this verse, so a ranked list can be "
+            "rendered without a request per hit. Null only if the revision has no row "
+            "for the verse."
+        ),
+    )
+    reference_text: str | None = Field(
+        default=None,
+        description=(
+            "The same verse in the assessment's own reference revision, for "
+            "side-by-side display. Null for every hit when the assessment has no "
+            "reference, which is the normal case for this type — not an error, and not "
+            "something a caller can override: v3's `reference_id` parameter is gone."
+        ),
+    )
+
+
+class SimilarVersesOut(V4BaseModel):
+    """The body of ``GET /v4/assessments/{id}/similar-verses``: a ranking, not a page.
+
+    Deliberately **not** :class:`~api_v4.pagination.V4Page`, and the difference is the
+    point. Every other read in this family lists rows that exist in a table, so ``total``
+    answers "how many are there" and ``offset`` walks them. This one computes a ranking
+    against a query point: the rows do not pre-exist, there is no population to count,
+    and a ``total`` equal to ``limit`` would be a number that is present, technically
+    defensible and misleading. There is **no ``offset``** either — v3 has never had one
+    (its client sends a ``page`` parameter that ``/tfidf_result`` does not declare, so
+    FastAPI has always discarded it), and paging a similarity ranking is not something
+    anyone has asked for.
+
+    The envelope names the query point instead, because a response that omitted it would
+    be uninterpretable on its own: ``similarity`` means nothing without knowing what it is
+    similar *to*, and a client holding several of these needs to tell them apart.
+    """
+
+    query_vref: str = Field(
+        description=(
+            "The verse the ranking was computed against, echoed from the request. Every "
+            "`similarity` in `items` is relative to this verse."
+        ),
+    )
+    limit: int = Field(
+        ge=1,
+        description=(
+            "The maximum number of neighbours requested, echoed from the request. "
+            "`items` may be shorter — an assessment with fewer vectors than this has "
+            "fewer neighbours to offer."
+        ),
+    )
+    items: list[SimilarVerseOut] = Field(
+        description=(
+            "The neighbours, most similar first. Ties break on `vref`, so the same "
+            "request twice returns the same ordering."
+        ),
+    )
+
+
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
@@ -931,6 +1043,8 @@ __all__ = [
     "ResultScope",
     "SemanticSimilarityOptions",
     "SentenceLengthOptions",
+    "SimilarVerseOut",
+    "SimilarVersesOut",
     "TextLengthsOptions",
     "TfidfOptions",
     "WordAlignmentOptions",

@@ -73,6 +73,15 @@ What each group of tests pins down:
   boundary, and that page 2 fetches occurrences for page 2 only (the #648 two-step).
 * ``TestNgramsSchemaContract`` — that the verse-keyed parameters never appear on this
   read, and that ``vrefs`` is not a field of the row.
+* ``TestSimilarVersesAuthorization`` — the same family 404, on a read whose *second*
+  404 (an unknown vref) has to stay distinguishable from it.
+* ``TestSimilarVersesRanking`` — that it really is a nearest-neighbour search: descending
+  similarity, the query verse excluded from its own ranking, ties broken deterministically.
+* ``TestSimilarVersesText`` — the fields ``/results`` dropped and this read keeps, and
+  the reference half degrading to null rather than erroring.
+* ``TestSimilarVersesContract`` — the shape decisions that are easiest to undo by
+  accident: no ``total``, no ``offset``, a required ``vref``, a bounded ``limit``, and
+  ``reference_id`` ignored rather than honoured.
 """
 
 import itertools
@@ -109,10 +118,16 @@ from api_v4.schemas.assessment import (
     NgramResultOut,
     ResultAggregate,
     ResultScope,
+    SimilarVerseOut,
+    SimilarVersesOut,
 )
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
 from assessment_routes.v4 import assessment_service
-from assessment_routes.v4.assessment_routes import ASSESSMENT_RETRY_AFTER_S
+from assessment_routes.v4.assessment_routes import (
+    ASSESSMENT_RETRY_AFTER_S,
+    SIMILAR_VERSES_DEFAULT_LIMIT,
+    SIMILAR_VERSES_MAX_LIMIT,
+)
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
 from config import settings
@@ -125,6 +140,7 @@ from database.models import (
     Group,
     NgramsTable,
     NgramVrefTable,
+    TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -4285,3 +4301,634 @@ class TestNgramsSchemaContract:
         assert set(NGRAMS_SERVED_TYPES) | set(NGRAMS_UNSERVED_TYPES) == {
             t.value for t in AssessmentType
         }
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/similar-verses
+# ---------------------------------------------------------------------------
+
+SIMILARITY_SERVED_TYPES = ("tfidf",)
+SIMILARITY_UNSERVED_TYPES = tuple(
+    t.value for t in AssessmentType if t.value not in SIMILARITY_SERVED_TYPES
+)
+
+#: ``tfidf_pca_vector.vector`` is a fixed 300-dimensional column.
+VECTOR_DIMENSIONS = 300
+
+
+def _vector(head):
+    """A 300-dimensional vector that is ``head`` on the first axis and zero elsewhere.
+
+    Chosen so the inner product against ``_vector(1)`` is exactly ``head``: the expected
+    ranking is then readable straight off the fixture, and the assertions do not depend on
+    floating-point behaviour or on how pgvector rounds.
+    """
+    return [float(head)] + [0.0] * (VECTOR_DIMENSIONS - 1)
+
+
+def _make_vector(db_session, assessment_id, vref, head):
+    row = TfidfPcaVector(assessment_id=assessment_id, vref=vref, vector=_vector(head))
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    return row.id
+
+
+def _similar(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/similar-verses",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _hits(resp):
+    assert resp.status_code == 200, resp.text
+    return resp.json()["items"]
+
+
+def _hit_vrefs(resp):
+    return [hit["vref"] for hit in _hits(resp)]
+
+
+class TestSimilarVersesAuthorization:
+    """The family's one 404, plus the second 404 that must stay distinguishable from it.
+
+    The endpoint has two ways to answer "not found" and they mean opposite things to a
+    caller: ``ASSESSMENT_NOT_FOUND`` is a permission or existence boundary, while
+    ``VREF_NOT_FOUND`` is reachable data that does not contain the verse asked for. The
+    first must stay uniform with the rest of the family; the second must never be reachable
+    for an assessment the caller cannot see, or it becomes an existence oracle.
+    """
+
+    def _vectorized(self, db_session, version_id, *, type_="tfidf", **kwargs):
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_=type_, **kwargs
+        )
+        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
+        _make_vector(db_session, assessment_id, "GEN 1:2", 2)
+        return revision_id, assessment_id
+
+    def test_the_tfidf_type_returns_its_neighbours(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._vectorized(db_session, group1_version)
+        assert _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        ) == ["GEN 1:2"]
+
+    @pytest.mark.parametrize("type_", SIMILARITY_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """Vectors are inserted anyway, so this pins a refusal by *type* rather than a read
+        that happens to find nothing — and it must be the assessment code, not the vref
+        one, or the type gate would leak that the row exists."""
+        _, assessment_id = self._vectorized(db_session, group1_version, type_=type_)
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _similar(client, regular_token1, 10**9, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._vectorized(db_session, group2_version)
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unreachable_assessment_reports_the_assessment_code_not_the_vref_one(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        """The oracle this test exists to close: asking another group's assessment about a
+        vref it *does* hold must answer exactly as if the assessment did not exist. If the
+        vref check ran first, the two codes would tell a caller which vrefs another group's
+        assessment covers."""
+        _, assessment_id = self._vectorized(db_session, group2_version)
+        present = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        absent = _similar(client, regular_token1, assessment_id, vref="REV 22:21")
+        assert (present.status_code, _error_code(present)) == (
+            404,
+            "ASSESSMENT_NOT_FOUND",
+        )
+        assert (absent.status_code, _error_code(absent)) == (
+            404,
+            "ASSESSMENT_NOT_FOUND",
+        )
+
+    def test_a_cross_group_reference_hides_the_ranking_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
+        )
+        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._vectorized(
+            db_session, group1_version, is_training=True
+        )
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._vectorized(db_session, group1_version, deleted=True)
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 404, resp.text
+
+    def test_a_soft_deleted_revision_hides_its_ranking(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._vectorized(db_session, version_id)
+        assert (
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1").status_code
+            == 200
+        )
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert (
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1").status_code
+            == 404
+        )
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        _, unserved = self._vectorized(db_session, group1_version, type_="ngrams")
+        _, theirs = self._vectorized(db_session, group2_version)
+        _, training = self._vectorized(db_session, group1_version, is_training=True)
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _similar(client, regular_token1, 10**9, vref="GEN 1:1"),
+                _similar(client, regular_token1, unserved, vref="GEN 1:1"),
+                _similar(client, regular_token1, theirs, vref="GEN 1:1"),
+                _similar(client, regular_token1, training, vref="GEN 1:1"),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_a_vref_with_no_vector_is_its_own_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Clean, and distinguishable from an unreachable assessment: by the time this can
+        be raised the caller has already established they may read the assessment, so
+        naming the missing verse discloses nothing new — and collapsing the two would leave
+        them unable to tell a typo from a permission boundary."""
+        _, assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(client, regular_token1, assessment_id, vref="REV 22:21")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "VREF_NOT_FOUND"
+        assert resp.json()["error"]["details"] == {
+            "assessment_id": assessment_id,
+            "vref": "REV 22:21",
+        }
+
+    def test_a_vref_that_is_not_a_verse_at_all_is_the_same_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Garbage and a real-but-unvectorized verse are the same answer. There is nothing
+        to gain from a separate "malformed vref" code: the read never parses the string, it
+        looks it up."""
+        _, assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(client, regular_token1, assessment_id, vref="not a vref")
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "VREF_NOT_FOUND"
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._vectorized(db_session, version_id)
+        assert (
+            _similar(client, regular_token2, assessment_id, vref="GEN 1:1").status_code
+            == 200
+        )
+
+
+class TestSimilarVersesRanking:
+    """That this is a nearest-neighbour search, and that the search is the exact one."""
+
+    def _vectorized(self, db_session, group1_version, vectors, *, reference=True):
+        """A tfidf assessment holding ``{vref: head}``.
+
+        Every fixture vector is ``head`` on the first axis and zero elsewhere, so its inner
+        product against ``GEN 1:1``'s ``_vector(1)`` is exactly ``head`` — the expected
+        ranking is the fixture read back.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session,
+            revision_id,
+            reference_id if reference else None,
+            type_="tfidf",
+        )
+        for vref, head in vectors.items():
+            _make_vector(db_session, assessment_id, vref, head)
+        self.revision_id = revision_id
+        self.reference_id = reference_id
+        return assessment_id
+
+    def test_neighbours_come_back_most_similar_first(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(
+            db_session,
+            group1_version,
+            {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2, "GEN 1:4": 9},
+        )
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert _hit_vrefs(resp) == ["GEN 1:4", "GEN 1:2", "GEN 1:3"]
+        similarities = [hit["similarity"] for hit in _hits(resp)]
+        assert similarities == sorted(similarities, reverse=True)
+        assert similarities == [9.0, 5.0, 2.0]
+
+    def test_the_query_vref_is_excluded_from_its_own_results(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """It would otherwise be the first hit every time, at maximum similarity — a row
+        that tells the caller only what they already typed."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        )
+        assert _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        ) == ["GEN 1:2"]
+
+    def test_a_negative_similarity_still_ranks_below_a_positive_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The sign flip around pgvector's ``<#>`` operator, which returns the *negated*
+        inner product: get it wrong and the ranking silently inverts, which no ordering
+        assertion over uniformly positive fixtures would catch."""
+        assessment_id = self._vectorized(
+            db_session,
+            group1_version,
+            {"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4},
+        )
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert _hit_vrefs(resp) == ["GEN 1:2", "GEN 1:3"]
+        assert [hit["similarity"] for hit in _hits(resp)] == [3.0, -4.0]
+
+    def test_ties_break_on_vref_so_the_same_request_answers_the_same_way(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3 has no tiebreak, so equally similar verses come back in whatever order the
+        scan produced — and which of them survives ``limit`` is then arbitrary too."""
+        assessment_id = self._vectorized(
+            db_session,
+            group1_version,
+            {"GEN 1:1": 1, "GEN 1:5": 4, "GEN 1:3": 4, "GEN 1:4": 4},
+        )
+        first = _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        )
+        second = _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        )
+        assert first == ["GEN 1:3", "GEN 1:4", "GEN 1:5"]
+        assert first == second
+
+    def test_limit_is_honoured(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(
+            db_session,
+            group1_version,
+            {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2, "GEN 1:4": 9},
+        )
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1", limit=2)
+        assert _hit_vrefs(resp) == ["GEN 1:4", "GEN 1:2"]
+        assert resp.json()["limit"] == 2
+
+    def test_fewer_neighbours_than_limit_is_a_short_list_not_padding(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        )
+        body = _similar(client, regular_token1, assessment_id, vref="GEN 1:1").json()
+        assert len(body["items"]) == 1
+        assert body["limit"] == SIMILAR_VERSES_DEFAULT_LIMIT
+
+    def test_an_assessment_whose_only_vector_is_the_query_returns_an_empty_ranking(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Not a 404: the verse *was* found, it simply has no neighbours. The vref 404 is
+        about the query point, never about the size of the answer."""
+        assessment_id = self._vectorized(db_session, group1_version, {"GEN 1:1": 1})
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+
+    def test_vectors_of_another_assessment_do_not_leak_in(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``tfidf_pca_vector`` holds 171 M rows across every assessment ever run, so the
+        ``assessment_id`` clause is the whole of the scoping — and the one thing an ANN
+        index could not have enforced."""
+        mine = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 2}
+        )
+        theirs = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:9": 99}
+        )
+        assert _hit_vrefs(_similar(client, regular_token1, mine, vref="GEN 1:1")) == [
+            "GEN 1:2"
+        ]
+        assert _hit_vrefs(_similar(client, regular_token1, theirs, vref="GEN 1:1")) == [
+            "GEN 1:9"
+        ]
+
+    def test_the_query_point_is_this_assessments_vector_not_another_ones(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Both halves of the scoping: the ranked set *and* the query vector are looked up
+        within one assessment. A query vector taken from the wrong assessment would reorder
+        the results without erroring."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": -1, "GEN 1:2": 3, "GEN 1:3": -5}
+        )
+        # Same vref, a different assessment, a very different vector.
+        other = self._vectorized(db_session, group1_version, {"GEN 1:1": 1})
+        assert other != assessment_id
+        # Against this assessment's own GEN 1:1 (head -1), GEN 1:3 (head -5) scores +5 and
+        # GEN 1:2 (head 3) scores -3. Using the other assessment's vector would flip them.
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert _hit_vrefs(resp) == ["GEN 1:3", "GEN 1:2"]
+        assert [hit["similarity"] for hit in _hits(resp)] == [5.0, -3.0]
+
+
+class TestSimilarVersesText:
+    """The text fields ``/results`` dropped and this read keeps, and the reference half."""
+
+    def _vectorized(self, db_session, group1_version, vectors, *, reference=True):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session,
+            revision_id,
+            reference_id if reference else None,
+            type_="tfidf",
+        )
+        for vref, head in vectors.items():
+            _make_vector(db_session, assessment_id, vref, head)
+        self.revision_id = revision_id
+        self.reference_id = reference_id
+        return assessment_id
+
+    def test_the_revisions_text_is_populated_for_every_hit(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The precedent from ``/results`` deliberately does not transfer. There the text
+        fields were dropped because v3 ignores the parameter that would fill them and they
+        were always null; here they are the point — a ranked list of bare references cannot
+        be rendered without a request per hit."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2}
+        )
+        _make_verse_texts(
+            db_session,
+            self.revision_id,
+            {"GEN 1:2": "and the earth", "GEN 1:3": "and God said"},
+        )
+        hits = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
+        assert [(hit["vref"], hit["text"]) for hit in hits] == [
+            ("GEN 1:2", "and the earth"),
+            ("GEN 1:3", "and God said"),
+        ]
+
+    def test_a_hit_the_revision_has_no_row_for_is_null_text_not_an_error(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        )
+        (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
+        assert hit["text"] is None
+
+    def test_an_assessment_with_a_reference_returns_the_references_text(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        )
+        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "revision text"})
+        _make_verse_texts(db_session, self.reference_id, {"GEN 1:2": "reference text"})
+        (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
+        assert hit["text"] == "revision text"
+        assert hit["reference_text"] == "reference text"
+
+    def test_an_assessment_without_a_reference_returns_null_rather_than_erroring(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The normal case for this type: ``TfidfOptions`` declares no ``reference_id``, so
+        no v4-created tfidf assessment has one. A v3-created row can, which is why both
+        branches are covered rather than only this one."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}, reference=False
+        )
+        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "revision text"})
+        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 200, resp.text
+        (hit,) = _hits(resp)
+        assert hit["text"] == "revision text"
+        assert hit["reference_text"] is None
+
+    def test_reference_id_passed_as_a_query_parameter_is_ignored_not_honoured(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's ``reference_id`` is gone, and v4's convention for an unrecognised parameter
+        is to ignore it — the same rule the plaintext export applies to ``limit``. Pinned
+        because "ignored" and "honoured" are indistinguishable unless the named revision
+        holds text the assessment's own reference does not."""
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}, reference=False
+        )
+        other_revision = _make_revision(db_session, group1_version)
+        _make_verse_texts(db_session, other_revision, {"GEN 1:2": "should not appear"})
+        resp = _similar(
+            client,
+            regular_token1,
+            assessment_id,
+            vref="GEN 1:1",
+            reference_id=other_revision,
+        )
+        assert resp.status_code == 200, resp.text
+        (hit,) = _hits(resp)
+        assert hit["reference_text"] is None
+
+
+class TestSimilarVersesContract:
+    """The shape decisions that a well-meaning "consistency" pass would undo."""
+
+    HIT_FIELDS = {"vref", "similarity", "text", "reference_text"}
+    ENVELOPE_FIELDS = {"query_vref", "limit", "items"}
+
+    def _vectorized(self, db_session, group1_version):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
+        )
+        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
+        _make_vector(db_session, assessment_id, "GEN 1:2", 5)
+        return assessment_id
+
+    def test_the_hit_has_exactly_its_own_fields(self):
+        assert set(SimilarVerseOut.model_fields) == self.HIT_FIELDS
+
+    def test_the_envelope_has_exactly_its_own_fields(self):
+        assert set(SimilarVersesOut.model_fields) == self.ENVELOPE_FIELDS
+
+    def test_the_envelope_is_not_a_page(self):
+        """No ``total`` claiming to count a ranking, and no ``offset`` — the rows are
+        computed pairings, so there is no population to count and nothing to page."""
+        assert not {"total", "offset", "next_updated_since"} & set(
+            SimilarVersesOut.model_fields
+        )
+
+    def test_the_body_carries_no_total_and_no_offset(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(db_session, group1_version)
+        body = _similar(client, regular_token1, assessment_id, vref="GEN 1:1").json()
+        assert set(body) == self.ENVELOPE_FIELDS
+        assert body["query_vref"] == "GEN 1:1"
+
+    def test_the_hit_carries_no_id_and_no_assessment_id(self):
+        """v3 returns both. The vector row's id names a 300-dimensional vector that is not
+        in the response, and ``similarity`` is a property of the *pair*, so the row is not
+        a stable entity an id could identify."""
+        assert not {"id", "assessment_id"} & set(SimilarVerseOut.model_fields)
+
+    def test_omitting_vref_is_a_422_naming_the_parameter(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The client sends ``vref`` only when truthy, so it can and does issue this exact
+        request. It must say what is missing rather than be papered over with a default —
+        there is no sensible verse to rank against by default."""
+        assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(client, regular_token1, assessment_id)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+        errors = resp.json()["error"]["details"]["errors"]
+        assert any("vref" in error["loc"] for error in errors)
+
+    def test_an_empty_vref_is_a_422_rather_than_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``?vref=`` is a malformed request, not a lookup that missed."""
+        assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(client, regular_token1, assessment_id, vref="")
+        assert resp.status_code == 422, resp.text
+
+    def test_limit_at_the_maximum_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(
+            client,
+            regular_token1,
+            assessment_id,
+            vref="GEN 1:1",
+            limit=SIMILAR_VERSES_MAX_LIMIT,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == SIMILAR_VERSES_MAX_LIMIT
+
+    @pytest.mark.parametrize(
+        "limit",
+        [
+            pytest.param(SIMILAR_VERSES_MAX_LIMIT + 1, id="above-max"),
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_an_out_of_range_limit_rejects_rather_than_clamps(
+        self, client, regular_token1, db_session, group1_version, limit
+    ):
+        """v3 declares ``limit: int = 10`` with no bounds at all, so one request can ask it
+        to rank and serialize a whole assessment. v4 rejects, and does not silently return
+        a different number of neighbours than was asked for."""
+        assessment_id = self._vectorized(db_session, group1_version)
+        resp = _similar(
+            client, regular_token1, assessment_id, vref="GEN 1:1", limit=limit
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_offset_is_not_a_parameter_and_does_not_shift_the_ranking(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's client sends ``page`` on every call and ``/tfidf_result`` has never
+        declared it, so nobody has ever paged this. Passing one here is ignored, which is
+        the v4 convention for an unrecognised parameter."""
+        assessment_id = self._vectorized(db_session, group1_version)
+        plain = _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        )
+        with_offset = _hit_vrefs(
+            _similar(
+                client, regular_token1, assessment_id, vref="GEN 1:1", offset=1, page=2
+            )
+        )
+        assert plain == with_offset == ["GEN 1:2"]
+
+    def test_the_declared_query_parameters_are_vref_and_limit_only(self):
+        """Pinned at the route so OpenAPI cannot gain ``offset``, ``page`` or
+        ``reference_id`` by accident."""
+        route = _route("get_assessment_similar_verses")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {"vref", "limit"}
+
+    def test_the_route_takes_no_pagination_dependency(self):
+        route = _route("get_assessment_similar_verses")
+        assert not any(
+            isinstance(dependency.call, type)
+            and issubclass(dependency.call, PaginationParams)
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_returns_the_ranking_envelope(self):
+        route = _route("get_assessment_similar_verses")
+        assert route.response_model is SimilarVersesOut
+
+    def test_the_path_is_similar_verses_not_tfidf(self):
+        """A deliberate departure from guide §15.3's planned ``/tfidf``: the endpoint
+        answers "which verses are most like this one", and naming it after the algorithm
+        would describe the implementation instead of the operation."""
+        route = _route("get_assessment_similar_verses")
+        assert route.path == "/assessments/{assessment_id}/similar-verses"
+
+    def test_the_served_type_is_tfidf_alone(self):
+        assert set(assessment_service.SIMILARITY_ASSESSMENT_TYPES) == set(
+            SIMILARITY_SERVED_TYPES
+        )
+        assert set(SIMILARITY_SERVED_TYPES) | set(SIMILARITY_UNSERVED_TYPES) == {
+            t.value for t in AssessmentType
+        }
+
+    def test_the_ivfflat_index_is_neither_used_nor_dropped(self):
+        """228 GB, 18% of the database, zero scans in five weeks of production statistics —
+        and still declared, because whether it should exist is a storage decision that does
+        not belong to this read. This pins that the read did not quietly drop it, and the
+        service docstring holds why it is not used."""
+        indexes = {index.name for index in TfidfPcaVector.__table__.indexes}
+        assert "tfidf_pca_vector_ivfflat_idx" in indexes

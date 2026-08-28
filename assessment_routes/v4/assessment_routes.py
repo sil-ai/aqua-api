@@ -15,10 +15,12 @@ happens somewhere else. Five endpoints:
   in canonical vref order, with v3's scoping filters and its ``aggregate`` rollups.
 * ``GET    /v4/assessments/{id}/ngrams`` — the ``ngrams`` type's n-grams, paginated,
   each with the verses it occurs in. The one result read whose rows are not verses.
+* ``GET    /v4/assessments/{id}/similar-verses`` — the ``tfidf`` type's nearest-neighbour
+  search. Not a listing and not paginated; see its own contract note below.
 
 The remaining typed result sub-resources (``/text-lengths``, ``/alignment-scores``,
-``/similar-verses``, ``/missing-words``) are the rest of #893 and land in follow-up PRs,
-as does the comparisons family.
+``/missing-words``) are the rest of #893 and land in follow-up PRs, as does the
+comparisons family.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -77,6 +79,17 @@ written by the runner. Branching on a code derived from parsing prose would be w
 than a generic code honestly labelled — so the classification waits for the runner to
 report something structured.
 
+**``/similar-verses`` is the one read here that is not a list, and it is named after the
+operation rather than the algorithm.** ``GET /tfidf_result`` takes a required ``vref``,
+loads that verse's vector and ranks every other verse in the assessment against it — a
+nearest-neighbour search, not a result listing. So it takes no pagination, returns no
+``total`` and has no ``offset`` (v3 never had one: its client sends a ``page`` parameter
+the v3 route does not declare, and FastAPI has always discarded it), and its body is its
+own small envelope naming the query point. The path is ``/similar-verses`` rather than
+``/tfidf`` because the question it answers is "which verses are most like this one";
+naming the resource after TF-IDF would describe how the answer is computed. A deliberate
+departure from guide §15.3, which plans ``/tfidf``.
+
 **The list's filters cannot 404.** They are applied after the visibility predicate and
 only ever narrow what the caller could already see, so a ``revision_id`` outside the
 caller's groups yields an empty page. That differs on purpose from
@@ -119,6 +132,7 @@ from api_v4.jobs import (
 from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
 from api_v4.schemas.assessment import (
     BOOK_ABBREVIATION_LENGTH,
+    VREF_MAX_LENGTH,
     AssessmentCreate,
     AssessmentJob,
     AssessmentOut,
@@ -128,6 +142,8 @@ from api_v4.schemas.assessment import (
     NgramResultOut,
     ResultAggregate,
     ResultScope,
+    SimilarVerseOut,
+    SimilarVersesOut,
 )
 from assessment_routes.v4 import assessment_service
 from database.dependencies import get_db
@@ -137,6 +153,18 @@ from schemas.assessment import AssessmentType
 from security_routes.auth_routes import get_current_user
 
 router = fastapi.APIRouter(prefix="/assessments", tags=["Assessments"])
+
+#: Default and maximum neighbours for ``GET /v4/assessments/{id}/similar-verses``.
+#: 10 is v3's default, kept because nothing suggests it is wrong. The ceiling is new: v3
+#: declares ``limit: int = 10`` with no bounds at all, so a caller can ask one request to
+#: rank and serialize an entire assessment's 41,899 verses *with their text*. 100 is a
+#: ranking; past that a caller is listing, and this endpoint does not list.
+#:
+#: Not :data:`~api_v4.pagination.MAX_LIMIT`, despite sharing its value: that constant is
+#: the catalog *page* ceiling and moving it should not move this, since the two bound
+#: different things — a page of a list versus the depth of a ranking.
+SIMILAR_VERSES_DEFAULT_LIMIT = 10
+SIMILAR_VERSES_MAX_LIMIT = 100
 
 #: Cadence advertised on the 202, in seconds. Required rather than inherited — there
 #: is no v4-wide default, precisely so a slice cannot pick up a cadence tuned for
@@ -757,6 +785,100 @@ async def get_assessment_ngrams(
     # not change the response shape.
     return V4Page[NgramResultOut].create(
         items=[NgramResultOut(**row) for row in rows], total=total, pagination=page
+    )
+
+
+@router.get(
+    "/{assessment_id}/similar-verses",
+    response_model=SimilarVersesOut,
+)
+async def get_assessment_similar_verses(
+    assessment_id: int,
+    vref: str = Query(
+        min_length=1,
+        max_length=VREF_MAX_LENGTH,
+        description=(
+            "**Required.** The verse to find neighbours for, as a canonical vref "
+            "(`MAT 9:20`). This is the query point, not a filter: the ranking is "
+            "computed against this verse's vector, so there is no meaningful response "
+            "without it. Omitting it is a 422 naming this parameter rather than a "
+            "default — a request with no verse in mind has no answer."
+        ),
+    ),
+    limit: int = Query(
+        SIMILAR_VERSES_DEFAULT_LIMIT,
+        ge=1,
+        le=SIMILAR_VERSES_MAX_LIMIT,
+        description=(
+            f"How many neighbours to return. Defaults to "
+            f"{SIMILAR_VERSES_DEFAULT_LIMIT}; must be between 1 and "
+            f"{SIMILAR_VERSES_MAX_LIMIT} (out-of-range values are rejected with 422, "
+            f"not clamped)."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> SimilarVersesOut:
+    """Find the verses most similar to a given verse, within one `tfidf` assessment.
+
+    Serves `type = tfidf` only. An assessment of any other type reports
+    `404 ASSESSMENT_NOT_FOUND` — the same answer as one that does not exist, is outside
+    your groups, or is a training run.
+
+    **This is a ranking, not a page**, and it is the one read on this parent that is not
+    a list. The rows do not exist in a table: each is computed by comparing one verse to
+    the verse you asked about. So there is **no `total`** — there is no population to
+    count, and a total equal to `limit` would be a number that is present, defensible and
+    misleading — and **no `offset`**, because paging a similarity ranking is not a thing.
+    Ask for more neighbours with a larger `limit`.
+
+    **`vref` is the query, not a filter.** It names the verse everything is ranked
+    against, so a request without it has no answer and is a `422` naming the parameter.
+    A `vref` this assessment holds no vector for is `404 VREF_NOT_FOUND` — a *different*
+    code from an unreachable assessment, so a typo is distinguishable from a permission
+    boundary. By that point you have already established you may read the assessment, so
+    the distinction discloses nothing.
+
+    **The queried verse is excluded from its own results.** It would otherwise be the
+    first hit, every time, at maximum similarity.
+
+    **Verse text comes back with each hit**, so a ranked list is renderable without a
+    request per row. `text` is the assessed revision's; `reference_text` is the
+    assessment's own reference, and is null for every hit when the assessment has no
+    reference — the normal case for this type, and not an error. v3's `reference_id`
+    parameter is **gone**: letting a caller name any revision made the response depend on
+    a display preference rather than on the assessment, and a caller who wants arbitrary
+    verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is
+    ignored, not honoured.
+
+    **`similarity` ranks, it does not calibrate.** It is the inner product of the two
+    verses' 300-dimensional PCA-reduced TF-IDF vectors: higher is closer, the ordering is
+    meaningful, and the absolute value is not. Assessments are vectorized independently,
+    so comparing a number from one against a number from another is meaningless. Ties
+    break on `vref`, so repeating a request returns the same order.
+
+    The search is exact and scoped to this assessment — at most 41,899 vectors behind an
+    index — rather than approximate. Two verses ranked adjacent today will still be
+    ranked adjacent tomorrow for the same stored vectors.
+    """
+    try:
+        hits = await assessment_service.get_similar_verses(
+            db, current_user, assessment_id, vref=vref, limit=limit
+        )
+    except assessment_service.SimilarityVrefNotFound as exc:
+        raise V4APIError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="VREF_NOT_FOUND",
+            message=str(exc),
+            details={"assessment_id": assessment_id, "vref": vref},
+        ) from exc
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+
+    return SimilarVersesOut(
+        query_vref=vref,
+        limit=limit,
+        items=[SimilarVerseOut(**hit) for hit in hits],
     )
 
 
