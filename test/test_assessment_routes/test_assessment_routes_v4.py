@@ -3801,6 +3801,14 @@ def _captured_sql():
 
     Callers assert on statements matching a table name, so the fixtures' own sync engine
     executing inside the block is harmless; :func:`_touching` filters it out.
+
+    ``parameters`` is a **positional sequence of bound values**, so a caller can compare
+    against it directly. That is a property of the driver rather than of this helper: the
+    asyncpg dialect is ``paramstyle="format"``/``positional=True``, and ``AQUA_DB`` is
+    required to be a ``postgresql+asyncpg://`` URL. Under a named-paramstyle driver
+    (psycopg, pyformat) it would be a dict and iterating it would yield parameter *names*
+    — so a caller comparing values would need ``parameters.values()``. Not branched on
+    here, because a driver swap would break far more of this suite than one assertion.
     """
     captured = []
 
