@@ -63,9 +63,20 @@ What each group of tests pins down:
   per-level projection, and ``vrefs`` structurally absent at every level.
 * ``TestResultsSchemaContract`` — that the two row types stay two types: the aggregate
   shape cannot swallow a verse row, and neither carries ``source``/``target``.
+* ``TestNgramsAuthorization`` — that the n-grams read refuses through the *same* helper
+  and the same one code, ``ngrams`` being the served type this time rather than an
+  unserved one.
+* ``TestNgramsRows`` — the shape that makes this read different from every other one in
+  the family: rows are n-grams, ``occurrences`` is an occurrence list rather than
+  ``/results``' span coverage, and a vrefless n-gram is visible rather than dropped.
+* ``TestNgramsPage`` — the shared catalog pagination, id ordering stable across a page
+  boundary, and that page 2 fetches occurrences for page 2 only (the #648 two-step).
+* ``TestNgramsSchemaContract`` — that the verse-keyed parameters never appear on this
+  read, and that ``vrefs`` is not a field of the row.
 """
 
 import itertools
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from typing import get_args
 from unittest.mock import AsyncMock, patch
@@ -73,6 +84,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import event
 
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
@@ -81,6 +93,7 @@ from api_v4.pagination import (
     MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
+    PaginationParams,
     ResultPaginationParams,
     V4Page,
 )
@@ -92,6 +105,7 @@ from api_v4.schemas.assessment import (
     AssessmentResultAggregateOut,
     AssessmentResultOut,
     AssessmentResultRow,
+    NgramResultOut,
     ResultAggregate,
     ResultScope,
 )
@@ -101,6 +115,7 @@ from assessment_routes.v4.assessment_routes import ASSESSMENT_RETRY_AFTER_S
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
 from config import settings
+from database.dependencies import engine as app_engine
 from database.models import (
     Assessment,
     AssessmentResult,
@@ -108,6 +123,8 @@ from database.models import (
     BibleVersion,
     BibleVersionAccess,
     Group,
+    NgramsTable,
+    NgramVrefTable,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -3719,5 +3736,530 @@ class TestResultsSchemaContract:
         read: ``word-alignment`` belongs here, which is easy to miss."""
         assert set(assessment_service.RESULT_ASSESSMENT_TYPES) == set(SERVED_TYPES)
         assert set(SERVED_TYPES) | set(UNSERVED_TYPES) == {
+            t.value for t in AssessmentType
+        }
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/ngrams
+# ---------------------------------------------------------------------------
+
+NGRAMS_SERVED_TYPES = ("ngrams",)
+NGRAMS_UNSERVED_TYPES = tuple(
+    t.value for t in AssessmentType if t.value not in NGRAMS_SERVED_TYPES
+)
+
+
+def _make_ngram(db_session, assessment_id, ngram, *, size=None, vrefs=()):
+    """Insert one ``ngrams_table`` row and its ``ngram_vref_table`` rows.
+
+    Inserted directly for the same reason the result rows are: the only writer is the
+    runner-facing v3 push, and these tests need a vrefless n-gram and n-grams belonging to
+    assessments of types no v4 endpoint can produce results for.
+    """
+    row = NgramsTable(
+        assessment_id=assessment_id,
+        ngram=ngram,
+        ngram_size=size if size is not None else len(ngram.split()),
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    for vref in vrefs:
+        db_session.add(NgramVrefTable(ngram_id=row.id, vref=vref))
+    db_session.commit()
+    return row.id
+
+
+def _ngrams(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/ngrams",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _ngram_strings(resp):
+    return [row["ngram"] for row in _rows(resp)]
+
+
+@contextmanager
+def _captured_sql():
+    """Every statement the app's engine executes inside the block, with its parameters.
+
+    Attached to the *app's* engine (``database.dependencies.engine``), not the fixtures'
+    own, so it sees exactly what a request issues. The #648 two-step is a performance
+    contract that a join would satisfy behaviourally, so it can only be pinned by looking
+    at the statements themselves.
+    """
+    captured = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        captured.append((statement, parameters))
+
+    event.listen(app_engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        yield captured
+    finally:
+        event.remove(app_engine.sync_engine, "before_cursor_execute", _record)
+
+
+def _touching(captured, table):
+    return [
+        (statement, parameters)
+        for statement, parameters in captured
+        if table in statement
+    ]
+
+
+class TestNgramsAuthorization:
+    """``GET /v4/assessments/{id}/ngrams`` — the family's single 404, reused unchanged.
+
+    Deliberately a near-copy of ``TestResultsAuthorization`` with the served type
+    inverted. That duplication is the assertion: the two reads must refuse *identically*,
+    because authorization defined per endpoint is what produced four of this slice's five
+    security issues, and a second predicate here would drift from the first silently.
+    """
+
+    def _with_ngrams(self, db_session, version_id, *, type_="ngrams", **kwargs):
+        """A fresh assessment carrying one n-gram, so a 404 is never just emptiness."""
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_=type_, **kwargs
+        )
+        _make_ngram(db_session, assessment_id, "in the", vrefs=["GEN 1:1"])
+        return revision_id, assessment_id
+
+    def test_the_ngrams_type_returns_its_ngrams(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_ngrams(db_session, group1_version)
+        assert _ngram_strings(_ngrams(client, regular_token1, assessment_id)) == [
+            "in the"
+        ]
+
+    @pytest.mark.parametrize("type_", NGRAMS_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """N-gram rows are inserted anyway, so this pins a refusal by *type* rather than a
+        read that happens to find nothing. Note ``word-alignment`` is unserved here and
+        served by ``/results`` — the two reads are complementary, not nested."""
+        _, assessment_id = self._with_ngrams(db_session, group1_version, type_=type_)
+        resp = _ngrams(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _ngrams(client, regular_token1, 10**9)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._with_ngrams(db_session, group2_version)
+        resp = _ngrams(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_ngrams_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        """Both halves of the visibility rule, on a read that is not ``/results``: the
+        predicate is shared, so this cannot pass on one endpoint and fail on the other.
+        """
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="ngrams"
+        )
+        _make_ngram(db_session, assessment_id, "in the", vrefs=["GEN 1:1"])
+        resp = _ngrams(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_ngrams(
+            db_session, group1_version, is_training=True
+        )
+        resp = _ngrams(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_ngrams(db_session, group1_version, deleted=True)
+        assert _ngrams(client, regular_token1, assessment_id).status_code == 404
+
+    def test_a_soft_deleted_revision_hides_its_ngrams(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._with_ngrams(db_session, version_id)
+        assert _ngrams(client, regular_token1, assessment_id).status_code == 200
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert _ngrams(client, regular_token1, assessment_id).status_code == 404
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        """A caller cannot tell "no such assessment" from "not yours" from "wrong type"
+        from "training run" — the same set the poll, the delete and ``/results`` answer.
+        """
+        _, unserved = self._with_ngrams(
+            db_session, group1_version, type_="word-alignment"
+        )
+        _, theirs = self._with_ngrams(db_session, group2_version)
+        _, training = self._with_ngrams(db_session, group1_version, is_training=True)
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _ngrams(client, regular_token1, 10**9),
+                _ngrams(client, regular_token1, unserved),
+                _ngrams(client, regular_token1, theirs),
+                _ngrams(client, regular_token1, training),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        """Reading n-grams is not owner-gated: any caller whose groups reach the revision
+        reads them, so this endpoint never answers 403 (unlike DELETE)."""
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._with_ngrams(db_session, version_id)
+        assert _ngrams(client, regular_token2, assessment_id).status_code == 200
+
+
+class TestNgramsRows:
+    """The row shape — an n-gram, not a verse — and the vrefless case v3 made visible."""
+
+    def _with(self, db_session, group1_version, ngrams):
+        """An ngrams assessment carrying ``[(ngram, [vref, ...]), ...]`` in that order."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="ngrams"
+        )
+        for ngram, vrefs in ngrams:
+            _make_ngram(db_session, assessment_id, ngram, vrefs=vrefs)
+        return assessment_id
+
+    def test_a_row_carries_the_ngram_its_size_and_its_occurrences(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._with(
+            db_session, group1_version, [("in the beginning", ["GEN 1:1"])]
+        )
+        (row,) = _rows(_ngrams(client, regular_token1, assessment_id))
+        assert row == {
+            "id": row["id"],
+            "assessment_id": assessment_id,
+            "ngram": "in the beginning",
+            "ngram_size": 3,
+            "occurrences": ["GEN 1:1"],
+        }
+
+    def test_an_ngram_with_no_vrefs_appears_with_an_empty_list(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3 deliberately moved off an ``INNER JOIN`` that dropped these rows from the
+        page while ``total_count`` still counted them. Reachable through the real writer:
+        ``push_ngrams`` inserts vref rows only ``if vref_rows``, so an item pushed with
+        ``vrefs: []`` produces exactly this."""
+        assessment_id = self._with(
+            db_session,
+            group1_version,
+            [("orphan", []), ("in the", ["GEN 1:1"])],
+        )
+        rows = _rows(_ngrams(client, regular_token1, assessment_id))
+        assert [(row["ngram"], row["occurrences"]) for row in rows] == [
+            ("orphan", []),
+            ("in the", ["GEN 1:1"]),
+        ]
+
+    def test_a_vrefless_ngram_is_counted_in_total(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The half of the same decision that ``total`` has to agree with: it counts every
+        n-gram, not every n-gram that has occurrences."""
+        assessment_id = self._with(
+            db_session, group1_version, [("orphan", []), ("in the", ["GEN 1:1"])]
+        )
+        assert _ngrams(client, regular_token1, assessment_id).json()["total"] == 2
+
+    def test_an_ngram_occurring_in_many_verses_returns_all_of_them(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The row is not truncated and not paginated internally — ``occurrences`` is the
+        whole occurrence list, which is what makes it different from ``/results``' span
+        coverage."""
+        vrefs = [f"GEN 1:{n}" for n in range(1, 32)]
+        assessment_id = self._with(db_session, group1_version, [("the", vrefs)])
+        (row,) = _rows(_ngrams(client, regular_token1, assessment_id))
+        assert row["occurrences"] == vrefs
+
+    def test_occurrences_are_not_deduplicated_across_rows(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Two n-grams occurring in the same verse each list it. Obvious once stated, and
+        the opposite of ``/results``, where one verse is one row."""
+        assessment_id = self._with(
+            db_session,
+            group1_version,
+            [("in the", ["GEN 1:1"]), ("the beginning", ["GEN 1:1"])],
+        )
+        rows = _rows(_ngrams(client, regular_token1, assessment_id))
+        assert [row["occurrences"] for row in rows] == [["GEN 1:1"], ["GEN 1:1"]]
+
+    def test_an_assessment_with_no_ngrams_is_an_empty_page_not_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A reachable ngrams assessment that stored nothing is emptiness, not refusal —
+        the 404 is about reachability, never about whether rows exist."""
+        assessment_id = self._with(db_session, group1_version, [])
+        body = _ngrams(client, regular_token1, assessment_id).json()
+        assert body["items"] == []
+        assert body["total"] == 0
+
+    def test_rows_of_another_assessment_do_not_leak_in(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``ngram_vref_table`` has no ``assessment_id`` of its own, so the scoping lives
+        entirely in the first query's ``WHERE`` and the id list handed to the second."""
+        mine = self._with(db_session, group1_version, [("mine", ["GEN 1:1"])])
+        self._with(db_session, group1_version, [("theirs", ["GEN 1:2"])])
+        assert _ngram_strings(_ngrams(client, regular_token1, mine)) == ["mine"]
+
+
+class TestNgramsPage:
+    """The shared catalog pagination, and the two-step read holding across a boundary."""
+
+    def _ngram_ids(self, db_session, group1_version, count):
+        """``count`` n-grams on a fresh assessment, returning their ids in page order.
+
+        Leaves the assessment id on ``self`` so a test can assert on both without a
+        two-value return that reads worse at every other call site.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        self.assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="ngrams"
+        )
+        return [
+            _make_ngram(
+                db_session,
+                self.assessment_id,
+                f"ngram {n:03d}",
+                vrefs=[f"GEN 1:{n + 1}"],
+            )
+            for n in range(count)
+        ]
+
+    def _with_ngrams(self, db_session, group1_version, count, *, vrefs_for=None):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="ngrams"
+        )
+        for n in range(count):
+            _make_ngram(
+                db_session,
+                assessment_id,
+                f"ngram {n:03d}",
+                vrefs=(vrefs_for(n) if vrefs_for else [f"GEN 1:{n + 1}"]),
+            )
+        return assessment_id
+
+    def test_page_envelope(self, client, regular_token1, db_session, group1_version):
+        assessment_id = self._with_ngrams(db_session, group1_version, 2)
+        resp = _ngrams(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"items", "total", "limit", "offset", "next_updated_since"}
+        assert body["total"] == 2
+        assert body["offset"] == 0
+        # No delta feed: neither ngrams_table nor ngram_vref_table carries a modification
+        # timestamp. Present and null rather than missing, so gaining one later would not
+        # change the response shape.
+        assert body["next_updated_since"] is None
+
+    def test_the_default_limit_is_the_shared_catalog_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Not ``/results``' 100/1000: those numbers are justified by per-verse score
+        volume, and an n-gram row is small. A future consumer that needs more should raise
+        this deliberately rather than find it already raised."""
+        assessment_id = self._with_ngrams(db_session, group1_version, 1)
+        assert (
+            _ngrams(client, regular_token1, assessment_id).json()["limit"]
+            == DEFAULT_LIMIT
+        )
+
+    def test_limit_at_the_catalog_max_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._with_ngrams(db_session, group1_version, 1)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == MAX_LIMIT
+
+    def test_limit_above_the_catalog_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._with_ngrams(db_session, group1_version, 1)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT + 1)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_pagination_is_stable_across_a_boundary(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Ordering by the primary key is what makes this hold: no two rows tie, and no
+        row's key moves, so the union of two adjacent pages neither repeats nor skips.
+        """
+        assessment_id = self._with_ngrams(db_session, group1_version, 5)
+        first = _ngram_strings(_ngrams(client, regular_token1, assessment_id, limit=3))
+        second = _ngram_strings(
+            _ngrams(client, regular_token1, assessment_id, limit=3, offset=3)
+        )
+        assert first == ["ngram 000", "ngram 001", "ngram 002"]
+        assert second == ["ngram 003", "ngram 004"]
+        assert len(set(first + second)) == 5
+
+    def test_page_two_fetches_occurrences_for_page_two_only(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The #648 two-step, pinned on the statements rather than on the body.
+
+        A ``JOIN ... GROUP BY ... ORDER BY ... LIMIT`` over the whole corpus returns the
+        same rows, which is exactly why the regression it caused went unnoticed: every
+        page paid for the entire assessment. So this asserts the *shape* — one statement
+        for the page of n-grams, a separate one for the occurrences, and the second one
+        parameterized by only this page's ids.
+        """
+        ids = self._ngram_ids(db_session, group1_version, 4)
+        assessment_id = self.assessment_id
+        with _captured_sql() as captured:
+            rows = _rows(
+                _ngrams(client, regular_token1, assessment_id, limit=2, offset=2)
+            )
+        assert [row["occurrences"] for row in rows] == [["GEN 1:3"], ["GEN 1:4"]]
+
+        occurrence_statements = _touching(captured, "ngram_vref_table")
+        assert len(occurrence_statements) == 1
+        statement, parameters = occurrence_statements[0]
+        # Not a join: the occurrence query never mentions the parent table, so Postgres
+        # cannot be made to aggregate the corpus before LIMIT applies.
+        assert "ngrams_table" not in statement
+        # ...and it asks for page 2's two ids, not all four.
+        assert set(ids[2:]) <= set(parameters)
+        assert not set(ids[:2]) & set(parameters)
+
+    def test_an_offset_past_the_end_is_an_empty_page_with_the_real_total(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._with_ngrams(db_session, group1_version, 2)
+        body = _ngrams(client, regular_token1, assessment_id, offset=10).json()
+        assert body["items"] == []
+        assert body["total"] == 2
+
+    def test_an_empty_page_skips_the_occurrence_query_entirely(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The ``if ngram_ids`` guard, pinned on the statements: an empty page issues no
+        occurrence query at all rather than an ``IN ()`` that Postgres has to plan."""
+        assessment_id = self._with_ngrams(db_session, group1_version, 1)
+        with _captured_sql() as captured:
+            resp = _ngrams(client, regular_token1, assessment_id, offset=5)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert _touching(captured, "ngram_vref_table") == []
+
+
+class TestNgramsSchemaContract:
+    """That this read stays *not* verse-keyed, and that ``occurrences`` keeps its name."""
+
+    NGRAM_FIELDS = {"id", "assessment_id", "ngram", "ngram_size", "occurrences"}
+
+    def test_the_row_has_exactly_its_own_fields(self):
+        assert set(NgramResultOut.model_fields) == self.NGRAM_FIELDS
+
+    def test_the_row_does_not_carry_vrefs(self):
+        """The rename is the contract: ``vrefs`` on ``/results`` means span coverage, and a
+        client that has read that endpoint must not find the same name meaning something
+        else here."""
+        assert "vrefs" not in NgramResultOut.model_fields
+
+    def test_the_row_is_not_verse_keyed(self):
+        """No ``vref``, no ``book``/``chapter``/``verse``, no ``score``: a row is an
+        n-gram. Pinned so a later "consistency" pass cannot quietly add them."""
+        assert not {"vref", "book", "chapter", "verse", "score"} & set(
+            NgramResultOut.model_fields
+        )
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"book": "GEN"}, id="book"),
+            pytest.param({"book": "GEN", "chapter": 1}, id="book-chapter"),
+            pytest.param({"aggregate": "chapter"}, id="aggregate-chapter"),
+            pytest.param({"aggregate": "text"}, id="aggregate-text"),
+            pytest.param({"verse": 1}, id="verse"),
+        ],
+    )
+    def test_the_verse_keyed_parameters_are_not_accepted(
+        self, client, regular_token1, db_session, group1_version, params
+    ):
+        """Not accepted *and* not an error: v4 ignores unrecognised query parameters, so
+        each of these returns the unfiltered page. The assertion is that the filter had no
+        effect — an endpoint that silently honoured ``book`` would fail the second half,
+        and one that 422'd would fail the first."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="ngrams"
+        )
+        _make_ngram(db_session, assessment_id, "in the", vrefs=["GEN 1:1"])
+        _make_ngram(db_session, assessment_id, "of the", vrefs=["MAT 1:1"])
+        resp = _ngrams(client, regular_token1, assessment_id, **params)
+        assert resp.status_code == 200, resp.text
+        assert _ngram_strings(resp) == ["in the", "of the"]
+
+    def test_the_declared_query_parameters_are_limit_and_offset_only(self):
+        """Pinned at the route so OpenAPI cannot gain a verse-keyed parameter by accident.
+        ``assessment_id`` is a path parameter, not a query one."""
+        route = _route("get_assessment_ngrams")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {"limit", "offset"}
+
+    def test_the_route_uses_the_shared_catalog_pagination_dependency(self):
+        """Not ``ResultPaginationParams``. If a measured consumer ever needs bulk pages
+        here, the change is a dedicated dependency in ``api_v4.pagination`` — never
+        raising the shared cap, which would widen the catalog lists too."""
+        route = _route("get_assessment_ngrams")
+        assert any(
+            dependency.call is PaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_returns_a_page_of_ngram_rows(self):
+        route = _route("get_assessment_ngrams")
+        assert route.response_model.__name__.startswith("V4Page")
+
+    def test_the_served_type_is_ngrams_alone(self):
+        """Pinned against the enum so adding a type does not silently join this read, and
+        so the ngrams/results split stays complementary rather than overlapping."""
+        assert set(assessment_service.NGRAMS_ASSESSMENT_TYPES) == set(
+            NGRAMS_SERVED_TYPES
+        )
+        assert (
+            set(NGRAMS_SERVED_TYPES) & set(assessment_service.RESULT_ASSESSMENT_TYPES)
+            == set()
+        )
+        assert set(NGRAMS_SERVED_TYPES) | set(NGRAMS_UNSERVED_TYPES) == {
             t.value for t in AssessmentType
         }

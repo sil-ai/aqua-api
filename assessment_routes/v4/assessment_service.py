@@ -8,9 +8,10 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read, delete, and the generic result read**. The remaining typed
-result sub-resources (``/ngrams``, ``/text-lengths``, ``/alignment-scores``, ``/tfidf``,
-``/missing-words``) and the comparisons family are follow-ups on #893; the runner-facing
+Scope is **create, read, delete, and two of the typed result reads** — the generic
+per-verse ``/results`` and ``/ngrams``. The remaining sub-resources (``/text-lengths``,
+``/alignment-scores``, ``/similar-verses``, ``/missing-words``) and the comparisons
+family are follow-ups on #893; the runner-facing
 surface (``results_push_*``, ``eflomal-*``, ``tfidf-artifacts/*``, the status ``PATCH``)
 stays on v3 permanently — it is our own code talking to our own code and is not client
 contract (#842's 2026-08-25b decision 4).
@@ -206,6 +207,35 @@ each documented on the function that implements it:
 Aggregated rows keep v3's rollup exactly — mean score, ``bool_or`` flags — and are a
 different projection, so the router maps them to a different response type
 (:func:`_aggregated_results`).
+
+
+How the ngrams read is shaped (:func:`get_ngrams`)
+---------------------------------------------------
+
+``GET /v4/assessments/{id}/ngrams`` serves ``type = ngrams`` only, and it is the one
+result read in this family whose rows are **not verses**: a row is an n-gram, carrying
+the verses it occurs in. None of the verse-level machinery above applies — no scope, no
+rollup, no ``<range>`` span map.
+
+* **Authorization is the same predicate**, :func:`get_assessment` with
+  ``types=NGRAMS_ASSESSMENT_TYPES`` — the family's one visibility rule, with "wrong type"
+  as a clause on the same statement rather than a check afterwards. Nothing new is
+  written here; that is the point.
+* **The two-step query is preserved from v3, and it is load-bearing** — see
+  :func:`_ngrams_page`. Collapsing it back into a join is the #648 regression.
+* **A vrefless n-gram is returned with an empty list**, not dropped, and it is counted in
+  ``total``. v3 moved off an ``INNER JOIN`` that silently dropped such rows while the
+  count still included them; keeping them visible keeps the two consistent.
+* **``total`` is a plain ``COUNT``.** v3 memoises it in a process-local dict guarded by a
+  "finished assessments don't grow" contract that #651 records as policy rather than
+  enforcement. That cache is frozen v3 code, and inheriting one whose invalidation rests
+  on an unenforced contract is a poor trade for a count the leading column of
+  ``ix_ngrams_table_assessment_id_id`` already serves.
+
+The ``<range>`` marker cannot appear in ``occurrences``: ``ngram_vref_table.vref`` is a
+foreign key to ``verse_reference.full_verse_id``, and ``verse_reference`` holds exactly
+the 41,899 canonical references with no marker row among them, so the marker is not a
+member of the column's domain. That is why this read needs no span map and no filtering.
 """
 
 from datetime import date, datetime, timedelta
@@ -244,6 +274,8 @@ from database.models import (
     BibleVersion,
     BibleVersionAccess,
     BookReference,
+    NgramsTable,
+    NgramVrefTable,
     UserDB,
     UserGroup,
 )
@@ -1403,3 +1435,127 @@ async def get_results(
         db, assessment.revision_id
     )
     return rows, total, continuations
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/ngrams. See "How the ngrams read is shaped" in the
+# module docstring.
+# ---------------------------------------------------------------------------
+
+#: The only assessment type whose results land in ``ngrams_table``, and so the only type
+#: ``GET /v4/assessments/{id}/ngrams`` serves. A tuple of one rather than a bare value so
+#: it plugs into :func:`get_assessment`'s ``types`` filter unchanged, and taken from the
+#: enum so a renamed value fails at import instead of silently narrowing the read to
+#: nothing.
+NGRAMS_ASSESSMENT_TYPES = (AssessmentType.ngrams.value,)
+
+
+async def _ngrams_page(
+    db: AsyncSession, assessment_id: int, *, limit: int, offset: int
+) -> list[dict]:
+    """One page of n-grams with their occurrence lists, in stored-id order.
+
+    **Two queries on purpose, and this is the part not to "simplify".** The page of
+    ``ngrams_table`` rows is taken first, ordered and sliced by primary key; only then are
+    the occurrences fetched, for that page's ids alone. v3's ``fetch_ngrams_page`` says the
+    same thing in its own docstring and for the same reason: the earlier
+    ``JOIN ... GROUP BY ... ORDER BY ... LIMIT`` form made Postgres aggregate the whole
+    assessment's corpus before ``LIMIT`` could apply, so every page paid for the entire
+    table (#648). Collapsing these two statements back into one join reintroduces exactly
+    that.
+
+    The first query is a single index walk with no sort step: ``ngrams_table`` carries the
+    composite ``ix_ngrams_table_assessment_id_id`` on ``(assessment_id, id)``, added by
+    ``1d460bf9ea55`` for this access pattern. The second rides
+    ``ix_ngram_vref_table_ngram_id``. No index was added for this read and none is missing.
+
+    **A vrefless n-gram keeps its row, with an empty list.** ``vrefs_by_id`` is built with
+    a plain lookup-with-default rather than by iterating the join's output, so an n-gram
+    with no ``ngram_vref_table`` rows is still emitted — and it is still counted in
+    ``total``, which is what makes the two agree. Not a hypothetical shape: ``push_ngrams``
+    inserts the vref rows only ``if vref_rows``, so an item pushed with ``vrefs: []``
+    produces one. v3 chose visibility here after its ``INNER JOIN`` form dropped these rows
+    from the page while counting them; that choice is preserved.
+
+    Ordering is by ``ngrams_table.id``. An n-gram has no canonical order — it is a token
+    sequence, not a location — and offset pagination needs a total order on a column that
+    can neither tie nor move, which the primary key is and a lexical sort on ``ngram`` is
+    not (``ngram`` is nullable, non-unique and not indexed).
+
+    Within a row, occurrences are ordered by ``ngram_vref_table.id`` — insertion order,
+    which for a runner push is the order the n-gram was found in. v3 leaves this to the
+    planner, so the same page could come back in a different order twice; ordering it
+    costs a sort over one page's vrefs, not the assessment's, and makes the response
+    reproducible. It is **not** canonical Bible order, which would need a join to
+    ``verse_reference`` per page; nothing here claims it is.
+    """
+    ngram_rows = (
+        await db.execute(
+            select(
+                NgramsTable.id,
+                NgramsTable.assessment_id,
+                NgramsTable.ngram,
+                NgramsTable.ngram_size,
+            )
+            .where(NgramsTable.assessment_id == assessment_id)
+            .order_by(NgramsTable.id)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+
+    ngram_ids = [row.id for row in ngram_rows]
+    occurrences: dict[int, list[str]] = {}
+    if ngram_ids:
+        vref_rows = (
+            await db.execute(
+                select(NgramVrefTable.ngram_id, NgramVrefTable.vref)
+                .where(NgramVrefTable.ngram_id.in_(ngram_ids))
+                .order_by(NgramVrefTable.id)
+            )
+        ).all()
+        for row in vref_rows:
+            occurrences.setdefault(row.ngram_id, []).append(row.vref)
+
+    return [
+        {
+            "id": row.id,
+            "assessment_id": row.assessment_id,
+            "ngram": row.ngram,
+            "ngram_size": row.ngram_size,
+            "occurrences": occurrences.get(row.id, []),
+        }
+        for row in ngram_rows
+    ]
+
+
+async def get_ngrams(
+    db: AsyncSession, user: UserDB, assessment_id: int, *, limit: int, offset: int
+) -> tuple[list[dict], int]:
+    """One page of an assessment's n-grams, plus the total ignoring ``limit``/``offset``.
+
+    Authorized by :func:`get_assessment` with ``types=NGRAMS_ASSESSMENT_TYPES``, so this
+    read is refused for an assessment of another type by the same clause that refuses one
+    the caller cannot see — the family's single predicate, not a second one written here.
+
+    ``total`` is a plain ``COUNT`` over the same ``WHERE`` the page uses, served by the
+    leading column of ``ix_ngrams_table_assessment_id_id``. v3 memoises this number in a
+    process-local dict with a TTL, guarded by the contract that a finished assessment's
+    n-grams do not grow — which #651 records as *policy, not enforcement*, since nothing
+    stops a late push from adding rows. That cache is v3 code and frozen, and a cache
+    whose invalidation rests on an unenforced contract is not worth inheriting for a count
+    an index already answers. If it ever measures slow, that is a finding to report, not a
+    cache to add quietly.
+
+    Two statements, so the usual rare offset-pagination drift between ``total`` and the
+    page applies, exactly as on ``/results``. No watermark either: neither table carries a
+    modification timestamp, so this list has no delta feed.
+    """
+    await get_assessment(db, user, assessment_id, types=NGRAMS_ASSESSMENT_TYPES)
+    total = await db.scalar(
+        select(func.count())
+        .select_from(NgramsTable)
+        .where(NgramsTable.assessment_id == assessment_id)
+    )
+    rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
+    return rows, total or 0
