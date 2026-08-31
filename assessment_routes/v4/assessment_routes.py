@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Five endpoints:
+happens somewhere else. Nine endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -17,10 +17,14 @@ happens somewhere else. Five endpoints:
   each with the verses it occurs in. The one result read whose rows are not verses.
 * ``GET    /v4/assessments/{id}/similar-verses`` — the ``tfidf`` type's nearest-neighbour
   search. Not a listing and not paginated; see its own contract note below.
+* ``GET    /v4/assessments/{id}/alignment-scores`` — the ``word-alignment`` type's
+  word-level pairings, paginated. Absorbs v3's ``GET /alignmentmatches``.
+* ``GET    /v4/assessments/{id}/missing-words`` — the same type's poorly-aligned words,
+  weighed against peer assessments named by ``against``.
 
-The remaining typed result sub-resources (``/text-lengths``, ``/alignment-scores``,
-``/missing-words``) are the rest of #893 and land in follow-up PRs, as does the
-comparisons family.
+The remaining typed result sub-resources (``/text-lengths``, ``/score-comparison`` and
+the ``POST`` form of ``/similar-verses``) are the rest of #893 and land in follow-up
+PRs.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -90,21 +94,53 @@ own small envelope naming the query point. The path is ``/similar-verses`` rathe
 naming the resource after TF-IDF would describe how the answer is computed. A deliberate
 departure from guide §15.3, which plans ``/tfidf``.
 
+**The two alignment reads are one handler pair, not four endpoints.** v3 spreads this
+table across ``GET /alignmentscores``, ``GET /alignmentmatches`` and
+``GET /missingwords``. Here ``/alignmentmatches`` is *gone*, folded into
+``/alignment-scores`` as ``source`` + ``min_score``, because it returns the same rows
+narrowed — the Q2/Q3 test for "filter, not resource". ``/missing-words`` keeps its own
+endpoint by the same test, since it adds fields derived from *other* assessments, which
+is what also kept ``/score-comparison`` off ``/results``.
+
+The fold is what closes **#858** (``/alignmentmatches`` is unauthenticated) — not by
+adding a check, but by leaving no separate endpoint on which one could be forgotten.
+**#860** (``/missingwords`` authenticates but never authorizes) closes the same way: the
+read has no authorization code of its own, only :func:`assessment_service.get_assessment`.
+Both are properties of the design rather than arguments about scheduling — the v3
+exposure lasts until v3 is retired regardless of when this ships.
+
+**``missing-words`` is not an assessment type, and the endpoint says so.** Both reads
+take a ``word-alignment`` assessment id. "Pass the id of the missing-words assessment"
+is the natural guess and there is no such thing to pass — no enum value, no table, no
+runner.
+
+**``against`` peers are authorized by the same predicate as the subject, then checked
+for comparability.** An unreachable peer is the family's ordinary ``404`` naming *that*
+id; a readable but incomparable one — different reference, or a revision sharing a Bible
+version with the subject's revision or reference — is a ``422``
+``INCOMPATIBLE_BASELINE_ASSESSMENT`` naming it. v3 dropped such peers silently, which
+was defensible when the caller handed over a list of revisions to be resolved and is not
+now that they name assessments explicitly.
+
 **The list's filters cannot 404.** They are applied after the visibility predicate and
 only ever narrow what the caller could already see, so a ``revision_id`` outside the
 caller's groups yields an empty page. That differs on purpose from
 ``GET /v4/revisions``, whose ``version_id`` names the collection's parent and is
 therefore validated; see :func:`assessment_service.list_assessments`.
 
-**The results read declares its own pagination and its own scope, and neither is
+**The result reads declare their own pagination and their own scope, and neither is
 re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than the
 shared catalog params (20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
-the shared cap. :class:`ResultScopeParams` is a thin adapter over
-:class:`~api_v4.schemas.assessment.ResultScope`, whose ``model_validator`` holds the four
-parameters' invariants, so an inconsistent combination cannot reach the service at all.
-That is #486's principle: v4 satisfies these by construction instead of by a runtime
-guard like v3's ``validate_parameters``.
+the shared cap. The same bounds apply to both alignment reads: the bound follows the
+row's weight, and these are small fixed-width rows.
+:class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
+:class:`~api_v4.schemas.assessment.VerseScope` and its ``aggregate``-carrying subclass,
+whose ``model_validator`` methods hold the parameters' invariants, so an inconsistent
+combination cannot reach the service at all. That is #486's principle: v4 satisfies
+these by construction instead of by a runtime guard like v3's ``validate_parameters``.
+The word-keyed reads take the ``VerseScope`` half only — a row there is a word, so there
+is no per-verse set for an ``aggregate`` to roll up.
 """
 
 __version__ = "v4"
@@ -133,19 +169,24 @@ from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
 from api_v4.schemas.assessment import (
     BOOK_ABBREVIATION_LENGTH,
     VREF_MAX_LENGTH,
+    AlignmentScoreOut,
+    AlignmentScoreType,
     AssessmentCreate,
     AssessmentJob,
     AssessmentOut,
     AssessmentResultAggregateOut,
     AssessmentResultOut,
     AssessmentResultRow,
+    MissingWordOut,
     NgramResultOut,
     ResultAggregate,
     ResultScope,
     SimilarVerseOut,
     SimilarVersesOut,
+    VerseScope,
 )
 from assessment_routes.v4 import assessment_service
+from config import settings
 from database.dependencies import get_db
 from database.models import Assessment
 from database.models import UserDB as UserModel
@@ -165,6 +206,13 @@ router = fastapi.APIRouter(prefix="/assessments", tags=["Assessments"])
 #: different things — a page of a list versus the depth of a ranking.
 SIMILAR_VERSES_DEFAULT_LIMIT = 10
 SIMILAR_VERSES_MAX_LIMIT = 100
+
+#: Bound on the ``source`` filter of ``GET /v4/assessments/{id}/alignment-scores``. The
+#: column is unbounded ``Text``, but the values are single tokenized words, so a value
+#: this long matches nothing and is a client bug worth reporting as a 422 rather than
+#: turning into a full scan for a string no index entry can hold. v3 declares ``word: str``
+#: with no bound at all.
+ALIGNMENT_WORD_MAX_LENGTH = 200
 
 #: Cadence advertised on the 202, in seconds. Required rather than inherited — there
 #: is no v4-wide default, precisely so a slice cannot pick up a cadence tuned for
@@ -543,26 +591,67 @@ def _scope_description(field: str) -> str:
     return ResultScope.model_fields[field].description
 
 
-class ResultScopeParams:
-    """Adapter turning the four scope query parameters into one validated ``ResultScope``.
+def _book_query():
+    """A fresh ``Query`` for ``book``, built per use rather than shared.
 
-    Consumed as ``scope: ResultScopeParams = Depends()``; the handler then passes
-    ``scope.scope`` to the service.
+    Two dependency classes declare these three parameters, and a ``Query`` object is a
+    mutable ``FieldInfo`` that FastAPI fills in (``alias``, among others) while building
+    each route. Handing the same instance to two signatures would let one route's build
+    write into the other's declaration, so each call makes its own. The *description*
+    still comes from :func:`_scope_description`, which is the drift that actually
+    matters.
+    """
+    return Query(
+        None,
+        min_length=BOOK_ABBREVIATION_LENGTH,
+        max_length=BOOK_ABBREVIATION_LENGTH,
+        description=_scope_description("book"),
+    )
+
+
+def _chapter_query():
+    """A fresh ``Query`` for ``chapter``; see :func:`_book_query`."""
+    return Query(None, ge=1, description=_scope_description("chapter"))
+
+
+def _verse_query():
+    """A fresh ``Query`` for ``verse``; see :func:`_book_query`."""
+    return Query(None, ge=1, description=_scope_description("verse"))
+
+
+def _validated_scope(model, **values):
+    """Build a scope model, re-raising its ``ValidationError`` as a request error.
+
+    A Pydantic error escaping a dependency would reach the #828 catch-all as a **500**,
+    turning a malformed request into a server fault. Re-raised, it lands on the handler
+    that already shapes FastAPI's own validation failures, so an inconsistent scope is
+    the same ``422 VALIDATION_ERROR`` envelope as a misspelled ``aggregate`` — one error
+    shape for the whole endpoint. ``loc`` is prefixed with ``"query"`` because that is
+    where the values came from; Pydantic reports a model-level error with an empty
+    ``loc``.
+    """
+    try:
+        return model(**values)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [{**error, "loc": ("query", *error["loc"])} for error in exc.errors()]
+        ) from exc
+
+
+class VerseScopeParams:
+    """Adapter turning ``book``/``chapter``/``verse`` into one validated ``VerseScope``.
+
+    Consumed as ``scope: VerseScopeParams = Depends()``; the handler then passes
+    ``scope.scope`` to the service. Used by the reads that narrow to verses but do not
+    roll up — ``/alignment-scores`` and ``/missing-words``, whose rows are *words*, so
+    there is no per-verse set for an ``aggregate`` to summarize.
 
     Why an adapter rather than the model itself. FastAPI 0.115 can take a Pydantic model
     as a query-parameter container, but this version renders it in OpenAPI as a *single*
     parameter whose schema is a ``$ref`` — so a generated client would send one object
-    instead of four query parameters. Declaring the parameters here keeps the documented
-    surface flat while :class:`~api_v4.schemas.assessment.ResultScope` stays the one place
+    instead of three query parameters. Declaring the parameters here keeps the documented
+    surface flat while :class:`~api_v4.schemas.assessment.VerseScope` stays the one place
     the invariants live.
-
-    Why the ``ValidationError`` is re-raised as a ``RequestValidationError``: a Pydantic
-    error escaping a dependency would reach the #828 catch-all as a **500**, turning a
-    malformed request into a server fault. Re-raised, it lands on the handler that already
-    shapes FastAPI's own validation failures, so an inconsistent scope is the same
-    ``422 VALIDATION_ERROR`` envelope as a misspelled ``aggregate`` — one error shape for
-    the whole endpoint. ``loc`` is prefixed with ``"query"`` because that is where the
-    values came from; Pydantic reports a model-level error with an empty ``loc``.
 
     The ``Query`` bounds duplicate the model's own bounds so OpenAPI advertises them
     (``BOOK_ABBREVIATION_LENGTH``, ``ge=1``). They are the same numbers from the same
@@ -572,30 +661,37 @@ class ResultScopeParams:
 
     def __init__(
         self,
-        book: Optional[str] = Query(
-            None,
-            min_length=BOOK_ABBREVIATION_LENGTH,
-            max_length=BOOK_ABBREVIATION_LENGTH,
-            description=_scope_description("book"),
-        ),
-        chapter: Optional[int] = Query(
-            None, ge=1, description=_scope_description("chapter")
-        ),
-        verse: Optional[int] = Query(
-            None, ge=1, description=_scope_description("verse")
-        ),
+        book: Optional[str] = _book_query(),
+        chapter: Optional[int] = _chapter_query(),
+        verse: Optional[int] = _verse_query(),
+    ) -> None:
+        self.scope: VerseScope = _validated_scope(
+            VerseScope, book=book, chapter=chapter, verse=verse
+        )
+
+
+class ResultScopeParams:
+    """:class:`VerseScopeParams` plus ``aggregate``, for the reads that roll up.
+
+    A sibling rather than a subclass: FastAPI reads the ``__init__`` signature it is
+    given, so a subclass would have to redeclare all four parameters anyway, and the two
+    classes would then differ only in a line that is easy to miss. The shared half is
+    :class:`~api_v4.schemas.assessment.ResultScope` inheriting ``VerseScope``, where the
+    rules actually live.
+    """
+
+    def __init__(
+        self,
+        book: Optional[str] = _book_query(),
+        chapter: Optional[int] = _chapter_query(),
+        verse: Optional[int] = _verse_query(),
         aggregate: Optional[ResultAggregate] = Query(
             None, description=_scope_description("aggregate")
         ),
     ) -> None:
-        try:
-            self.scope: ResultScope = ResultScope(
-                book=book, chapter=chapter, verse=verse, aggregate=aggregate
-            )
-        except ValidationError as exc:
-            raise RequestValidationError(
-                [{**error, "loc": ("query", *error["loc"])} for error in exc.errors()]
-            ) from exc
+        self.scope: ResultScope = _validated_scope(
+            ResultScope, book=book, chapter=chapter, verse=verse, aggregate=aggregate
+        )
 
 
 def _to_result_out(row, continuations: dict) -> AssessmentResultOut:
@@ -879,6 +975,209 @@ async def get_assessment_similar_verses(
         query_vref=vref,
         limit=limit,
         items=[SimilarVerseOut(**hit) for hit in hits],
+    )
+
+
+@router.get(
+    "/{assessment_id}/alignment-scores",
+    response_model=V4Page[AlignmentScoreOut],
+)
+async def get_assessment_alignment_scores(
+    assessment_id: int,
+    page: ResultPaginationParams = Depends(),
+    scope: VerseScopeParams = Depends(),
+    score_type: AlignmentScoreType = Query(
+        AlignmentScoreType.top,
+        description=(
+            "Which of the two stored score sets to read. `top` (the default) is one row "
+            "per source word per verse — its single best-scoring target. `threshold` is "
+            "every target that scored above the runner's cutoff, so one source word can "
+            "appear several times in a verse with different targets. **There is no "
+            "fallback between them**: an assessment whose runner wrote only one set "
+            "answers an empty page for the other, which is the honest answer. Silently "
+            "serving the other table would return different rows under the same request "
+            "with nothing in the response saying so."
+        ),
+    ),
+    source: Optional[str] = Query(
+        None,
+        min_length=1,
+        max_length=ALIGNMENT_WORD_MAX_LENGTH,
+        description=(
+            "Return only alignments of this source-side word. **Case-insensitive** — "
+            "stored source words are lower-cased, and the value you send is lowered to "
+            "match. Together with `min_score` this is v3's `GET /alignmentmatches`, "
+            "which no longer exists as its own endpoint."
+        ),
+    ),
+    min_score: Optional[float] = Query(
+        None,
+        description=(
+            "Return only alignments scoring **at or above** this value. v3's `threshold` "
+            "on `/alignmentmatches`, renamed to say which way it cuts; v3's default of "
+            f"{settings.alignment_threshold} is not carried over, because here the "
+            "parameter is an optional filter rather than half of the endpoint's meaning."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> V4Page[AlignmentScoreOut]:
+    """Read one assessment's word-level alignment scores, in canonical Bible order.
+
+    Serves `type = word-alignment` only. An assessment of any other type reports
+    `404 ASSESSMENT_NOT_FOUND` — the same answer as one that does not exist, is outside
+    your groups, or is a training run.
+
+    **A row here is a word pairing, not a verse.** One source word aligned to one target
+    word in one verse, so a single verse contributes as many rows as it has source words.
+    The per-verse score for the same assessment is a different read: `/results`.
+
+    **This endpoint absorbs v3's `GET /alignmentmatches`.** That endpoint was this read
+    filtered to one `source` above one `min_score`, and it does not get a v4 equivalent
+    of its own — which is also how its missing authentication (#858) stops existing
+    rather than being fixed: there is no separate handler left to forget the check.
+    Everything it returned is here, verse text included.
+
+    **Filter before you page.** An unfiltered word-alignment assessment holds on the
+    order of 242,000 rows — roughly 2,400 pages at the maximum page size. `source`,
+    `min_score` and the `book`/`chapter`/`verse` scope are how this read is meant to be
+    used, not conveniences bolted on.
+
+    **Ordering is canonical vref order, then `source`, then the stored row id** — Bible
+    order, not `vref`'s lexical order and not v3's, which declared no ordering at all and
+    so could return the same row on two pages while skipping another. The `source` and
+    `id` keys are what make the order total: a verse holds many source words, and on
+    `score_type=threshold` a single `(verse, source)` legitimately holds several rows.
+
+    **Verse text always comes back.** `text` is the assessed revision's stored text for
+    the verse and `reference_text` is the reference's, fetched once per page rather than
+    once per row. For a row whose `vrefs` lists more than one verse this is the whole
+    merged span's text, which is what the alignment actually ran over.
+
+    **There is no `aggregate`.** Rolling word rows up to a chapter mean would produce a
+    number that looks like the one `/results` gives for the same assessment and is not
+    it. Sending `aggregate` here is ignored, not an error.
+    """
+    try:
+        rows, total = await assessment_service.get_alignment_scores(
+            db,
+            current_user,
+            assessment_id,
+            scope=scope.scope,
+            score_type=score_type,
+            source=source,
+            min_score=min_score,
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, exc.assessment_id) from exc
+    # No next_updated_since, for the reason /results gives: neither alignment table
+    # carries a modification timestamp, so there is no watermark to publish.
+    return V4Page[AlignmentScoreOut].create(
+        items=[AlignmentScoreOut(**row) for row in rows],
+        total=total,
+        pagination=page,
+    )
+
+
+@router.get(
+    "/{assessment_id}/missing-words",
+    response_model=V4Page[MissingWordOut],
+)
+async def get_assessment_missing_words(
+    assessment_id: int,
+    page: ResultPaginationParams = Depends(),
+    scope: VerseScopeParams = Depends(),
+    max_score: float = Query(
+        settings.missing_words_missing_threshold,
+        description=(
+            "Return only words this assessment aligned **strictly below** this score — "
+            "the definition of "
+            f'"missing" here. Defaults to {settings.missing_words_missing_threshold}. '
+            "v3's `threshold`, renamed to say which way it cuts (note the opposite "
+            "direction from `/alignment-scores`' inclusive `min_score`)."
+        ),
+    ),
+    against: Optional[List[int]] = Query(
+        None,
+        description=(
+            "Peer **assessment** ids to weigh this assessment's alignments against "
+            "(repeated parameter, e.g. `?against=1&against=2`). Each must be a "
+            "word-alignment assessment you can read, aligned against the **same "
+            "reference** as this one, and on a **different Bible version** from this "
+            "assessment's revision and reference — a sibling revision is not an "
+            "independent witness. A peer failing either rule is a `422` naming it, not a "
+            "silently dropped baseline as in v3. A peer named twice counts once — it is "
+            "still one witness. These are assessment ids, not revision ids: v3's "
+            "`baseline_ids` named revisions and let the server pick a run."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> V4Page[MissingWordOut]:
+    """Read words a translation appears to have dropped, judged against peer translations.
+
+    **Pass the id of a `word-alignment` assessment.** `missing-words` is not an
+    assessment type — there is no such value in the type enum, no such table and no such
+    runner. It is a *reading* of a word-alignment assessment's low-scoring rows, so the
+    id in the path is the alignment run whose translation you are examining. An
+    assessment of any other type reports `404 ASSESSMENT_NOT_FOUND`, the same answer as
+    one that does not exist or is outside your groups. (v3 authenticated this endpoint
+    but never authorized it, #860; here it goes through the family's one predicate like
+    every other read on this parent.)
+
+    **A row is a source word this assessment aligned poorly** — below `max_score` — in
+    one verse. That alone is weak evidence: a low score can mean the word is genuinely
+    untranslated, or merely that the aligner did badly on it.
+
+    **`against` is what turns a low score into evidence.** Name peer assessments of the
+    same reference, and each row gains a `targets` list saying what each peer made of the
+    same word, plus a `flag` that is true when the peers aligned it well (mean above
+    0.35) *and* far better than this assessment did (more than five times its score).
+    Without `against`, `targets` is empty and `flag` is always false — the read is then
+    just `/alignment-scores` filtered to low scores.
+
+    **Every peer appears in every row's `targets`, including peers that had nothing.**
+    A peer with no alignment for the word is reported with `target: null` rather than
+    omitted, because its silence is part of the evidence. `target` is also null when the
+    peer aligned the word too weakly to count as a translation; the two causes are not
+    distinguished, which is v3's behaviour preserved.
+
+    **This read is paginated, which v3's was not.** v3 returned the whole filtered set
+    and declared no page parameters at all, so a client that sent them had them silently
+    discarded. `limit` is capped at the same 1000 the other result reads use. In practice
+    the filtered set is small — measured at a few hundred rows for a whole book — so a
+    book-scoped request is usually one page, but a whole-Bible request is not.
+
+    Rows are in canonical Bible order, then by source word, then by stored row id.
+    """
+    try:
+        rows, total = await assessment_service.get_missing_words(
+            db,
+            current_user,
+            assessment_id,
+            scope=scope.scope,
+            max_score=max_score,
+            against=against or [],
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        # exc.assessment_id, not the path id: an `against` peer the caller cannot read
+        # is refused in the same shape as an unreachable subject, and the details must
+        # name the id that was actually refused or the caller cannot tell which.
+        raise _not_found_error(exc, exc.assessment_id) from exc
+    except assessment_service.IncompatiblePeerAssessment as exc:
+        raise V4APIError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="INCOMPATIBLE_BASELINE_ASSESSMENT",
+            message=str(exc),
+            details={"assessment_id": exc.assessment_id, "reason": exc.reason},
+        ) from exc
+    # No next_updated_since, for the reason /results gives.
+    return V4Page[MissingWordOut].create(
+        items=[MissingWordOut(**row) for row in rows], total=total, pagination=page
     )
 
 

@@ -8,10 +8,11 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read, delete, and three of the typed result reads** — the generic
-per-verse ``/results``, ``/ngrams``, and the ``/similar-verses`` ranking. The remaining
-sub-resources (``/text-lengths``, ``/alignment-scores``, ``/missing-words``) and the
-comparisons family are follow-ups on #893; the runner-facing
+Scope is **create, read, delete, and five of the typed result reads** — the generic
+per-verse ``/results``, ``/ngrams``, the ``/similar-verses`` ranking, and the two
+word-alignment reads ``/alignment-scores`` and ``/missing-words``. The remaining
+sub-resources (``/text-lengths``, ``/score-comparison``, and the ``POST`` form of
+``/similar-verses``) are follow-ups on #893; the runner-facing
 surface (``results_push_*``, ``eflomal-*``, ``tfidf-artifacts/*``, the status ``PATCH``)
 stays on v3 permanently — it is our own code talking to our own code and is not client
 contract (#842's 2026-08-25b decision 4).
@@ -272,21 +273,68 @@ The ``<range>`` marker cannot be a hit's text, for the reason :func:`get_results
 records: a verse marked ``<range>`` is merged away by ``GET /v3/text`` before the runner
 ever sees it, so it gets no vector of its own, and the anchor verse's stored text is the
 whole merged span — exactly the text that was vectorized.
+
+
+How the alignment reads are shaped (:func:`get_alignment_scores`, :func:`get_missing_words`)
+--------------------------------------------------------------------------------------------
+
+Both serve ``word-alignment`` and both read the same tables, which is why they were
+built together: they settle the same ordering, the same scoping and the same span
+handling once rather than twice.
+
+* **The row is a word, not a verse.** One source word aligned to one target word in one
+  verse. That single fact decides most of the rest: no ``aggregate`` (a chapter mean over
+  word rows would look like the number ``/results`` gives for the same assessment and not
+  be it), a total order that has to include ``source`` and ``id``, and no ``vrefs``-based
+  merge question beyond the labelling one ``/results`` already answered.
+* **No deduplication, deliberately — and that is the opposite call from
+  :func:`_deduplicated_results`.** There, two rows for one verse can only be #721's retry
+  duplication, so keeping the first is a repair. Here ``alignment_threshold_scores``
+  legitimately stores every target above the runner's cutoff, so several rows per
+  ``(vref, source)`` are the table's meaning; collapsing them would drop real alternative
+  alignments. Verified against production: no duplicate ``(vref, source)`` at all in
+  ``alignment_top_source_scores``, tens of thousands in ``alignment_threshold_scores``
+  for the same assessments. The trailing ``id`` in the ordering is what makes offset
+  pagination stable without a dedup.
+* **The one open assumption in the Q3 ruling was checked and holds.** The ruling included
+  ``vrefs`` on these rows on the reasoning that the runner writes them off ``GET /v3/text``
+  output, so a ``<range>`` continuation should have no rows here — and noted that, unlike
+  ``assessment_result`` and ``text_lengths_table``, this had never been checked against
+  production. It was, during this build: twelve word-alignment assessments whose revisions
+  carry between 1 and 116 merged spans have **zero** rows on any continuation vref, in
+  both tables. The row shape stands as ruled.
+* **``/alignmentmatches`` folds in; ``/missing-words`` does not.** Same rows narrowed is a
+  filter (``source`` + ``min_score``); same rows plus fields derived from *other*
+  assessments is a sub-resource. That is the same test that kept ``/score-comparison`` off
+  ``/results``.
+* **``score_type`` has no server-side fallback.** The one client probes ``threshold``,
+  finds it empty and silently re-requests ``top``. Doing that here would return a
+  different table's rows under the same request with nothing in the response saying so.
+  An empty page is the honest answer, and the client's probe keeps working against it.
+* **Peer work is bounded by the page, never by the assessment.** v3 aggregates the peers
+  in SQL over the whole unpaginated result set. Here :func:`_peer_alignments` fetches one
+  page's exact ``(book, chapter, verse, source)`` tuples, for the same reason the text
+  hydration and the ``/ngrams`` occurrence lookup are per page.
+
+
 """
 
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, and_, func, or_, select
+from sqlalchemy import JSON, and_, func, or_, select, tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
+    AlignmentScoreType,
     ReferencedAssessmentOptions,
     ResultAggregate,
     ResultScope,
+    VerseScope,
     WordAlignmentOptions,
 )
 from assessment_routes.v3.alignment_filters import eflomal_method_clause
@@ -304,6 +352,8 @@ from assessment_routes.v3.assessment_routes import (
 from bible_routes.v4 import revision_service, verse_range_service
 from config import settings
 from database.models import (
+    AlignmentThresholdScores,
+    AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
     BibleRevision,
@@ -441,6 +491,32 @@ class SimilarityVrefNotFound(AssessmentServiceError):
         self.assessment_id = assessment_id
         self.vref = vref
         super().__init__(f"Assessment {assessment_id} has no vector for vref {vref!r}.")
+
+
+class IncompatiblePeerAssessment(AssessmentServiceError):
+    """An ``against`` peer is readable but cannot serve as a baseline for this subject.
+
+    Separate from :class:`AssessmentNotFound` because it says something about a resource
+    the caller has *already* been shown they may read — the peer went through the same
+    :func:`get_assessment` predicate first, so naming it discloses nothing new. It is a
+    422 rather than a 404 for the same reason: the id is real and visible, the pairing is
+    what is wrong.
+
+    v3 got this guarantee for free and silently. It resolved peers by
+    ``type = 'word-alignment' AND reference_id = :reference_id`` and then dropped any
+    whose revision shared a ``bible_version`` with the subject's revision or reference
+    (``results_query_routes.py:2207-2221``), so an incompatible peer simply never
+    appeared. Naming peers by id removes that guarantee, and a caller who explicitly
+    named an assessment and got a silently smaller baseline population would have no way
+    to know. The guard is kept; the silence is not.
+    """
+
+    def __init__(self, assessment_id: int, reason: str) -> None:
+        self.assessment_id = assessment_id
+        self.reason = reason
+        super().__init__(
+            f"Assessment {assessment_id} cannot be used as a baseline: {reason}"
+        )
 
 
 class AssessmentAccessForbidden(AssessmentServiceError):
@@ -1769,3 +1845,559 @@ async def get_similar_verses(
         }
         for hit in hits
     ]
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/alignment-scores and .../missing-words. See "How the
+# alignment reads are shaped" in the module docstring.
+# ---------------------------------------------------------------------------
+
+#: The only assessment type whose word pairings land in the two alignment tables, and so
+#: the only type ``/alignment-scores`` and ``/missing-words`` serve. A tuple for the same
+#: reason :data:`NGRAMS_ASSESSMENT_TYPES` is one.
+#:
+#: **``missing-words`` is not an assessment type.** ``AssessmentType`` has seven values
+#: and that is not among them; there is no missing-words table, no missing-words runner
+#: and no missing-words row in ``assessment``. v3's own
+#: ``build_missing_words_main_query`` hardcodes ``Assessment.type == 'word-alignment'``.
+#: The client's ``assessment_type = "missing-words"`` is a UI category, not an API type,
+#: so both reads take a **word-alignment** assessment id.
+ALIGNMENT_ASSESSMENT_TYPES = (AssessmentType.word_alignment.value,)
+
+#: ``score_type`` to the table it names. Both are written by the same runner and hold
+#: different rows, so this is a choice of *what to read*, not of how to read it — see
+#: :class:`~api_v4.schemas.assessment.AlignmentScoreType`.
+_ALIGNMENT_SCORE_MODELS = {
+    AlignmentScoreType.top: AlignmentTopSourceScores,
+    AlignmentScoreType.threshold: AlignmentThresholdScores,
+}
+
+#: A peer's alignment counts as a translation of the source word only at or above this
+#: score; below it ``MissingWordTargetOut.target`` is null. v3's
+#: ``settings.missing_words_match_threshold``, read through the same setting so the two
+#: surfaces cannot diverge on a deployment that overrides it.
+MISSING_WORDS_MATCH_THRESHOLD = settings.missing_words_match_threshold
+
+#: The two constants of v3's missing-words flag rule, which is unchanged here: flag the
+#: word when the peers' mean score is **above** :data:`MISSING_WORDS_FLAG_MIN_BASELINE`
+#: *and* more than :data:`MISSING_WORDS_FLAG_RATIO` times this assessment's own score —
+#: the word is well aligned in the peers, and much better aligned there than here, so a
+#: genuine omission is likelier than a scoring artefact.
+#:
+#: Named rather than inline — v3 writes both as literals at
+#: ``results_query_routes.py:2279`` — because they are a published property of ``flag``:
+#: the field description quotes them,
+#: and a reader who wants to know why a row is flagged should find one definition.
+MISSING_WORDS_FLAG_MIN_BASELINE = 0.35
+MISSING_WORDS_FLAG_RATIO = 5
+
+
+def _score_bound(value: float) -> Decimal:
+    """The caller's score threshold as the decimal they actually wrote.
+
+    Both score columns are ``NUMERIC``, and binding a Python float against one is not
+    the no-op it looks like: asyncpg expands the float to its **exact binary value**, so
+    ``min_score=0.8`` arrives as ``0.8000000000000000444...`` and a row stored as exactly
+    ``0.80`` fails an inclusive ``>=``. The strict ``<`` on ``/missing-words`` breaks the
+    other way — ``max_score=0.2`` arrives fractionally *above* ``0.20`` and lets a row on
+    the boundary through, which the endpoint documents as excluded.
+
+    ``Decimal(str(value))`` restores the intent: ``str`` on a float gives the shortest
+    representation that round-trips, so a caller who sent ``0.8`` gets ``Decimal("0.8")``
+    and the comparison happens in the decimal domain the column is stored in. Values with
+    no short form (``0.30000000000000004``) still bind exactly what was parsed.
+
+    Both v3 endpoints have this defect — ``threshold`` is a bare ``float`` there too — so
+    this is a fix rather than a port. It is only visible at a boundary, and only for
+    thresholds that are not binary fractions, which is why it survived: ``0.5`` and
+    ``0.25`` behave correctly by accident and ``0.15``, the missing-words default,
+    happens to round the safe way.
+    """
+    return Decimal(str(value))
+
+
+def _alignment_scope_clauses(model, assessment_id: int, scope: VerseScope) -> list:
+    """WHERE clauses for one assessment's placeable alignment rows, narrowed by ``scope``.
+
+    The same shape as :func:`_placeable_results`, and here for the same two reasons: the
+    read formats ``vref`` from ``book``/``chapter``/``verse`` so it must not emit
+    ``"MAT None:None"``, and the clauses are applied to the ``COUNT`` as well as the page
+    so ``total`` describes exactly the set that is served.
+
+    Checked against production rather than assumed: across three sampled assessments
+    (17k-172k rows each, both tables) there is **not one** null in ``vref``, ``book``,
+    ``chapter``, ``verse``, ``source``, ``target``, ``score``, ``flag`` or ``hide``, and
+    ``vref`` equals ``book || ' ' || chapter || ':' || verse`` on every row. So the guard
+    excludes nothing that exists; it is the ``book`` join being an inner join that
+    supplies the fourth condition, exactly as on ``/results``.
+
+    ``source`` is guarded for a second reason on top of that one: it is *required* on both
+    row models, and a null would be a serialization failure — a 500 on a request that
+    validated cleanly. A row with no source word is not an alignment anyway, so dropping
+    it from the page and from ``total`` together is the honest handling rather than a
+    hidden filter.
+
+    ``book`` is compared to the already-upper-cased scope value directly rather than
+    through ``func.upper(column)``, so the comparison can use
+    ``ix_alignment_scores_grouping``.
+    """
+    clauses = [
+        model.assessment_id == assessment_id,
+        model.chapter.is_not(None),
+        model.verse.is_not(None),
+        model.source.is_not(None),
+    ]
+    if scope.book is not None:
+        clauses.append(model.book == scope.book)
+    if scope.chapter is not None:
+        clauses.append(model.chapter == scope.chapter)
+    if scope.verse is not None:
+        clauses.append(model.verse == scope.verse)
+    return clauses
+
+
+async def _alignment_page(
+    db: AsyncSession, model, clauses: list, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of alignment rows in canonical order, plus the total ignoring the page.
+
+    **Canonical vref order, then ``source``, then ``id``** — Bible order rather than
+    ``vref``'s lexical order, which would sort ``GEN 10:1`` before ``GEN 2:1`` and put
+    the books alphabetically. v3 orders these rows by *nothing at all*
+    (``get_alignment_scores`` issues a bare ``select(model)`` with no ``ORDER BY``), so
+    its pages are in whatever order the scan produced and a client paging through them
+    can legitimately see a row twice and miss another. Offset pagination is stable only
+    under a total order, which is what the trailing ``id`` guarantees.
+
+    ``source`` and ``id`` are both needed, and neither is decoration. A verse holds many
+    source words, so ``(book, chapter, verse)`` alone ties; and on the ``threshold``
+    table ``(vref, source)`` ties too, because that table stores **every** target above
+    the runner's cutoff rather than the best one — measured at roughly 30,000 duplicated
+    ``(vref, source)`` pairs in a 172,000-row assessment. That is also why this read does
+    **not** deduplicate the way :func:`_deduplicated_results` does: there, two rows for
+    one verse can only be #721's retry duplication, so keeping the first is a repair;
+    here several rows per ``(vref, source)`` are the stored meaning of the table, and
+    collapsing them would drop real alternative alignments.
+
+    The ``book_reference`` join is what turns the stored abbreviation into a sort key. It
+    forces a sort over the matched set, which for an unfiltered assessment is ~242,000
+    rows on every page — the reason the endpoint documents ``source`` and ``min_score``
+    as how the read is meant to be used rather than as conveniences.
+    """
+    placed = (
+        select(
+            model.id,
+            model.assessment_id,
+            model.book,
+            model.chapter,
+            model.verse,
+            model.source,
+            model.target,
+            model.score,
+            model.flag,
+            model.hide,
+            model.note,
+            BookReference.number.label("book_number"),
+        )
+        .join(BookReference, BookReference.abbreviation == model.book)
+        .where(*clauses)
+        .subquery()
+    )
+    total = await db.scalar(select(func.count()).select_from(placed))
+    rows = (
+        await db.execute(
+            select(placed)
+            .order_by(
+                placed.c.book_number,
+                placed.c.chapter,
+                placed.c.verse,
+                placed.c.source,
+                placed.c.id,
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return list(rows), total or 0
+
+
+async def get_alignment_scores(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    scope: VerseScope,
+    score_type: AlignmentScoreType,
+    source: str | None,
+    min_score: float | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int]:
+    """One page of a word-alignment assessment's word pairings, plus the total.
+
+    Authorized by :func:`get_assessment` with ``types=ALIGNMENT_ASSESSMENT_TYPES``, the
+    family's single visibility predicate, so an assessment of a type this read does not
+    serve is refused by the same clause as one the caller cannot see. **This is also how
+    #858 is closed**: v3's ``GET /alignmentmatches`` is unauthenticated, and it does not
+    gain a check here — it ceases to exist, folding into this read as ``source`` +
+    ``min_score``, so there is no separate endpoint left on which the check could be
+    forgotten.
+
+    ``source`` is matched **case-insensitively by lowering the caller's value**, not the
+    column: v3 does ``source == word.lower()``, and every stored source in the sampled
+    production assessments is already lower case, so lowering the column would only cost
+    the index for no behaviour. ``min_score`` cuts inclusively (``>=``), which is v3's
+    ``threshold`` on ``/alignmentmatches`` renamed to say which way it cuts.
+
+    Verse text is hydrated **one query per page over that page's distinct vrefs**, never
+    one per row, through the same :func:`_verse_texts` that serves ``/similar-verses`` —
+    so the lowest-id row wins deterministically among duplicate ``verse_text`` rows.
+    Returning the text always is what makes the ``/alignmentmatches`` fold lossless: that
+    endpoint joins ``verse_text`` twice, and dropping the two fields would lose output.
+    Deliberately the opposite call from ``/results``, which dropped its text fields
+    because the parameter that would have filled them was ignored and they were always
+    null — nothing was lost there, and something would be lost here.
+
+    ``vrefs`` comes from the revision's ``<range>`` span map, on the same reasoning as
+    ``/results``: the runner writes these rows off ``GET /v3/text`` output, which merges
+    the spans before the assessment sees them, so a continuation verse should have no
+    rows here at all. The ruling flagged that as its one unverified assumption; it was
+    checked against production during this build and **holds** — twelve word-alignment
+    assessments whose revisions carry between 1 and 116 merged spans have zero rows on
+    any continuation vref, in both alignment tables.
+
+    Returns plain dicts rather than ORM rows because ``vref``, ``vrefs`` and the two text
+    fields are all derived; the router has nothing left to compute.
+    """
+    assessment = await get_assessment(
+        db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES
+    )
+    model = _ALIGNMENT_SCORE_MODELS[score_type]
+    clauses = _alignment_scope_clauses(model, assessment_id, scope)
+    if source is not None:
+        clauses.append(model.source == source.lower())
+    if min_score is not None:
+        clauses.append(model.score >= _score_bound(min_score))
+
+    rows, total = await _alignment_page(db, model, clauses, limit=limit, offset=offset)
+    vrefs = [f"{row.book} {row.chapter}:{row.verse}" for row in rows]
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+    distinct_vrefs = list(dict.fromkeys(vrefs))
+    revision_texts = await _verse_texts(db, assessment.revision_id, distinct_vrefs)
+    reference_texts = await _verse_texts(db, assessment.reference_id, distinct_vrefs)
+    return [
+        {
+            "id": row.id,
+            "assessment_id": row.assessment_id,
+            "vref": vref,
+            "vrefs": [
+                vref,
+                *continuations.get((row.book, row.chapter, row.verse), ()),
+            ],
+            "source": row.source,
+            "target": row.target,
+            "score": row.score,
+            "flag": bool(row.flag),
+            "hide": bool(row.hide),
+            "note": row.note,
+            "text": revision_texts.get(vref),
+            "reference_text": reference_texts.get(vref),
+        }
+        for row, vref in zip(rows, vrefs)
+    ], total
+
+
+async def _missing_words_peers(
+    db: AsyncSession, user: UserDB, subject: Assessment, against: list[int]
+) -> list[Assessment]:
+    """The ``against`` assessments, authorized and checked for comparability.
+
+    Every peer goes through :func:`get_assessment` with the *same* ``types`` filter as
+    the subject, so an unreachable peer is the family's ordinary 404 rather than a
+    special case, and the caller learns nothing about ids outside their groups. That is
+    what makes authorization here structural instead of remembered — the property Q2
+    chose the ``{id}`` + ``against`` shape for.
+
+    Two comparability rules then apply, both replacing a guarantee v3 got implicitly from
+    resolving peers by content and both reported as a 422 naming the offending id:
+
+    * **Same reference.** v3 selects baselines with ``reference_id = :reference_id``, so
+      a peer aligned against a different reference could never be chosen. Scores against
+      a different reference are not on a comparable scale, and the mean of them is the
+      number ``flag`` is computed from.
+    * **A different Bible version.** v3 drops any baseline whose revision shares a
+      ``bible_version`` with the subject's revision *or* its reference: a sibling
+      revision of the text being assessed is not an independent witness, and neither is a
+      revision of the reference the subject was aligned against. This also rules out
+      naming the subject as its own peer, without a separate check.
+
+    **Duplicate ids are collapsed, first occurrence wins the order.** A peer named twice
+    is still one witness, and keeping both entries would count its score twice in the
+    mean that decides ``flag`` — a caller could flag any word by repeating one baseline.
+    Collapsing also bounds the authorization work by the number of *distinct* peers
+    rather than by the length of a list the caller controls, which is what keeps the
+    one-``get_assessment``-per-peer loop honest: the loop is how the family's single
+    predicate stays the only authorization code here, and batching it into a second query
+    would mean writing the visibility rule twice.
+    """
+    peers = [
+        await get_assessment(db, user, peer_id, types=ALIGNMENT_ASSESSMENT_TYPES)
+        # dict.fromkeys, not set(): duplicates go, the caller's ordering stays, and
+        # ``targets`` then lines up with the order they named the peers in.
+        for peer_id in dict.fromkeys(against)
+    ]
+    if not peers:
+        return []
+
+    subject_versions = set(
+        (
+            await db.execute(
+                select(BibleRevision.bible_version_id).where(
+                    BibleRevision.id.in_(
+                        [
+                            id_
+                            for id_ in (subject.revision_id, subject.reference_id)
+                            if id_ is not None
+                        ]
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    peer_versions = dict(
+        (
+            await db.execute(
+                select(BibleRevision.id, BibleRevision.bible_version_id).where(
+                    BibleRevision.id.in_([peer.revision_id for peer in peers])
+                )
+            )
+        ).all()
+    )
+    for peer in peers:
+        if peer.reference_id != subject.reference_id:
+            raise IncompatiblePeerAssessment(
+                peer.id,
+                f"it was aligned against reference revision {peer.reference_id}, not "
+                f"{subject.reference_id}, so its scores are not on a comparable scale.",
+            )
+        if peer_versions.get(peer.revision_id) in subject_versions:
+            raise IncompatiblePeerAssessment(
+                peer.id,
+                f"revision {peer.revision_id} belongs to the same Bible version as the "
+                "subject's revision or reference, so it is not an independent baseline.",
+            )
+    return peers
+
+
+async def _peer_alignments(
+    db: AsyncSession, peers: list[Assessment], keys: list[tuple]
+) -> dict[tuple, dict[int, object]]:
+    """``{(book, chapter, verse, source): {peer_assessment_id: row}}`` for one page.
+
+    One statement for the whole page over the exact ``(book, chapter, verse, source)``
+    tuples it holds, rather than one per row or a broad ``vref IN (...) AND
+    source IN (...)`` that would over-fetch the cross product of the two lists. The
+    four-column tuple matches ``ix_alignment_scores_grouping``.
+
+    v3 does this work in SQL, grouping the peers together with ``avg(score)`` and a
+    ``jsonb_object_agg`` keyed by revision id, over the whole unpaginated result set.
+    Doing it per page is what pagination requires — the aggregate has to cover this
+    page's keys, not the assessment's — and keeping the rows rather than pre-aggregating
+    them is what lets ``targets`` carry each peer's assessment id, which a mean cannot.
+
+    ``alignment_top_source_scores`` holds at most one row per ``(assessment, vref,
+    source)`` — the *top* target for each source word, verified across three production
+    assessments with no duplicate pair at all — so the inner mapping cannot lose a row.
+    Should #721's retry duplication ever produce one, the lowest id wins, matching the
+    convention the rest of this module applies to that hazard.
+    """
+    if not peers or not keys:
+        return {}
+    peer_ids = {peer.id for peer in peers}
+    rows = (
+        await db.execute(
+            select(
+                AlignmentTopSourceScores.id,
+                AlignmentTopSourceScores.assessment_id,
+                AlignmentTopSourceScores.book,
+                AlignmentTopSourceScores.chapter,
+                AlignmentTopSourceScores.verse,
+                AlignmentTopSourceScores.source,
+                AlignmentTopSourceScores.target,
+                AlignmentTopSourceScores.score,
+            )
+            .where(
+                AlignmentTopSourceScores.assessment_id.in_(peer_ids),
+                tuple_(
+                    AlignmentTopSourceScores.book,
+                    AlignmentTopSourceScores.chapter,
+                    AlignmentTopSourceScores.verse,
+                    AlignmentTopSourceScores.source,
+                ).in_(keys),
+            )
+            .order_by(AlignmentTopSourceScores.id)
+        )
+    ).all()
+    by_key: dict[tuple, dict[int, object]] = {}
+    for row in rows:
+        key = (row.book, row.chapter, row.verse, row.source)
+        # setdefault, ordered by id ascending: the lowest-id row wins if the natural key
+        # is ever duplicated, as everywhere else in this module.
+        by_key.setdefault(key, {}).setdefault(row.assessment_id, row)
+    return by_key
+
+
+def _missing_word_targets(
+    peers: list[Assessment], peer_rows: dict[int, object]
+) -> tuple[list[dict], float | None]:
+    """One ``targets`` entry per peer, and the mean of the peers that had a row.
+
+    **Every peer appears**, in the order the caller named them, with ``target: null``
+    when it had no row for the word — v3 pads the list the same way, and the ruling keeps
+    the padding because a peer that found no translation is evidence rather than a gap.
+
+    A peer that *did* align the word but scored it below
+    :data:`MISSING_WORDS_MATCH_THRESHOLD` also reports ``target: null``, which is v3's
+    rule (``case (score < match_threshold -> NULL, else target)``) preserved unchanged —
+    including its handling of a null peer score, which SQL's three-valued logic sends to
+    the ``else`` branch while ``avg`` skips it.
+    Its score still counts toward the mean, exactly as in v3, where the ``avg`` is taken
+    over the raw score column and only the *target* is nulled — so a weak peer alignment
+    drags the baseline down rather than dropping out of it.
+
+    The mean is over the peers that had a row, so peers contributing nothing do not pull
+    it toward zero. ``None`` when no peer had one, which is what makes ``flag`` false in
+    that case rather than a comparison against a fabricated zero.
+    """
+    targets = []
+    scores = []
+    for peer in peers:
+        row = peer_rows.get(peer.id)
+        target = None
+        if row is not None:
+            # A null peer score reproduces v3 exactly, and its two halves differ: SQL's
+            # ``avg`` skips NULLs, while ``score < threshold`` evaluates to NULL and so
+            # falls to the ``else`` branch, returning the target. Not a shape production
+            # holds — the column is null-free across every sampled assessment — but the
+            # column is nullable, and unguarded this would be a 500 rather than a row.
+            if row.score is not None:
+                scores.append(float(row.score))
+                if float(row.score) < MISSING_WORDS_MATCH_THRESHOLD:
+                    target = None
+                else:
+                    target = row.target
+            else:
+                target = row.target
+        targets.append(
+            {
+                "assessment_id": peer.id,
+                "revision_id": peer.revision_id,
+                "target": target,
+            }
+        )
+    baseline = sum(scores) / len(scores) if scores else None
+    return targets, baseline
+
+
+def _missing_word_flag(score: float | None, baseline: float | None) -> bool:
+    """v3's flag rule, unchanged: a high peer mean that also dwarfs this score.
+
+    ``baseline > 0.35 AND baseline > 5 * score`` (``results_query_routes.py:2279``), with
+    both literals named. v3 evaluates this in pandas over a left join, where a word no
+    peer had produces ``NaN`` and every comparison against ``NaN`` is false; the explicit
+    ``None`` guards here reproduce that rather than relying on it, and a row with no
+    stored score is treated the same way for the same reason.
+    """
+    if baseline is None or score is None:
+        return False
+    return (
+        baseline > MISSING_WORDS_FLAG_MIN_BASELINE
+        and baseline > MISSING_WORDS_FLAG_RATIO * score
+    )
+
+
+async def get_missing_words(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    scope: VerseScope,
+    max_score: float,
+    against: list[int],
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int]:
+    """One page of words a word-alignment assessment aligned poorly, plus the total.
+
+    Serves a **word-alignment** assessment id — see :data:`ALIGNMENT_ASSESSMENT_TYPES`
+    for why "the missing-words assessment" does not exist. Authorized by the same
+    :func:`get_assessment` predicate as every other read on this parent, which is how
+    **#860** (v3 authenticates this endpoint but never authorizes it) is closed: not by a
+    check added here, but by this read having no authorization code of its own.
+
+    Reads ``alignment_top_source_scores`` filtered to ``score < max_score`` — strictly
+    below, which is v3's ``threshold`` renamed to say which way it cuts, and the opposite
+    direction from ``/alignment-scores``' inclusive ``min_score``. That asymmetry is v3's
+    and is preserved: one endpoint is looking for good alignments and the other for the
+    absence of them.
+
+    Five statements, in this order: authorize the subject; authorize and check the peers
+    (:func:`_missing_words_peers`); count and fetch one page; fetch that page's peer rows
+    (:func:`_peer_alignments`); load the span map. The peer work is bounded by the page,
+    never by the assessment.
+
+    **This read gains pagination it has never had.** v3's ``get_missing_words`` declares
+    no ``page``/``page_size`` at all and returns the whole filtered set; the only client
+    passes ``page_size=5_000_000`` into a parameter that does not exist, so FastAPI
+    discards it and the client's paging loop then re-fetches the identical whole set as
+    "page 2". Measured against production the filtered set is far smaller than the
+    ~242,000 rows an unfiltered assessment holds — 1,495 and 4,868 rows whole-Bible on
+    two sampled assessments at the default threshold, with the largest single book at
+    284 — so the client's actual per-book call fits inside one 1000-row page. The change
+    is still real and belongs in the migration guide; it is just not the cliff the raw
+    table size suggests.
+    """
+    subject = await get_assessment(
+        db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES
+    )
+    peers = await _missing_words_peers(db, user, subject, against)
+
+    clauses = _alignment_scope_clauses(
+        AlignmentTopSourceScores, assessment_id, scope
+    ) + [AlignmentTopSourceScores.score < _score_bound(max_score)]
+    rows, total = await _alignment_page(
+        db, AlignmentTopSourceScores, clauses, limit=limit, offset=offset
+    )
+
+    keys = [(row.book, row.chapter, row.verse, row.source) for row in rows]
+    peer_rows_by_key = await _peer_alignments(db, peers, keys)
+    continuations = await verse_range_service.continuations_for_revision(
+        db, subject.revision_id
+    )
+
+    items = []
+    for row, key in zip(rows, keys):
+        targets, baseline = _missing_word_targets(peers, peer_rows_by_key.get(key, {}))
+        vref = f"{row.book} {row.chapter}:{row.verse}"
+        items.append(
+            {
+                "id": row.id,
+                "assessment_id": row.assessment_id,
+                "vref": vref,
+                "vrefs": [
+                    vref,
+                    *continuations.get((row.book, row.chapter, row.verse), ()),
+                ],
+                "source": row.source,
+                "score": row.score,
+                "flag": _missing_word_flag(
+                    None if row.score is None else float(row.score), baseline
+                ),
+                "targets": targets,
+            }
+        )
+    return items, total

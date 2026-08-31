@@ -108,6 +108,8 @@ from api_v4.pagination import (
     V4Page,
 )
 from api_v4.schemas.assessment import (
+    AlignmentScoreOut,
+    AlignmentScoreType,
     AssessmentJob,
     AssessmentOptions,
     AssessmentOptionsBase,
@@ -115,23 +117,31 @@ from api_v4.schemas.assessment import (
     AssessmentResultAggregateOut,
     AssessmentResultOut,
     AssessmentResultRow,
+    MissingWordOut,
+    MissingWordTargetOut,
     NgramResultOut,
     ResultAggregate,
     ResultScope,
     SimilarVerseOut,
     SimilarVersesOut,
+    VerseScope,
 )
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
+from assessment_routes.v3.results_query_routes import router as v3_results_router
 from assessment_routes.v4 import assessment_service
 from assessment_routes.v4.assessment_routes import (
+    ALIGNMENT_WORD_MAX_LENGTH,
     ASSESSMENT_RETRY_AFTER_S,
     SIMILAR_VERSES_DEFAULT_LIMIT,
     SIMILAR_VERSES_MAX_LIMIT,
+    VerseScopeParams,
 )
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
 from config import settings
 from database.models import (
+    AlignmentThresholdScores,
+    AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
     BibleRevision,
@@ -5036,3 +5046,1934 @@ class TestSimilarVersesContract:
         service docstring holds why it is not used."""
         indexes = {index.name for index in TfidfPcaVector.__table__.indexes}
         assert "tfidf_pca_vector_ivfflat_idx" in indexes
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/alignment-scores and .../missing-words
+# ---------------------------------------------------------------------------
+
+#: Both alignment reads serve one type. Written as a tuple and complemented off the enum
+#: for the reason the ngrams and similarity blocks are: adding a type must not silently
+#: join or leave either read.
+ALIGNMENT_SERVED_TYPES = ("word-alignment",)
+ALIGNMENT_UNSERVED_TYPES = tuple(
+    t.value for t in AssessmentType if t.value not in ALIGNMENT_SERVED_TYPES
+)
+
+
+def _make_alignment(
+    db_session,
+    assessment_id,
+    vref,
+    source,
+    target="x",
+    *,
+    score=0.5,
+    flag=False,
+    hide=False,
+    note=None,
+    model=AlignmentTopSourceScores,
+):
+    """Insert one alignment row, with the location columns the runner's push derives.
+
+    Inserted directly rather than through the push endpoint for the same reason
+    ``_make_result`` is: these tests need null flags, rows on types no v4 read serves,
+    and several targets for one ``(vref, source)`` — none of which that endpoint will
+    produce on request.
+    """
+    book, chapter, verse = _vref_parts(vref)
+    row = model(
+        assessment_id=assessment_id,
+        vref=vref,
+        book=book,
+        chapter=chapter,
+        verse=verse,
+        source=source,
+        target=target,
+        score=score,
+        flag=flag,
+        hide=hide,
+        note=note,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    return row.id
+
+
+def _alignment_scores(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/alignment-scores",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _missing_words(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/missing-words",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _sources(resp):
+    return [row["source"] for row in _rows(resp)]
+
+
+def _pairs(resp):
+    """``(vref, source, target)`` per row — the identity of an alignment row."""
+    return [(row["vref"], row["source"], row["target"]) for row in _rows(resp)]
+
+
+def _hydration_statements(captured):
+    """The per-page verse-text lookups, excluding the span map's own ``verse_text`` reads.
+
+    ``_touching(captured, "verse_text")`` is too broad here: ``verse_range_service`` reads
+    the same table to build the ``<range>`` span map, so counting by table name would
+    conflate two independent queries and the count would change whenever either moved.
+    """
+    return [
+        (statement, parameters)
+        for statement, parameters in _touching(captured, "verse_text")
+        if "verse_text.verse_reference IN" in statement
+    ]
+
+
+class TestAlignmentScoresAuthorization:
+    """``GET …/alignment-scores`` — the family's single 404, reused unchanged.
+
+    A near-copy of :class:`TestResultsAuthorization` with the served type inverted, and
+    the duplication is the assertion: every read on this parent must refuse identically,
+    and the only way to pin "identically" is to ask each one the same questions.
+
+    This class is also where **#858** is verified. v3's ``GET /alignmentmatches`` — the
+    read this endpoint absorbs — has no authentication at all. Here the folded read
+    inherits the family's predicate, so there is no separate surface left to forget it.
+    """
+
+    def _with_alignments(self, db_session, version_id, **kwargs):
+        """A fresh assessment carrying one row, so a 404 is never just emptiness."""
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word")
+        return revision_id, assessment_id
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_SERVED_TYPES)
+    def test_the_served_type_returns_its_alignments(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        _, assessment_id = self._with_alignments(
+            db_session, group1_version, type_=type_
+        )
+        assert _sources(_alignment_scores(client, regular_token1, assessment_id)) == [
+            "word"
+        ]
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """Rows are inserted anyway, so this pins a refusal by *type* rather than a read
+        that happens to find nothing."""
+        _, assessment_id = self._with_alignments(
+            db_session, group1_version, type_=type_
+        )
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _alignment_scores(client, regular_token1, 10**9)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._with_alignments(db_session, group2_version)
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_alignments_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word")
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_alignments(
+            db_session, group1_version, is_training=True
+        )
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_alignments(
+            db_session, group1_version, deleted=True
+        )
+        assert (
+            _alignment_scores(client, regular_token1, assessment_id).status_code == 404
+        )
+
+    def test_a_soft_deleted_revision_hides_its_alignments(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._with_alignments(db_session, version_id)
+        assert (
+            _alignment_scores(client, regular_token1, assessment_id).status_code == 200
+        )
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert (
+            _alignment_scores(client, regular_token1, assessment_id).status_code == 404
+        )
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        _, unserved = self._with_alignments(db_session, group1_version, type_="ngrams")
+        _, theirs = self._with_alignments(db_session, group2_version)
+        _, training = self._with_alignments(
+            db_session, group1_version, is_training=True
+        )
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _alignment_scores(client, regular_token1, 10**9),
+                _alignment_scores(client, regular_token1, unserved),
+                _alignment_scores(client, regular_token1, theirs),
+                _alignment_scores(client, regular_token1, training),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._with_alignments(db_session, version_id)
+        assert (
+            _alignment_scores(client, regular_token2, assessment_id).status_code == 200
+        )
+
+    def test_the_folded_endpoint_needs_a_token_where_v3s_did_not(
+        self, client, db_session, group1_version
+    ):
+        """#858, stated as a test. v3's ``/alignmentmatches`` declares no
+        ``current_user`` at all and answers anyone; the read that absorbed it is behind
+        the router-level auth like everything else on this parent."""
+        _, assessment_id = self._with_alignments(db_session, group1_version)
+        resp = client.get(f"{PREFIX}/assessments/{assessment_id}/alignment-scores")
+        assert resp.status_code == 401, resp.text
+        assert _error_code(resp) == "UNAUTHORIZED"
+
+
+class TestAlignmentScoresRows:
+    """The row shape: word-keyed, with ``vrefs`` and both verse texts."""
+
+    def _aligned(self, db_session, group1_version, rows, *, texts=None, **kwargs):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        for row in rows:
+            _make_alignment(db_session, assessment_id, *row[:3], **(row[3] or {}))
+        if texts:
+            for target_revision, mapping in texts.items():
+                _make_verse_texts(
+                    db_session,
+                    revision_id if target_revision == "revision" else reference_id,
+                    mapping,
+                )
+        return revision_id, reference_id, assessment_id
+
+    def test_one_verse_yields_one_row_per_source_word(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The single fact the rest of this read follows from: a row is a word."""
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [
+                ("MAT 9:20", "woman", "mama", None),
+                ("MAT 9:20", "touched", "putim", None),
+                ("MAT 9:20", "garment", "klos", None),
+            ],
+        )
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert _sources(resp) == ["garment", "touched", "woman"]
+        assert {row["vref"] for row in _rows(resp)} == {"MAT 9:20"}
+        assert resp.json()["total"] == 3
+
+    def test_the_row_carries_its_own_id_and_assessment_id(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "book", "buk", None)]
+        )
+        row = _rows(_alignment_scores(client, regular_token1, assessment_id))[0]
+        assert row["assessment_id"] == assessment_id
+        assert isinstance(row["id"], int)
+
+    def test_score_target_note_flag_and_hide_are_served(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [
+                (
+                    "MAT 1:1",
+                    "book",
+                    "buk",
+                    {"score": 0.75, "flag": True, "hide": True, "note": "checked"},
+                )
+            ],
+        )
+        row = _rows(_alignment_scores(client, regular_token1, assessment_id))[0]
+        assert row["target"] == "buk"
+        assert row["score"] == pytest.approx(0.75)
+        assert row["flag"] is True
+        assert row["hide"] is True
+        assert row["note"] == "checked"
+
+    def test_null_flag_and_hide_are_coerced_to_false(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The legacy shape that once 500'd v3's own ``/alignmentscores``: both columns
+        are nullable and only gained a default later."""
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "book", "buk", {"flag": None, "hide": None})],
+        )
+        row = _rows(_alignment_scores(client, regular_token1, assessment_id))[0]
+        assert row["flag"] is False
+        assert row["hide"] is False
+
+    def test_a_merged_span_labels_every_row_with_its_full_coverage(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``vrefs`` is derived from the revision's ``<range>`` markers, exactly as on
+        ``/results`` — and every word row of the anchor verse carries the same coverage,
+        because the coverage is a property of the verse rather than of the word."""
+        revision_id, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [
+                ("MAT 9:20", "woman", "mama", None),
+                ("MAT 9:20", "touched", "putim", None),
+            ],
+        )
+        _make_verse_texts(
+            db_session,
+            revision_id,
+            {"MAT 9:20": "a woman touched his garment", "MAT 9:21": RANGE},
+        )
+        rows = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert [row["vrefs"] for row in rows] == [
+            ["MAT 9:20", "MAT 9:21"],
+            ["MAT 9:20", "MAT 9:21"],
+        ]
+
+    def test_a_revision_with_no_markers_gives_every_row_a_single_vref(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "book", "buk", None)]
+        )
+        _make_verse_texts(db_session, revision_id, {"MAT 1:1": "the book"})
+        row = _rows(_alignment_scores(client, regular_token1, assessment_id))[0]
+        assert row["vrefs"] == ["MAT 1:1"]
+
+    def test_rows_of_another_assessment_do_not_leak_in(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, mine = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "mine", "x", None)]
+        )
+        _, _, theirs = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "theirs", "y", None)]
+        )
+        assert _sources(_alignment_scores(client, regular_token1, mine)) == ["mine"]
+        assert _sources(_alignment_scores(client, regular_token1, theirs)) == ["theirs"]
+
+    def test_a_row_with_no_source_word_is_dropped_from_the_page_and_the_total(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``source`` is nullable and the row model requires it, so an unguarded null
+        would be a serialization 500 on a request that validated cleanly. A row with no
+        source word is not an alignment, so it leaves the page and ``total`` together —
+        a filter that showed up in one and not the other would be worse than either."""
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "book", "buk", None), ("MAT 1:2", None, "x", None)],
+        )
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        assert _sources(resp) == ["book"]
+        assert resp.json()["total"] == 1
+
+    def test_an_assessment_with_no_alignments_is_an_empty_page_not_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["total"] == 0
+
+
+class TestAlignmentScoresText:
+    """Verse text always comes back — the property that makes the fold lossless."""
+
+    def _aligned(self, db_session, group1_version, *, reference=True):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id if reference else None
+        )
+        _make_alignment(db_session, assessment_id, "MAT 9:20", "woman", "mama")
+        _make_alignment(db_session, assessment_id, "MAT 9:21", "she", "em")
+        return revision_id, reference_id, assessment_id
+
+    def test_both_texts_are_populated_from_the_two_revisions(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's ``/alignmentmatches`` joins ``verse_text`` twice for exactly these two
+        fields; the fold would lose output without them."""
+        revision_id, reference_id, assessment_id = self._aligned(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, {"MAT 9:20": "a woman"})
+        _make_verse_texts(db_session, reference_id, {"MAT 9:20": "wanpela meri"})
+        rows = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert (rows[0]["text"], rows[0]["reference_text"]) == (
+            "a woman",
+            "wanpela meri",
+        )
+
+    def test_a_verse_neither_revision_has_text_for_is_null_not_an_error(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, _, assessment_id = self._aligned(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, {"MAT 9:20": "a woman"})
+        rows = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        by_vref = {row["vref"]: row for row in rows}
+        assert by_vref["MAT 9:21"]["text"] is None
+        assert by_vref["MAT 9:21"]["reference_text"] is None
+
+    def test_text_is_fetched_once_per_page_not_once_per_row(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The #648 shape, applied here: a row is a word, so a verse with twenty source
+        words must still cost one text lookup per revision, not twenty. Only the SQL can
+        say which — the response body is identical either way."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for n in range(6):
+            _make_alignment(db_session, assessment_id, "MAT 9:20", f"w{n}", "x")
+        _make_verse_texts(db_session, revision_id, {"MAT 9:20": "a woman"})
+        _make_verse_texts(db_session, reference_id, {"MAT 9:20": "wanpela meri"})
+        with _captured_sql() as captured:
+            resp = _alignment_scores(client, regular_token1, assessment_id)
+        assert len(_rows(resp)) == 6
+        # One per revision, and only two: the page's six rows share one distinct vref.
+        # Matched on the hydration clause rather than the table name, because the span
+        # map reads ``verse_text`` too and is not what this is counting.
+        assert len(_hydration_statements(captured)) == 2
+
+    def test_a_repeated_vref_is_looked_up_once(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Distinct vrefs, not row vrefs: the six rows above and these three collapse to
+        the same two statements, with the bound vref list holding each verse once."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for source in ("a", "b", "c"):
+            _make_alignment(db_session, assessment_id, "MAT 9:20", source, "x")
+        _make_verse_texts(db_session, revision_id, {"MAT 9:20": "a woman"})
+        with _captured_sql() as captured:
+            _alignment_scores(client, regular_token1, assessment_id)
+        statements = _hydration_statements(captured)
+        assert len(statements) == 2
+        for _statement, parameters in statements:
+            assert list(parameters).count("MAT 9:20") == 1
+
+
+class TestAlignmentScoresFilters:
+    """``source``, ``min_score``, ``score_type`` and the verse scope."""
+
+    @pytest.fixture(scope="class")
+    def aligned(self, db_session, group1_version):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for vref, source, target, score in [
+            ("GEN 1:1", "beginning", "stat", 0.90),
+            ("GEN 1:2", "earth", "graun", 0.10),
+            ("MAT 1:1", "book", "buk", 0.50),
+            ("MAT 9:20", "woman", "mama", 0.80),
+            ("MAT 9:20", "book", "buk", 0.20),
+        ]:
+            _make_alignment(
+                db_session, assessment_id, vref, source, target, score=score
+            )
+        _make_alignment(
+            db_session,
+            assessment_id,
+            "MAT 9:20",
+            "woman",
+            "meri",
+            score=0.30,
+            model=AlignmentThresholdScores,
+        )
+        return assessment_id
+
+    def test_source_narrows_to_one_word(self, client, regular_token1, aligned):
+        resp = _alignment_scores(client, regular_token1, aligned, source="book")
+        assert _pairs(resp) == [("MAT 1:1", "book", "buk"), ("MAT 9:20", "book", "buk")]
+
+    def test_source_is_case_insensitive(self, client, regular_token1, aligned):
+        """v3 matches ``source == word.lower()``, and stored sources are lower-cased."""
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, source="BOOK")
+        ) == ["book", "book"]
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, source="BoOk")
+        ) == ["book", "book"]
+
+    def test_source_lowers_the_value_not_the_column(
+        self, client, regular_token1, aligned
+    ):
+        """Pinned in the SQL because the response cannot tell the two apart. Lowering the
+        column would give identical results and lose ``ix_alignment_scores_grouping``,
+        so only the statement text distinguishes right from lucky."""
+        with _captured_sql() as captured:
+            _alignment_scores(client, regular_token1, aligned, source="BOOK")
+        statements = _touching(captured, "alignment_top_source_scores")
+        assert statements, "the read issued no statement against the table"
+        for statement, parameters in statements:
+            assert "lower(alignment_top_source_scores.source)" not in statement.lower()
+            assert "BOOK" not in list(parameters)
+        assert any("book" in list(parameters) for _s, parameters in statements)
+
+    def test_a_source_that_matches_nothing_is_an_empty_page(
+        self, client, regular_token1, aligned
+    ):
+        resp = _alignment_scores(client, regular_token1, aligned, source="nosuchword")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["total"] == 0
+
+    def test_min_score_cuts_inclusively(self, client, regular_token1, aligned):
+        """v3's ``score >= threshold`` on ``/alignmentmatches``. A row scoring exactly
+        ``min_score`` is in, which is the half of the boundary a rename could quietly
+        flip.
+
+        ``0.8`` is deliberately not a binary fraction — see
+        :meth:`test_a_boundary_that_is_not_a_binary_fraction_still_cuts_inclusively`.
+        """
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, min_score=0.5)
+        ) == ["beginning", "book", "woman"]
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, min_score=0.8)
+        ) == ["beginning", "woman"]
+
+    def test_a_boundary_that_is_not_a_binary_fraction_still_cuts_inclusively(
+        self, client, regular_token1, aligned
+    ):
+        """The boundary a bare float gets wrong, and the reason ``_score_bound`` exists.
+
+        Both score columns are ``NUMERIC``, and asyncpg expands a bound Python float to
+        its **exact binary value** — ``0.8`` arrives as ``0.8000000000000000444...``, so
+        a row stored as exactly ``0.80`` fails an inclusive ``>=``. Only thresholds that
+        are not binary fractions expose it, which is why ``0.5`` above passes either way.
+        v3 has the same defect on its own ``threshold``; it is frozen and keeps it.
+        """
+        assert "woman" in _sources(
+            _alignment_scores(client, regular_token1, aligned, min_score=0.8)
+        )
+
+    def test_source_and_min_score_together_are_v3s_alignmentmatches(
+        self, client, regular_token1, aligned
+    ):
+        """The fold, as one request. v3's ``/alignmentmatches?word=book&threshold=0.5``
+        is this, and it returns the verse texts too — which is why they are not
+        optional here."""
+        resp = _alignment_scores(
+            client, regular_token1, aligned, source="book", min_score=0.5
+        )
+        assert _pairs(resp) == [("MAT 1:1", "book", "buk")]
+        assert set(_rows(resp)[0]) >= {"text", "reference_text"}
+
+    def test_score_type_selects_the_other_table(self, client, regular_token1, aligned):
+        assert _pairs(
+            _alignment_scores(client, regular_token1, aligned, score_type="threshold")
+        ) == [("MAT 9:20", "woman", "meri")]
+
+    def test_top_is_the_default_score_type(self, client, regular_token1, aligned):
+        assert _pairs(_alignment_scores(client, regular_token1, aligned)) == _pairs(
+            _alignment_scores(client, regular_token1, aligned, score_type="top")
+        )
+
+    def test_an_unknown_score_type_is_a_422(self, client, regular_token1, aligned):
+        resp = _alignment_scores(client, regular_token1, aligned, score_type="both")
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_an_empty_score_type_does_not_fall_back_to_the_other_table(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """**The decision this endpoint most needs pinned.** The one client probes
+        ``threshold``, finds it empty and re-requests ``top`` itself. Doing that
+        server-side would answer a ``threshold`` request with ``top``'s rows and say
+        nothing about it in the body. An empty page is the honest answer, and the
+        client's own probe keeps working against it."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "book", "buk")
+        resp = _alignment_scores(
+            client, regular_token1, assessment_id, score_type="threshold"
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["total"] == 0
+        assert _sources(_alignment_scores(client, regular_token1, assessment_id)) == [
+            "book"
+        ]
+
+    def test_book_narrows_to_one_book(self, client, regular_token1, aligned):
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, book="GEN")
+        ) == ["beginning", "earth"]
+
+    def test_book_is_case_insensitive(self, client, regular_token1, aligned):
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, book="gen")
+        ) == ["beginning", "earth"]
+
+    def test_chapter_and_verse_narrow_further(self, client, regular_token1, aligned):
+        assert _sources(
+            _alignment_scores(client, regular_token1, aligned, book="MAT", chapter=9)
+        ) == ["book", "woman"]
+        assert _sources(
+            _alignment_scores(
+                client, regular_token1, aligned, book="MAT", chapter=1, verse=1
+            )
+        ) == ["book"]
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"chapter": 1}, id="chapter-without-book"),
+            pytest.param({"book": "MAT", "verse": 1}, id="verse-without-chapter"),
+        ],
+    )
+    def test_an_inconsistent_scope_is_a_422(
+        self, client, regular_token1, aligned, params
+    ):
+        resp = _alignment_scores(client, regular_token1, aligned, **params)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_aggregate_is_ignored_rather_than_honoured_or_rejected(
+        self, client, regular_token1, aligned
+    ):
+        """A row here is a word, so there is nothing to roll up. Not accepted *and* not
+        an error: v4 ignores unrecognised query parameters, so this returns the
+        unfiltered page. An endpoint that had silently gained ``aggregate`` would fail
+        the second assertion."""
+        resp = _alignment_scores(client, regular_token1, aligned, aggregate="chapter")
+        assert resp.status_code == 200, resp.text
+        assert _pairs(resp) == _pairs(
+            _alignment_scores(client, regular_token1, aligned)
+        )
+
+    def test_an_over_long_source_is_a_422_rather_than_a_scan(
+        self, client, regular_token1, aligned
+    ):
+        resp = _alignment_scores(
+            client,
+            regular_token1,
+            aligned,
+            source="x" * (ALIGNMENT_WORD_MAX_LENGTH + 1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+
+class TestAlignmentScoresPage:
+    """Canonical ordering, the 100/1000 bounds, and a total order offset can rely on."""
+
+    def _aligned(self, db_session, group1_version, rows):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for row in rows:
+            _make_alignment(db_session, assessment_id, *row)
+        return assessment_id
+
+    def test_page_envelope(self, client, regular_token1, db_session, group1_version):
+        assessment_id = self._aligned(
+            db_session, group1_version, [("GEN 1:1", "a"), ("GEN 1:2", "b")]
+        )
+        body = _alignment_scores(client, regular_token1, assessment_id).json()
+        assert set(body) == {"items", "total", "limit", "offset", "next_updated_since"}
+        assert (body["total"], body["limit"], body["offset"]) == (
+            2,
+            RESULT_DEFAULT_LIMIT,
+            0,
+        )
+        assert body["next_updated_since"] is None
+
+    def test_the_default_limit_is_the_result_default_not_the_catalog_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """These are small fixed-width rows, so they take ``/results``' bounds — the
+        rule is that the bound follows the row's weight, not the endpoint's family."""
+        assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
+        body = _alignment_scores(client, regular_token1, assessment_id).json()
+        assert body["limit"] == RESULT_DEFAULT_LIMIT
+        assert body["limit"] != DEFAULT_LIMIT
+
+    def test_limit_at_the_result_max_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
+        resp = _alignment_scores(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+
+    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
+        resp = _alignment_scores(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_order_is_canonical_and_not_insertion_order(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Bible order, not the lexical ``vref`` order that would put ``GEN 10:1``
+        before ``GEN 2:1`` and ``EXO`` before ``GEN``, and not v3's — which declares no
+        ordering at all."""
+        assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "d"), ("GEN 10:1", "c"), ("GEN 2:1", "b"), ("EXO 1:1", "a")],
+        )
+        assert _vrefs(_alignment_scores(client, regular_token1, assessment_id)) == [
+            "GEN 2:1",
+            "GEN 10:1",
+            "EXO 1:1",
+            "MAT 1:1",
+        ]
+
+    def test_rows_of_one_verse_are_ordered_by_source(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The tiebreak the verse triple cannot supply: one verse holds many words."""
+        assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 9:20", "woman"), ("MAT 9:20", "a"), ("MAT 9:20", "touched")],
+        )
+        assert _sources(_alignment_scores(client, regular_token1, assessment_id)) == [
+            "a",
+            "touched",
+            "woman",
+        ]
+
+    def test_the_ordering_is_a_total_order_in_the_sql_itself(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``ORDER BY`` must end in the primary key. On ``score_type=threshold`` a single
+        ``(verse, source)`` legitimately holds several rows, and offset pagination is
+        stable only under a total order — but with three rows in one page the response
+        looks identical whether or not the tiebreak is there, so this reads the
+        statement rather than the body. The shape #914's unordered query-point lookup
+        was caught by."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for target in ("meri", "mama", "wanpela"):
+            _make_alignment(
+                db_session,
+                assessment_id,
+                "MAT 9:20",
+                "woman",
+                target,
+                model=AlignmentThresholdScores,
+            )
+        with _captured_sql() as captured:
+            resp = _alignment_scores(
+                client, regular_token1, assessment_id, score_type="threshold"
+            )
+        assert len(_rows(resp)) == 3
+        ordered = [
+            statement
+            for statement, _p in _touching(captured, "alignment_threshold_scores")
+            if "ORDER BY" in statement
+        ]
+        assert ordered, "the page was fetched without an ORDER BY"
+        for statement in ordered:
+            tail = statement.split("ORDER BY")[-1]
+            assert "source" in tail
+            assert tail.rstrip().split()[-1].endswith("id") or ".id" in tail
+
+    def test_a_duplicated_verse_source_pair_is_not_deduplicated(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The opposite call from ``/results``' ``DISTINCT ON``, and deliberately so.
+        ``alignment_threshold_scores`` stores *every* target above the runner's cutoff,
+        so several rows for one ``(vref, source)`` are the table's meaning rather than
+        #721's retry duplication. Collapsing them would drop real alignments."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for target in ("meri", "mama"):
+            _make_alignment(
+                db_session,
+                assessment_id,
+                "MAT 9:20",
+                "woman",
+                target,
+                model=AlignmentThresholdScores,
+            )
+        resp = _alignment_scores(
+            client, regular_token1, assessment_id, score_type="threshold"
+        )
+        assert sorted(row["target"] for row in _rows(resp)) == ["mama", "meri"]
+        assert resp.json()["total"] == 2
+
+    def test_pagination_walks_the_collection_without_repeating_or_skipping(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", f"w{n:02d}") for n in range(7)],
+        )
+        seen = []
+        for offset in (0, 3, 6):
+            seen += _sources(
+                _alignment_scores(
+                    client, regular_token1, assessment_id, limit=3, offset=offset
+                )
+            )
+        assert seen == [f"w{n:02d}" for n in range(7)]
+
+    def test_offset_past_the_end_is_an_empty_page_with_the_real_total(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._aligned(
+            db_session, group1_version, [("GEN 1:1", "a"), ("GEN 1:2", "b")]
+        )
+        body = _alignment_scores(
+            client, regular_token1, assessment_id, offset=99
+        ).json()
+        assert body["items"] == []
+        assert body["total"] == 2
+
+    def test_total_counts_the_filtered_set_not_the_assessment(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``total`` and the page must describe the same set, which is what makes the
+        count worth publishing at all."""
+        assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("GEN 1:1", "a"), ("MAT 1:1", "b"), ("MAT 1:2", "c")],
+        )
+        assert (
+            _alignment_scores(client, regular_token1, assessment_id, book="MAT").json()[
+                "total"
+            ]
+            == 2
+        )
+
+
+class TestAlignmentScoresContract:
+    """Pinned at the route and the model, so OpenAPI cannot drift by accident."""
+
+    def test_the_row_has_exactly_its_own_fields(self):
+        assert set(AlignmentScoreOut.model_fields) == {
+            "id",
+            "assessment_id",
+            "vref",
+            "vrefs",
+            "source",
+            "target",
+            "score",
+            "flag",
+            "hide",
+            "note",
+            "text",
+            "reference_text",
+        }
+
+    def test_the_row_carries_both_texts(self):
+        """The two fields that make absorbing ``/alignmentmatches`` lossless. Dropping
+        either would silently lose output that endpoint returned."""
+        assert {"text", "reference_text"} <= set(AlignmentScoreOut.model_fields)
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        """Pinned so the read cannot gain ``aggregate``, ``use_eflomal``,
+        ``revision_id``, ``reference_id`` or v3's ``page``/``page_size`` by accident."""
+        route = _route("get_assessment_alignment_scores")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {
+            "book",
+            "chapter",
+            "verse",
+            "source",
+            "min_score",
+            "score_type",
+            "limit",
+            "offset",
+        }
+
+    def test_the_route_uses_the_result_pagination_dependency(self):
+        route = _route("get_assessment_alignment_scores")
+        assert any(
+            dependency.call is ResultPaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_uses_the_aggregate_free_scope_dependency(self):
+        """``VerseScopeParams``, not ``ResultScopeParams``: a row is a word, so there is
+        no per-verse set for a rollup to summarize."""
+        route = _route("get_assessment_alignment_scores")
+        assert any(
+            dependency.call is VerseScopeParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_returns_a_page_of_alignment_rows(self):
+        route = _route("get_assessment_alignment_scores")
+        assert route.response_model.__name__.startswith("V4Page")
+
+    def test_the_score_type_values_are_v3s_two(self):
+        assert [member.value for member in AlignmentScoreType] == ["top", "threshold"]
+
+    def test_every_score_type_maps_to_a_table(self):
+        """The mapping is a plain dict, so a value added to the enum without a table
+        would be a ``KeyError`` — a 500 on a request that validated cleanly at the edge.
+        Pinned here so it is a failing test instead."""
+        assert set(assessment_service._ALIGNMENT_SCORE_MODELS) == set(
+            AlignmentScoreType
+        )
+
+    def test_the_served_type_is_word_alignment_alone(self):
+        assert set(assessment_service.ALIGNMENT_ASSESSMENT_TYPES) == set(
+            ALIGNMENT_SERVED_TYPES
+        )
+        assert set(ALIGNMENT_SERVED_TYPES) | set(ALIGNMENT_UNSERVED_TYPES) == {
+            t.value for t in AssessmentType
+        }
+
+    def test_the_served_type_also_has_generic_results(self):
+        """Unlike ngrams and tfidf, this read *overlaps* ``/results``: the same
+        assessment answers both, at different grains — per verse there, per word here.
+        Stated so the overlap reads as intended rather than as a mistake."""
+        assert set(ALIGNMENT_SERVED_TYPES) <= set(
+            assessment_service.RESULT_ASSESSMENT_TYPES
+        )
+
+    def test_the_absorbed_endpoint_is_gone_from_v4_and_untouched_on_v3(self):
+        """The fold, stated as a route-level fact. v4 has one alignment read where v3 has
+        two, and v3 keeps both — it is frozen, so the fold removes the endpoint from the
+        **v4** surface rather than deleting anything. A client still on v3 is unaffected,
+        which is also why #858 stays live there until v3 retires."""
+        v3_paths = {route.path for route in v3_results_router.routes}
+        assert {"/alignmentmatches", "/alignmentscores"} <= v3_paths
+        v4_paths = {route.path for route in v4_assessment_router.routes}
+        assert "/assessments/{assessment_id}/alignment-scores" in v4_paths
+        assert not any("match" in path for path in v4_paths)
+
+
+class TestMissingWordsAuthorization:
+    """``GET …/missing-words`` — the same 404, and #860.
+
+    v3's ``/missingwords`` authenticates and then never authorizes: any logged-in caller
+    could read any revision pair's missing words. It is closed here the way every other
+    read on this parent is, by having no authorization code of its own.
+    """
+
+    def _with_missing(self, db_session, version_id, **kwargs):
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
+        return revision_id, assessment_id
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_SERVED_TYPES)
+    def test_the_served_type_returns_its_missing_words(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """The correction to the premise, as a test: this takes a **word-alignment**
+        assessment id. ``missing-words`` is not in ``AssessmentType`` at all."""
+        _, assessment_id = self._with_missing(db_session, group1_version, type_=type_)
+        assert _sources(_missing_words(client, regular_token1, assessment_id)) == [
+            "word"
+        ]
+
+    def test_missing_words_is_not_an_assessment_type(self):
+        """The corrected premise, pinned in both directions: there is no such type, and
+        the read's gate is ``word-alignment``. Guards against someone later adding the
+        value to the enum, which would silently change what this endpoint means."""
+        assert "missing-words" not in {t.value for t in AssessmentType}
+        assert assessment_service.ALIGNMENT_ASSESSMENT_TYPES == ("word-alignment",)
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        _, assessment_id = self._with_missing(db_session, group1_version, type_=type_)
+        resp = _missing_words(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _missing_words(client, regular_token1, 10**9)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._with_missing(db_session, group2_version)
+        resp = _missing_words(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_missing_words_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
+        resp = _missing_words(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_missing(
+            db_session, group1_version, is_training=True
+        )
+        resp = _missing_words(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_missing(db_session, group1_version, deleted=True)
+        assert _missing_words(client, regular_token1, assessment_id).status_code == 404
+
+    def test_a_soft_deleted_revision_hides_its_missing_words(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._with_missing(db_session, version_id)
+        assert _missing_words(client, regular_token1, assessment_id).status_code == 200
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert _missing_words(client, regular_token1, assessment_id).status_code == 404
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        _, unserved = self._with_missing(db_session, group1_version, type_="ngrams")
+        _, theirs = self._with_missing(db_session, group2_version)
+        _, training = self._with_missing(db_session, group1_version, is_training=True)
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _missing_words(client, regular_token1, 10**9),
+                _missing_words(client, regular_token1, unserved),
+                _missing_words(client, regular_token1, theirs),
+                _missing_words(client, regular_token1, training),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._with_missing(db_session, version_id)
+        assert _missing_words(client, regular_token2, assessment_id).status_code == 200
+
+    def test_a_caller_who_could_not_see_the_assessment_is_refused_where_v3_was_not(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        """#860, stated as a test. v3's ``/missingwords`` takes a revision pair and never
+        checks the caller against it, so any authenticated user could read any group's
+        missing words."""
+        _, assessment_id = self._with_missing(db_session, group2_version)
+        assert _missing_words(client, regular_token1, assessment_id).status_code == 404
+
+
+class TestMissingWordsRows:
+    """The row shape and the ``max_score`` cut, before peers enter."""
+
+    def _aligned(self, db_session, group1_version, rows, **kwargs):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        for vref, source, score in rows:
+            _make_alignment(db_session, assessment_id, vref, source, score=score)
+        return revision_id, reference_id, assessment_id
+
+    def test_only_words_below_max_score_are_returned(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "kept", 0.9), ("MAT 1:1", "dropped", 0.01)],
+        )
+        assert _sources(_missing_words(client, regular_token1, assessment_id)) == [
+            "dropped"
+        ]
+
+    def test_the_cut_is_strict_where_alignment_scores_is_inclusive(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's asymmetry, preserved: ``score < threshold`` here against
+        ``score >= threshold`` there. One read looks for good alignments and the other
+        for the absence of them, so a row exactly on the boundary belongs to neither."""
+        _, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "boundary", 0.15)]
+        )
+        assert _sources(_missing_words(client, regular_token1, assessment_id)) == []
+        assert _sources(
+            _alignment_scores(client, regular_token1, assessment_id, min_score=0.15)
+        ) == ["boundary"]
+
+    def test_a_boundary_that_is_not_a_binary_fraction_still_cuts_strictly(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The same float/numeric hazard, breaking the other way: bound as a bare float,
+        ``max_score=0.2`` arrives fractionally *above* ``0.20`` and lets a row on the
+        boundary through, which contradicts the documented strict cut."""
+        _, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "boundary", 0.2)]
+        )
+        assert (
+            _sources(
+                _missing_words(client, regular_token1, assessment_id, max_score=0.2)
+            )
+            == []
+        )
+
+    def test_the_default_max_score_is_the_configured_threshold(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assert settings.missing_words_missing_threshold == pytest.approx(0.15)
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "under", 0.14), ("MAT 1:2", "over", 0.16)],
+        )
+        assert _sources(_missing_words(client, regular_token1, assessment_id)) == [
+            "under"
+        ]
+
+    def test_max_score_is_caller_overridable(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "under", 0.14), ("MAT 1:2", "over", 0.16)],
+        )
+        assert _sources(
+            _missing_words(client, regular_token1, assessment_id, max_score=0.5)
+        ) == ["under", "over"]
+
+    def test_the_row_carries_no_target_field(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The stored row has a ``target``; this read does not serve it. A word this
+        assessment scored below the threshold has no target worth reporting, and the
+        interesting targets are the peers' — under ``targets``, which says what it is.
+        """
+        _, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 1:1", "dropped", 0.01)]
+        )
+        row = _rows(_missing_words(client, regular_token1, assessment_id))[0]
+        assert "target" not in row
+        assert row["targets"] == []
+
+    def test_a_merged_span_labels_the_row_with_its_full_coverage(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, _, assessment_id = self._aligned(
+            db_session, group1_version, [("MAT 9:20", "dropped", 0.01)]
+        )
+        _make_verse_texts(
+            db_session, revision_id, {"MAT 9:20": "a woman", "MAT 9:21": RANGE}
+        )
+        row = _rows(_missing_words(client, regular_token1, assessment_id))[0]
+        assert row["vref"] == "MAT 9:20"
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+
+    def test_a_row_with_no_source_word_is_dropped_here_too(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The same guard as ``/alignment-scores``, because both reads share it."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
+        _make_alignment(db_session, assessment_id, "MAT 1:2", None, score=0.01)
+        resp = _missing_words(client, regular_token1, assessment_id)
+        assert _sources(resp) == ["word"]
+        assert resp.json()["total"] == 1
+
+    def test_the_scope_filters_apply(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("GEN 1:1", "a", 0.01), ("MAT 1:1", "b", 0.01), ("MAT 9:20", "c", 0.01)],
+        )
+        assert _sources(
+            _missing_words(client, regular_token1, assessment_id, book="MAT")
+        ) == ["b", "c"]
+        assert _sources(
+            _missing_words(
+                client, regular_token1, assessment_id, book="MAT", chapter=9, verse=20
+            )
+        ) == ["c"]
+
+    def test_the_reads_use_the_same_table_at_the_same_grain(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A sanity check on the whole premise: ``/missing-words`` is a *reading* of the
+        same rows ``/alignment-scores`` serves, which is why it takes the same id."""
+        _, _, assessment_id = self._aligned(
+            db_session,
+            group1_version,
+            [("MAT 1:1", "kept", 0.9), ("MAT 1:1", "dropped", 0.01)],
+        )
+        missing = _rows(_missing_words(client, regular_token1, assessment_id))
+        scores = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert [row["id"] for row in missing] == [
+            row["id"] for row in scores if row["source"] == "dropped"
+        ]
+
+
+class TestMissingWordsPeers:
+    """``against``: the peer enrichment, the flag rule, and the two comparability 422s."""
+
+    @pytest.fixture
+    def subject(self, db_session, group1_version):
+        """A subject and a shared reference, with two independent peers on it.
+
+        Each peer's revision lives in its own version, because a peer sharing a version
+        with the subject's revision or reference is exactly what the guard rejects.
+        """
+        subject_version = _make_version(db_session, "Group1")
+        reference_version = _make_version(db_session, "Group1")
+        reference_id = _make_revision(db_session, reference_version)
+        revision_id = _make_revision(db_session, subject_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        peers = []
+        for _ in range(2):
+            peer_version = _make_version(db_session, "Group1")
+            peer_revision = _make_revision(db_session, peer_version)
+            peers.append(
+                (
+                    _make_assessment(db_session, peer_revision, reference_id),
+                    peer_revision,
+                )
+            )
+        return {
+            "assessment_id": assessment_id,
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "reference_version": reference_version,
+            "subject_version": subject_version,
+            "peers": peers,
+        }
+
+    def test_every_peer_appears_even_with_nothing_to_say(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3's padding, kept: a peer that produced no translation is evidence, not a
+        gap. Its assessment id rides along because ``against`` names assessments."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, revision_a), (peer_b, revision_b) = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.9)
+        row = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        assert row["targets"] == [
+            {
+                "assessment_id": peer_a,
+                "revision_id": revision_a,
+                "target": "marimari",
+            },
+            {"assessment_id": peer_b, "revision_id": revision_b, "target": None},
+        ]
+
+    def test_targets_follow_the_order_against_was_given_in(
+        self, client, regular_token1, db_session, subject
+    ):
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        for peer in (peer_a, peer_b):
+            _make_alignment(db_session, peer, "MAT 1:1", "grace", "x", score=0.9)
+        row = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_b, peer_a],
+            )
+        )[0]
+        assert [t["assessment_id"] for t in row["targets"]] == [peer_b, peer_a]
+
+    def test_a_peer_alignment_below_the_match_threshold_reports_a_null_target(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3's ``case (score < match_threshold -> NULL, else target)``, preserved. So
+        ``target: null`` has two causes and does not distinguish them — which is stated
+        on the field rather than left to be discovered."""
+        assert assessment_service.MISSING_WORDS_MATCH_THRESHOLD == pytest.approx(0.2)
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.1)
+        row = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )[0]
+        assert row["targets"][0]["target"] is None
+
+    def test_a_peer_row_with_no_score_keeps_its_target_and_stays_out_of_the_mean(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3's three-valued logic, reproduced rather than inherited: ``avg`` skips a
+        NULL score, while ``score < match_threshold`` evaluates to NULL and falls to the
+        ``else`` branch, so the target still comes back. Not a shape production holds —
+        the column is null-free everywhere sampled — but it is nullable, and unguarded
+        this is a 500."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=None)
+        _make_alignment(db_session, peer_b, "MAT 1:1", "grace", "sori", score=0.9)
+        row = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        assert [t["target"] for t in row["targets"]] == ["marimari", "sori"]
+        # The mean is 0.9 (peer_a excluded), not 0.45 — so the flag still fires.
+        assert row["flag"] is True
+
+    def test_flag_is_true_when_the_peers_align_the_word_far_better(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3's rule, unchanged: mean peer score above 0.35 **and** more than five times
+        this assessment's."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.05
+        )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        for peer in (peer_a, peer_b):
+            _make_alignment(db_session, peer, "MAT 1:1", "grace", "marimari", score=0.9)
+        row = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        assert row["flag"] is True
+
+    def test_flag_is_false_when_the_peers_did_no_better(
+        self, client, regular_token1, db_session, subject
+    ):
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.1
+        )
+        (peer_a, _), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.4)
+        row = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )[0]
+        # 0.4 clears the 0.35 floor but is only 4x the subject's 0.1, not more than 5x.
+        assert row["flag"] is False
+
+    def test_flag_is_false_when_the_peer_mean_is_below_the_floor(
+        self, client, regular_token1, db_session, subject
+    ):
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.3)
+        row = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )[0]
+        # 0.3 is 30x the subject's 0.01 but does not clear the 0.35 floor.
+        assert row["flag"] is False
+
+    def test_flag_is_false_when_no_peer_had_the_word(
+        self, client, regular_token1, db_session, subject
+    ):
+        """An unflagged row with an all-null ``targets`` means *no evidence*, not
+        *evidence of nothing*. v3 gets this from NaN comparisons in pandas; here it is
+        an explicit guard rather than a coincidence of the framework."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        row = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )[0]
+        assert row["flag"] is False
+        assert row["targets"][0]["target"] is None
+
+    def test_the_mean_ignores_peers_with_no_row_rather_than_counting_them_as_zero(
+        self, client, regular_token1, db_session, subject
+    ):
+        """A silent peer must not drag the baseline down — that would turn "one peer had
+        nothing" into evidence against flagging, which it is not."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.05
+        )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.9)
+        with_both = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        # A mean over {0.9, 0} would be 0.45 — still above the floor but only 9x, so the
+        # flag survives either way at these numbers; what it must not do is change.
+        with_one = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )[0]
+        assert with_both["flag"] is with_one["flag"] is True
+
+    def test_without_against_targets_is_empty_and_flag_is_never_true(
+        self, client, regular_token1, db_session, subject
+    ):
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        row = _rows(_missing_words(client, regular_token1, subject["assessment_id"]))[0]
+        assert row["targets"] == []
+        assert row["flag"] is False
+
+    def test_a_peer_named_twice_counts_once(
+        self, client, regular_token1, db_session, subject
+    ):
+        """One witness, whether or not the caller repeats it. Keeping both entries would
+        count the peer's score twice in the mean that decides ``flag``, so a caller could
+        flag any word by repeating a single baseline."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, revision_a), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:1", "grace", "marimari", score=0.9)
+        row = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_a],
+            )
+        )[0]
+        assert row["targets"] == [
+            {"assessment_id": peer_a, "revision_id": revision_a, "target": "marimari"}
+        ]
+
+    def test_an_unreachable_peer_is_a_404_naming_that_peer(
+        self, client, regular_token1, db_session, subject, group2_version
+    ):
+        """Every ``against`` id goes through the same predicate as the subject, so a peer
+        outside the caller's groups is the family's ordinary 404 — and ``details`` names
+        the peer, not the path id, or the caller cannot tell which was refused."""
+        their_revision = _make_revision(db_session, group2_version)
+        their_reference = _make_revision(db_session, group2_version)
+        theirs = _make_assessment(db_session, their_revision, their_reference)
+        resp = _missing_words(
+            client, regular_token1, subject["assessment_id"], against=[theirs]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert resp.json()["error"]["details"]["assessment_id"] == theirs
+
+    def test_a_peer_of_the_wrong_type_is_a_404(
+        self, client, regular_token1, db_session, subject
+    ):
+        peer_version = _make_version(db_session, "Group1")
+        peer_revision = _make_revision(db_session, peer_version)
+        wrong_type = _make_assessment(
+            db_session, peer_revision, subject["reference_id"], type_="ngrams"
+        )
+        resp = _missing_words(
+            client, regular_token1, subject["assessment_id"], against=[wrong_type]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_peer_aligned_against_a_different_reference_is_a_422(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3 resolved peers with ``reference_id = :reference_id``, so an incomparable
+        peer could never be chosen. Naming ids removes that guarantee, so it is replaced
+        rather than dropped: peer scores against another reference are not on the same
+        scale, and their mean is the number ``flag`` is computed from."""
+        other_version = _make_version(db_session, "Group1")
+        other_reference = _make_revision(db_session, other_version)
+        peer_version = _make_version(db_session, "Group1")
+        peer_revision = _make_revision(db_session, peer_version)
+        peer = _make_assessment(db_session, peer_revision, other_reference)
+        resp = _missing_words(
+            client, regular_token1, subject["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+        assert resp.json()["error"]["details"]["assessment_id"] == peer
+
+    def test_a_peer_sharing_the_subjects_version_is_a_422(
+        self, client, regular_token1, db_session, subject
+    ):
+        """A sibling revision of the text under assessment is not an independent witness.
+        v3 dropped it silently; that was defensible when the caller handed over revision
+        ids to be resolved, and is not now that they name the assessment."""
+        sibling = _make_revision(db_session, subject["subject_version"])
+        peer = _make_assessment(db_session, sibling, subject["reference_id"])
+        resp = _missing_words(
+            client, regular_token1, subject["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+        assert resp.json()["error"]["details"]["assessment_id"] == peer
+
+    def test_a_peer_sharing_the_references_version_is_a_422(
+        self, client, regular_token1, db_session, subject
+    ):
+        """The other half of v3's guard, which drops baselines on the *reference*'s
+        version too — a revision of the text everything was aligned against."""
+        sibling = _make_revision(db_session, subject["reference_version"])
+        peer = _make_assessment(db_session, sibling, subject["reference_id"])
+        resp = _missing_words(
+            client, regular_token1, subject["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+
+    def test_naming_the_subject_as_its_own_peer_is_refused_by_the_same_guard(
+        self, client, regular_token1, db_session, subject
+    ):
+        resp = _missing_words(
+            client,
+            regular_token1,
+            subject["assessment_id"],
+            against=[subject["assessment_id"]],
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+
+    def test_an_incompatible_peer_is_reported_not_silently_dropped(
+        self, client, regular_token1, db_session, subject
+    ):
+        """The behavioural difference from v3 stated on its own: one good peer plus one
+        incompatible one is a refusal, not a quietly smaller baseline population."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        sibling = _make_revision(db_session, subject["subject_version"])
+        bad = _make_assessment(db_session, sibling, subject["reference_id"])
+        assert (
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            ).status_code
+            == 200
+        )
+        assert (
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, bad],
+            ).status_code
+            == 422
+        )
+
+    def test_peer_rows_are_fetched_once_for_the_page(
+        self, client, regular_token1, db_session, subject
+    ):
+        """v3 aggregates the peers over the whole unpaginated result set; here the work
+        is bounded by the page. One statement, whatever the row count — the body cannot
+        show the difference, so this reads the statements."""
+        for n in range(5):
+            _make_alignment(
+                db_session,
+                subject["assessment_id"],
+                "MAT 1:1",
+                f"w{n}",
+                score=0.01,
+            )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        with _captured_sql() as captured:
+            resp = _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        assert len(_rows(resp)) == 5
+        selects = [
+            statement
+            for statement, _p in _touching(captured, "alignment_top_source_scores")
+            if "SELECT" in statement
+        ]
+        # The subject's count, the subject's page, and one lookup for both peers.
+        assert len(selects) == 3
+
+    def test_an_empty_page_skips_the_peer_query_entirely(
+        self, client, regular_token1, db_session, subject
+    ):
+        (peer_a, _), _ = subject["peers"]
+        with _captured_sql() as captured:
+            resp = _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        assert _rows(resp) == []
+        selects = [
+            statement
+            for statement, _p in _touching(captured, "alignment_top_source_scores")
+            if "SELECT" in statement
+        ]
+        assert len(selects) == 2
+
+    def test_a_peers_rows_for_another_verse_do_not_bleed_across(
+        self, client, regular_token1, db_session, subject
+    ):
+        """The peer lookup keys on the whole ``(book, chapter, verse, source)`` tuple, so
+        the same word in a different verse is a different row. A lookup keyed on vref and
+        source separately would match the cross product and get this wrong."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:2", "peace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 1:2", "grace", "marimari", score=0.9)
+        rows = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )
+        assert [(row["source"], row["targets"][0]["target"]) for row in rows] == [
+            ("grace", None),
+            ("peace", None),
+        ]
+
+
+class TestMissingWordsPage:
+    """The pagination this read has never had."""
+
+    def _aligned(self, db_session, group1_version, count):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for n in range(count):
+            _make_alignment(
+                db_session, assessment_id, "MAT 1:1", f"w{n:02d}", score=0.01
+            )
+        return assessment_id
+
+    def test_page_envelope(self, client, regular_token1, db_session, group1_version):
+        assessment_id = self._aligned(db_session, group1_version, 2)
+        body = _missing_words(client, regular_token1, assessment_id).json()
+        assert set(body) == {"items", "total", "limit", "offset", "next_updated_since"}
+        assert (body["total"], body["limit"], body["offset"]) == (
+            2,
+            RESULT_DEFAULT_LIMIT,
+            0,
+        )
+
+    def test_v3_declares_no_pagination_at_all_and_v4_does(self):
+        """The behaviour change, pinned against v3 rather than asserted in prose. v3's
+        route takes no ``page``/``page_size``, which is why the client's
+        ``page_size=5_000_000`` is discarded rather than honoured."""
+        v3_route = next(
+            r for r in v3_results_router.routes if r.path == "/missingwords"
+        )
+        v3_declared = {param.name for param in v3_route.dependant.query_params}
+        assert "page" not in v3_declared
+        assert "page_size" not in v3_declared
+        v4_route = _route("get_assessment_missing_words")
+        v4_declared = set()
+        for dependency in v4_route.dependant.dependencies:
+            v4_declared |= {param.name for param in dependency.query_params}
+        assert {"limit", "offset"} <= v4_declared
+
+    def test_pagination_walks_the_collection(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._aligned(db_session, group1_version, 7)
+        seen = []
+        for offset in (0, 3, 6):
+            seen += _sources(
+                _missing_words(
+                    client, regular_token1, assessment_id, limit=3, offset=offset
+                )
+            )
+        assert seen == [f"w{n:02d}" for n in range(7)]
+
+    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The client currently defeats pagination with ``page_size=5_000_000``. The
+        ceiling is the shared result bound and is not widened to suit one call site."""
+        assessment_id = self._aligned(db_session, group1_version, 1)
+        resp = _missing_words(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_order_is_canonical_and_stable(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        for vref, source in [
+            ("MAT 1:1", "z"),
+            ("GEN 10:1", "b"),
+            ("GEN 2:1", "a"),
+            ("MAT 1:1", "y"),
+        ]:
+            _make_alignment(db_session, assessment_id, vref, source, score=0.01)
+        rows = _rows(_missing_words(client, regular_token1, assessment_id))
+        assert [(row["vref"], row["source"]) for row in rows] == [
+            ("GEN 2:1", "a"),
+            ("GEN 10:1", "b"),
+            ("MAT 1:1", "y"),
+            ("MAT 1:1", "z"),
+        ]
+
+    def test_total_counts_the_filtered_set(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "missing", score=0.01)
+        _make_alignment(db_session, assessment_id, "MAT 1:2", "fine", score=0.9)
+        assert (
+            _missing_words(client, regular_token1, assessment_id).json()["total"] == 1
+        )
+
+
+class TestMissingWordsContract:
+    """Pinned at the route and the model."""
+
+    def test_the_row_has_exactly_its_own_fields(self):
+        assert set(MissingWordOut.model_fields) == {
+            "id",
+            "assessment_id",
+            "vref",
+            "vrefs",
+            "source",
+            "score",
+            "flag",
+            "targets",
+        }
+
+    def test_the_peer_entry_carries_both_ids(self):
+        """v3 identifies a peer by revision alone, because ``baseline_ids`` named
+        revisions. ``against`` names assessments, so the assessment id has to travel."""
+        assert set(MissingWordTargetOut.model_fields) == {
+            "assessment_id",
+            "revision_id",
+            "target",
+        }
+
+    def test_the_row_does_not_carry_the_stored_target_hide_or_note(self):
+        for field in ("target", "hide", "note"):
+            assert field not in MissingWordOut.model_fields
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        """Pinned so the read cannot regain ``revision_id``, ``reference_id``,
+        ``baseline_ids``, ``use_eflomal`` or ``threshold`` by accident."""
+        route = _route("get_assessment_missing_words")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {
+            "book",
+            "chapter",
+            "verse",
+            "max_score",
+            "against",
+            "limit",
+            "offset",
+        }
+
+    @pytest.mark.parametrize(
+        "dead", ["use_eflomal", "revision_id", "reference_id", "baseline_ids"]
+    )
+    def test_a_dead_v3_parameter_is_ignored_rather_than_honoured(
+        self, client, regular_token1, db_session, group1_version, dead
+    ):
+        """Each becomes unreachable once the subject is an explicit assessment id. Not
+        carried, not deprecated — and ignored rather than rejected, since v4 ignores
+        unrecognised query parameters."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
+        resp = _missing_words(client, regular_token1, assessment_id, **{dead: 1})
+        assert resp.status_code == 200, resp.text
+        assert _sources(resp) == ["word"]
+
+    def test_the_route_uses_the_result_pagination_dependency(self):
+        route = _route("get_assessment_missing_words")
+        assert any(
+            dependency.call is ResultPaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_uses_the_aggregate_free_scope_dependency(self):
+        route = _route("get_assessment_missing_words")
+        assert any(
+            dependency.call is VerseScopeParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_returns_a_page_of_missing_word_rows(self):
+        route = _route("get_assessment_missing_words")
+        assert route.response_model.__name__.startswith("V4Page")
+
+    def test_the_flag_constants_are_v3s_and_are_named(self):
+        """v3 writes both as literals inline. They are a published property of ``flag``
+        — the field description quotes them — so there is one definition."""
+        assert assessment_service.MISSING_WORDS_FLAG_MIN_BASELINE == pytest.approx(0.35)
+        assert assessment_service.MISSING_WORDS_FLAG_RATIO == 5
+
+    def test_the_match_threshold_comes_from_the_shared_setting(self):
+        """Read through ``settings`` so a deployment overriding it cannot make the two
+        surfaces disagree about what counts as a translation."""
+        assert (
+            assessment_service.MISSING_WORDS_MATCH_THRESHOLD
+            == settings.missing_words_match_threshold
+        )
+
+    def test_both_alignment_reads_share_one_type_gate(self):
+        """One constant, not two, so the pair cannot drift apart — the same reason they
+        were built together."""
+        route_types = assessment_service.ALIGNMENT_ASSESSMENT_TYPES
+        assert route_types == ALIGNMENT_SERVED_TYPES
+
+
+class TestVerseScopeContract:
+    """The scope split: one set of narrowing rules, two models."""
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            pytest.param({}, id="empty"),
+            pytest.param({"book": "MAT"}, id="book"),
+            pytest.param({"book": "MAT", "chapter": 9}, id="book-chapter"),
+            pytest.param({"book": "MAT", "chapter": 9, "verse": 20}, id="full"),
+        ],
+    )
+    def test_a_consistent_scope_is_accepted(self, scope):
+        assert VerseScope(**scope) is not None
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            pytest.param({"chapter": 9}, id="chapter-without-book"),
+            pytest.param({"verse": 20}, id="verse-without-anything"),
+            pytest.param({"book": "MAT", "verse": 20}, id="verse-without-chapter"),
+        ],
+    )
+    def test_an_inconsistent_scope_cannot_be_constructed(self, scope):
+        with pytest.raises(ValidationError):
+            VerseScope(**scope)
+
+    def test_the_result_scope_is_the_verse_scope_plus_aggregate(self):
+        """Inheritance rather than duplication, so the two narrowing rules have one
+        implementation and cannot drift between the reads that share them."""
+        assert issubclass(ResultScope, VerseScope)
+        assert set(ResultScope.model_fields) - set(VerseScope.model_fields) == {
+            "aggregate"
+        }
+
+    def test_the_inherited_rules_still_apply_to_the_result_scope(self):
+        """The subclass's validator is an addition, not an override — a distinct name is
+        what makes that true, and it would fail silently if one were renamed."""
+        with pytest.raises(ValidationError):
+            ResultScope(chapter=9)
+        with pytest.raises(ValidationError):
+            ResultScope(book="MAT", verse=20)
+
+    def test_the_aggregate_rules_are_only_on_the_result_scope(self):
+        assert "aggregate" not in VerseScope.model_fields
+
+    def test_the_book_abbreviation_is_normalized_by_the_base_model(self):
+        assert VerseScope(book="mat").book == "MAT"
