@@ -156,6 +156,29 @@ still documents four flat query parameters rather than one object.
 ``assessment_type in ["question-answering", "word-tests"]``, and neither value is in
 ``AssessmentType`` — so it cannot fire for anything v4 can create. (The comment above it
 says "missing words", naming a third type again: a stale comment, not a spec.)
+
+
+The ngrams read: the one result row that is not a verse
+--------------------------------------------------------
+
+``GET /v4/assessments/{id}/ngrams`` (:class:`NgramResultOut`) is the odd member of this
+family, and reading it as a sibling of ``/results`` is the mistake to avoid. Its rows are
+**n-grams**, each carrying the verses the n-gram occurs in; nothing about it is keyed by
+verse. So :class:`ResultScope`, :class:`ResultAggregate` and the ``book`` / ``chapter`` /
+``verse`` parameters above are not wired into it — there is no per-verse axis to narrow
+and no per-verse set to roll up, and inventing a per-book n-gram filter would be a new
+capability rather than a port.
+
+**The verse list is ``occurrences``, not ``vrefs`` — the one deliberate field rename in
+the family** (repo owner, 2026-08-28). ``AssessmentResultOut.vrefs`` means the verses a
+single merged span covers: a range-merge concept, nearly always one entry, whose job is
+joining a score to the text it scored. An n-gram's list is every verse the n-gram was
+found in — an occurrence list, potentially hundreds of entries, with no range-merge
+meaning. Same name, same parent, sibling endpoints, different meanings, and nothing
+errors when a client confuses them; a client that met ``vrefs`` on ``/results`` first
+would reasonably assume they agree. The rename costs nothing because there are no v4
+clients, and it is a response field name only — the column stays
+``ngram_vref_table.vref``.
 """
 
 from datetime import datetime
@@ -834,6 +857,60 @@ class AssessmentResultAggregateOut(V4BaseModel):
 AssessmentResultRow = Union[AssessmentResultOut, AssessmentResultAggregateOut]
 
 
+class NgramResultOut(V4BaseModel):
+    """One row of ``GET /v4/assessments/{id}/ngrams``.
+
+    **A row here is an n-gram, not a verse**, and that is the one thing to internalise
+    before reading the rest. Every other typed result sub-resource on this parent is keyed
+    by verse; this one is keyed by the n-gram, and each row carries the list of verses the
+    n-gram was found in. That is why ``book`` / ``chapter`` / ``verse`` and ``aggregate``
+    are not accepted by the endpoint — there is nothing per-verse to scope or roll up.
+
+    ``occurrences`` is deliberately **not** called ``vrefs``, and the rename is the reason
+    this docstring exists. ``AssessmentResultOut.vrefs`` on the sibling ``/results`` read
+    means *the verses one merged span covers* — a range-merge concept, almost always a
+    single entry, whose purpose is joining a score to the text that was scored. This field
+    means *every verse in which this n-gram occurs*: an occurrence list, potentially
+    hundreds of entries, with no range-merge meaning at all. Two fields with the same name
+    and different meanings on sibling endpoints of the same parent resource is a collision
+    a client discovers only by getting wrong answers, since nothing errors when they are
+    confused. v3 called this field ``vrefs``; v4 renames it because there are no clients
+    to inconvenience and the collision is silent.
+
+    ``ngram`` and ``ngram_size`` are required here even though both columns are nullable,
+    which is a deliberate match to v3's own ``NgramResult`` rather than an oversight. The
+    table's only writer is the runner-facing ``push_ngrams``, whose ``NgramItem`` requires
+    both, so a null can only come from a direct database write — and there is no honest
+    default to coerce a missing n-gram to, the way ``flag`` and ``hide`` coerce to false
+    on ``/results``. Such a row is corrupt data and surfaces as a 500, on both surfaces.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored row's id. Row order is by this column, but it is not a handle: "
+            "no v4 endpoint addresses a single n-gram."
+        ),
+    )
+    assessment_id: int = Field(
+        description="The assessment this n-gram belongs to (echoed from the path).",
+    )
+    ngram: str = Field(
+        description="The n-gram itself, exactly as the runner stored it.",
+    )
+    ngram_size: int = Field(
+        description="How many tokens the n-gram has — the *n*.",
+    )
+    occurrences: list[str] = Field(
+        description=(
+            "Every verse in which this n-gram occurs, as canonical vrefs. **Not** the "
+            "span coverage `/results` calls `vrefs`: these are occurrences, so the list "
+            "may hold hundreds of entries and carries no range-merge meaning. Empty for "
+            "an n-gram stored with no verse references, which is returned rather than "
+            "omitted — see the endpoint description."
+        ),
+    )
+
+
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
@@ -847,6 +924,7 @@ __all__ = [
     "AssessmentResultAggregateOut",
     "AssessmentResultOut",
     "AssessmentResultRow",
+    "NgramResultOut",
     "NgramsOptions",
     "ReferencedAssessmentOptions",
     "ResultAggregate",

@@ -13,10 +13,12 @@ happens somewhere else. Five endpoints:
   appropriate.
 * ``GET    /v4/assessments/{id}/results`` — the generic per-verse scores, paginated,
   in canonical vref order, with v3's scoping filters and its ``aggregate`` rollups.
+* ``GET    /v4/assessments/{id}/ngrams`` — the ``ngrams`` type's n-grams, paginated,
+  each with the verses it occurs in. The one result read whose rows are not verses.
 
-The remaining typed result sub-resources (``/ngrams``, ``/text-lengths``,
-``/alignment-scores``, ``/tfidf``, ``/missing-words``) are the rest of #893 and land in
-follow-up PRs, as does the comparisons family.
+The remaining typed result sub-resources (``/text-lengths``, ``/alignment-scores``,
+``/similar-verses``, ``/missing-words``) are the rest of #893 and land in follow-up PRs,
+as does the comparisons family.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -123,6 +125,7 @@ from api_v4.schemas.assessment import (
     AssessmentResultAggregateOut,
     AssessmentResultOut,
     AssessmentResultRow,
+    NgramResultOut,
     ResultAggregate,
     ResultScope,
 )
@@ -319,16 +322,18 @@ def _to_job(assessment: Assessment) -> AssessmentJob:
 def _not_found_error(exc: Exception, assessment_id: int) -> V4APIError:
     """The 404 for an assessment the caller cannot read or reach.
 
-    Shared by the poll, the delete and the results read so all three report an
+    Shared by the poll, the delete and every typed result read, so all of them report an
     unreachable id identically. One code covers "no such id", "outside your groups",
     "soft-deleted", "its revision was soft-deleted" and "it is a training row" — the
     service resolves all five in one scoped query and must not separate them (see its
-    module docstring). On the results read the same code also covers a sixth: an
-    assessment whose *type* has no rows in this result table. That is one clause on the
-    same statement, so it cannot be told apart from the other five either, and a caller
-    learns nothing about an assessment they may not see by asking for its results. The
-    prose comes from the signal rather than being re-written here, so the two cannot
-    drift.
+    module docstring). On a result read the same code also covers a sixth: an assessment
+    whose *type* has no rows in that read's result table. That is one clause on the same
+    statement, so it cannot be told apart from the other five either, and a caller learns
+    nothing about an assessment they may not see by asking for its results. The prose
+    comes from the signal rather than being re-written here, so the two cannot drift.
+
+    Every read in the family reuses this one helper deliberately: authorization defined
+    per endpoint is what produced four of this slice's five security issues.
     """
     return V4APIError(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -690,6 +695,69 @@ async def get_assessment_results(
     # list has no delta feed. The key is still present and null, per the envelope's
     # contract that adding delta support later is not a response-shape change.
     return V4Page[AssessmentResultRow].create(items=items, total=total, pagination=page)
+
+
+@router.get(
+    "/{assessment_id}/ngrams",
+    response_model=V4Page[NgramResultOut],
+)
+async def get_assessment_ngrams(
+    assessment_id: int,
+    page: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> V4Page[NgramResultOut]:
+    """Read one assessment's n-grams, each with the verses it occurs in.
+
+    Serves `type = ngrams` only. An assessment of any other type reports
+    `404 ASSESSMENT_NOT_FOUND` — the same answer as one that does not exist, is outside
+    your groups, or is a training run — because the other types keep their results in
+    their own tables and have their own sub-resources.
+
+    **A row here is an n-gram, not a verse.** This is the one result read on this parent
+    that is not keyed by verse, and it is worth reading the difference before wiring a
+    client to it. `/results` returns one row per verse; this returns one row per n-gram,
+    and each row's `occurrences` lists the verses that n-gram was found in. There is
+    therefore **no `book`, `chapter`, `verse` or `aggregate`** — there is no per-verse
+    axis to narrow and no per-verse set to roll up. Those parameters are not merely
+    unsupported, they are absent: v4 ignores unrecognised query parameters, so sending
+    `?book=MAT` here returns the unfiltered page rather than an error.
+
+    **`occurrences` is not `/results`' `vrefs`, despite the family resemblance.** On
+    `/results`, `vrefs` is the verses a single merged span *covers* — a range-merge
+    concept, almost always one entry, whose purpose is joining a score to the text it
+    scored. Here the list is every verse in which the n-gram *occurs*: an occurrence
+    list, sometimes hundreds of entries, with no range-merge meaning at all. v3 called
+    this field `vrefs`; v4 renames it precisely because the two would otherwise collide
+    silently — nothing errors when a client treats one as the other.
+
+    **An n-gram with no verse references is returned with an empty `occurrences`, not
+    omitted**, and it is counted in `total`. v3 deliberately made these visible after an
+    earlier `INNER JOIN` dropped them from the page while still counting them; the two
+    agree here for the same reason.
+
+    **Ordering is by the stored row id**, which is neither alphabetical nor by frequency.
+    An n-gram is a token sequence, not a location, so it has no canonical order the way a
+    verse does — and offset pagination needs a total order on a column that cannot tie or
+    move, which `ngram` (nullable, non-unique, unindexed) is not. Sorting a page yourself
+    is safe; sorting *across* pages requires fetching them all.
+
+    `total` counts every n-gram in the assessment, including vrefless ones, and ignores
+    `limit`/`offset`.
+    """
+    try:
+        rows, total = await assessment_service.get_ngrams(
+            db, current_user, assessment_id, limit=page.limit, offset=page.offset
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+    # No next_updated_since, for the reason /results gives: neither ngrams_table nor
+    # ngram_vref_table carries a modification timestamp, so there is no watermark to
+    # publish. Present and null rather than absent, so gaining a delta feed later would
+    # not change the response shape.
+    return V4Page[NgramResultOut].create(
+        items=[NgramResultOut(**row) for row in rows], total=total, pagination=page
+    )
 
 
 @router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
