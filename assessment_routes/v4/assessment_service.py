@@ -8,10 +8,10 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read, delete, and two of the typed result reads** — the generic
-per-verse ``/results`` and ``/ngrams``. The remaining sub-resources (``/text-lengths``,
-``/alignment-scores``, ``/similar-verses``, ``/missing-words``) and the comparisons
-family are follow-ups on #893; the runner-facing
+Scope is **create, read, delete, and three of the typed result reads** — the generic
+per-verse ``/results``, ``/ngrams``, and the ``/similar-verses`` ranking. The remaining
+sub-resources (``/text-lengths``, ``/alignment-scores``, ``/missing-words``) and the
+comparisons family are follow-ups on #893; the runner-facing
 surface (``results_push_*``, ``eflomal-*``, ``tfidf-artifacts/*``, the status ``PATCH``)
 stays on v3 permanently — it is our own code talking to our own code and is not client
 contract (#842's 2026-08-25b decision 4).
@@ -236,6 +236,42 @@ The ``<range>`` marker cannot appear in ``occurrences``: ``ngram_vref_table.vref
 foreign key to ``verse_reference.full_verse_id``, and ``verse_reference`` holds exactly
 the 41,899 canonical references with no marker row among them, so the marker is not a
 member of the column's domain. That is why this read needs no span map and no filtering.
+
+
+How the similarity read is shaped (:func:`get_similar_verses`)
+----------------------------------------------------------------
+
+``GET /v4/assessments/{id}/similar-verses`` serves ``type = tfidf`` only, and it is not a
+listing: it is a nearest-neighbour search over one assessment's ``tfidf_pca_vector``
+rows. Read the differences from every other function above before changing it.
+
+* **Authorization is still the same predicate**, :func:`get_assessment` with
+  ``types=SIMILARITY_ASSESSMENT_TYPES`` — no new rule, for the reason the whole family
+  shares one. It also supplies ``revision_id`` and ``reference_id``, which is what the
+  read attaches text from.
+* **A vref with no vector is :class:`SimilarityVrefNotFound`, not
+  :class:`AssessmentNotFound`.** Both are 404s; they are separate signals because the
+  assessment's reachability is already settled by then. See that class.
+* **The scan is exact and scoped to the assessment, and this is a decision rather than an
+  oversight.** ``tfidf_pca_vector_ivfflat_idx`` exists — 228 GB, 18% of the database,
+  **zero** scans across five weeks of production statistics (``ASSESSMENT-STORAGE-
+  ANALYSIS.md`` §7) — and it is tempting to conclude this read should finally use it. It
+  should not. The query is always scoped to one ``assessment_id`` (at most 41,899
+  vectors, and that column is indexed), a global ANN index cannot be filtered by
+  ``assessment_id`` efficiently, ``lists = 100`` over 171 M rows means ~1.7 M vectors per
+  probe list regardless, and ivfflat returns *approximate* neighbours — so switching
+  would silently change which verses come back. Whether that index should exist at all is
+  a 228 GB storage question that belongs to the storage analysis, not to this read, which
+  neither uses nor drops it.
+* **No cache and no materialization.** ``tfidf`` is the most expensive type to run
+  (460 GB of the 610 GB added in 2026, ~110 MB per assessment), which is a reason to
+  measure before adding anything here, not a reason to add it pre-emptively.
+
+The verse text is fetched in the same layer, so the router never touches the database.
+The ``<range>`` marker cannot be a hit's text, for the reason :func:`get_results`
+records: a verse marked ``<range>`` is merged away by ``GET /v3/text`` before the runner
+ever sees it, so it gets no vector of its own, and the anchor verse's stored text is the
+whole merged span — exactly the text that was vectorized.
 """
 
 from datetime import date, datetime, timedelta
@@ -276,8 +312,10 @@ from database.models import (
     BookReference,
     NgramsTable,
     NgramVrefTable,
+    TfidfPcaVector,
     UserDB,
     UserGroup,
+    VerseText,
 )
 from schemas.assessment import (
     ASSESSMENT_TERMINAL_STATUSES,
@@ -385,6 +423,24 @@ class AssessmentNotFound(AssessmentServiceError):
     def __init__(self, assessment_id: int) -> None:
         self.assessment_id = assessment_id
         super().__init__(f"Assessment {assessment_id} does not exist.")
+
+
+class SimilarityVrefNotFound(AssessmentServiceError):
+    """The assessment is readable, but it holds no vector for the requested ``vref``.
+
+    A *different* signal from :class:`AssessmentNotFound` on purpose, even though both
+    become a 404. By the time this can be raised the caller has already established that
+    the assessment exists and is theirs to read, so saying which verse is missing
+    discloses only which verses that assessment covers — something they are entitled to
+    ask row by row anyway. Collapsing the two would leave a caller unable to tell a typo
+    in ``vref`` from an assessment they cannot reach, which is the one distinction that
+    actually helps them.
+    """
+
+    def __init__(self, assessment_id: int, vref: str) -> None:
+        self.assessment_id = assessment_id
+        self.vref = vref
+        super().__init__(f"Assessment {assessment_id} has no vector for vref {vref!r}.")
 
 
 class AssessmentAccessForbidden(AssessmentServiceError):
@@ -1559,3 +1615,157 @@ async def get_ngrams(
     )
     rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
     return rows, total or 0
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/similar-verses. See "How the similarity read is
+# shaped" in the module docstring.
+# ---------------------------------------------------------------------------
+
+#: The only assessment type that stores vectors in ``tfidf_pca_vector``, and so the only
+#: type ``GET /v4/assessments/{id}/similar-verses`` serves. A tuple for the same reason
+#: :data:`NGRAMS_ASSESSMENT_TYPES` is one.
+SIMILARITY_ASSESSMENT_TYPES = (AssessmentType.tfidf.value,)
+
+
+async def _verse_texts(
+    db: AsyncSession, revision_id: int | None, vrefs: list[str]
+) -> dict[str, str | None]:
+    """``{vref: text}`` for one revision, restricted to the vrefs asked for.
+
+    Returns an empty mapping for a null ``revision_id`` — which is how the reference half
+    of the read handles an assessment with no reference, without a branch at the call
+    site. One statement for the whole page rather than one per hit, keyed on
+    ``ix_verse_text_verse_reference_revision``.
+
+    A revision is not guaranteed to hold every vref, so a missing entry is normal and the
+    caller reports ``null``.
+
+    ``verse_text`` has no uniqueness constraint on ``(revision_id, verse_reference)``, so
+    duplicates are possible and the **lowest id wins, deterministically**. v3 builds the
+    same mapping from an unordered result and lets the last row seen overwrite, which is
+    not a rule at all: without an ``ORDER BY`` the row order is undefined, so the same
+    request can return different text on consecutive calls. That would quietly undo this
+    endpoint's stated contract that repeating a request repeats the answer — the reason
+    its ranking breaks ties on ``vref``. First-write-wins is also the convention the tree
+    already applies to this hazard (``_deduplicated_results``, ``train_routes``, and
+    #721's own ``ON CONFLICT DO NOTHING``). The ordering sorts at most one page's verses,
+    so it is free.
+    """
+    if revision_id is None or not vrefs:
+        return {}
+    rows = (
+        await db.execute(
+            select(VerseText.id, VerseText.verse_reference, VerseText.text)
+            .where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(vrefs),
+            )
+            .order_by(VerseText.id)
+        )
+    ).all()
+    texts: dict[str, str | None] = {}
+    for row in rows:
+        # setdefault rather than assignment: ordered by id ascending, so the first row
+        # seen for a vref is the lowest-id one and later duplicates do not displace it.
+        texts.setdefault(row.verse_reference, row.text)
+    return texts
+
+
+async def get_similar_verses(
+    db: AsyncSession, user: UserDB, assessment_id: int, *, vref: str, limit: int
+) -> list[dict]:
+    """The ``limit`` verses most similar to ``vref`` within one ``tfidf`` assessment.
+
+    Three statements, in this order and for these reasons.
+
+    **1. Authorize and load the parent.** :func:`get_assessment` with
+    ``types=SIMILARITY_ASSESSMENT_TYPES`` — the family's one predicate, with "wrong type"
+    as a clause on the same statement — and it hands back the ``revision_id`` and
+    ``reference_id`` step 3 attaches text from. Nothing else is allowed to decide who may
+    read this.
+
+    **2. Load the query point.** The caller's ``vref`` is not a filter, it *is* the query:
+    its vector is the thing everything else is ranked against. No vector for it means
+    :class:`SimilarityVrefNotFound` rather than an empty ranking, because an empty list
+    would be indistinguishable from "this assessment vectorized only one verse" and would
+    silently swallow a typo.
+
+    ``(assessment_id, vref)`` has no uniqueness constraint, so this takes the **lowest
+    id** rather than v3's bare ``limit(1)``. v3's form picks an undefined row among
+    duplicates, and this is the worst place in the read for that: the query point decides
+    *every* similarity in the response, so an arbitrary pick reorders the whole ranking
+    rather than changing one field. Ordering costs nothing — the lookup is already a
+    handful of rows behind an index.
+
+    **3. Rank, exactly, within the assessment.** ``max_inner_product`` is pgvector's
+    ``<#>``, which returns the *negated* inner product so that ascending order is
+    most-similar-first; the sign is flipped back on the way out, so ``similarity`` is the
+    plain inner product v3 reports. The query vector rides as a **bound parameter** rather
+    than being interpolated into the SQL as a literal — v3 formats it into the statement
+    text at six decimal places (``build_vector_literal``), which both truncates the query
+    point and defeats plan caching.
+
+    Ordering adds ``vref`` as a tiebreak, which v3 does not have: without it two verses
+    with equal similarity come back in whatever order the scan produced, so the same
+    request can answer differently twice and the ``limit`` boundary can include either.
+    It costs a second key on a top-N sort the scan is already doing.
+
+    **Deliberately not guarded: a duplicate vector appearing twice in the ranked list.**
+    Step 2 pins which duplicate is the *query point*, but the ranked set is not
+    deduplicated, so #721's retry-duplication class could still surface one vref twice
+    among the hits. The ``DISTINCT ON`` that :func:`_deduplicated_results` uses on the
+    results read is free there because it rides an existing index; here it would force
+    the planner to materialize and sort all of the assessment's vectors instead of taking
+    a top-N over the scan, turning a bounded cost into a full one for a defect nothing has
+    observed on this table. The two halves are worth separating: making the query point
+    deterministic is free and decides every number in the response, while deduplicating
+    the results is not free and costs one duplicated row. Recorded rather than silently
+    omitted.
+
+    Returns plain dicts for the router to shape — the row is a computed pairing, not an
+    ORM row, so there is nothing to carry through.
+    """
+    assessment = await get_assessment(
+        db, user, assessment_id, types=SIMILARITY_ASSESSMENT_TYPES
+    )
+
+    query_vector = await db.scalar(
+        select(TfidfPcaVector.vector)
+        .where(
+            TfidfPcaVector.assessment_id == assessment_id,
+            TfidfPcaVector.vref == vref,
+        )
+        .order_by(TfidfPcaVector.id)
+        .limit(1)
+    )
+    if query_vector is None:
+        raise SimilarityVrefNotFound(assessment_id, vref)
+
+    distance = TfidfPcaVector.vector.max_inner_product(query_vector)
+    hits = (
+        await db.execute(
+            select(TfidfPcaVector.vref, distance.label("distance"))
+            .where(
+                TfidfPcaVector.assessment_id == assessment_id,
+                TfidfPcaVector.vref != vref,
+            )
+            .order_by(distance.asc(), TfidfPcaVector.vref.asc())
+            .limit(limit)
+        )
+    ).all()
+
+    vrefs = [hit.vref for hit in hits]
+    revision_texts = await _verse_texts(db, assessment.revision_id, vrefs)
+    reference_texts = await _verse_texts(db, assessment.reference_id, vrefs)
+    return [
+        {
+            "vref": hit.vref,
+            # `<#>` is the negated inner product; flip it back so a bigger number means
+            # more similar, which is what the field promises and what v3 reports.
+            "similarity": -float(hit.distance),
+            "text": revision_texts.get(hit.vref),
+            "reference_text": reference_texts.get(hit.vref),
+        }
+        for hit in hits
+    ]
