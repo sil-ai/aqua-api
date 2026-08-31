@@ -4706,6 +4706,40 @@ class TestSimilarVersesRanking:
             assert _hit_vrefs(resp) == ["GEN 1:2", "GEN 1:3"]
             assert [hit["similarity"] for hit in _hits(resp)] == [3.0, -4.0]
 
+    def test_the_query_point_lookup_is_ordered_in_the_sql_itself(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The ordering above, pinned where physical row order cannot flatter it.
+
+        Its behavioural sibling passes against the unordered form too, because a small
+        freshly-written table happens to come back lowest-id first — so dropping the
+        ``ORDER BY`` would leave the suite green. That is the wrong way round for the one
+        line in this read that changed in response to review, and the one whose absence
+        reorders every number in the response rather than changing a single field.
+
+        So this asserts the *statement* rather than the answer, which is the trick
+        :func:`_captured_sql` already plays for the #648 two-step: it cannot be flattered
+        by how Postgres lays the rows out today. The behavioural sibling is kept as well —
+        it still describes the guarantee a reader cares about.
+
+        The query point is the ``tfidf_pca_vector`` statement with no ``<#>`` in it: the
+        ranking computes a distance, this one only fetches a vector.
+        """
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 3}
+        )
+        with _captured_sql() as captured:
+            resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assert resp.status_code == 200, resp.text
+
+        lookups = [
+            statement
+            for statement, _ in _touching(captured, "tfidf_pca_vector")
+            if "<#>" not in statement
+        ]
+        assert len(lookups) == 1, lookups
+        assert "ORDER BY tfidf_pca_vector.id" in lookups[0], lookups[0]
+
     def test_the_query_point_is_this_assessments_vector_not_another_ones(
         self, client, regular_token1, db_session, group1_version
     ):
