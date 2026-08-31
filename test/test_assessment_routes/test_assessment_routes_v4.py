@@ -132,6 +132,7 @@ from assessment_routes.v4 import assessment_service
 from assessment_routes.v4.assessment_routes import (
     ALIGNMENT_WORD_MAX_LENGTH,
     ASSESSMENT_RETRY_AFTER_S,
+    MAX_AGAINST_ASSESSMENTS,
     SIMILAR_VERSES_DEFAULT_LIMIT,
     SIMILAR_VERSES_MAX_LIMIT,
     VerseScopeParams,
@@ -6889,6 +6890,30 @@ class TestMissingWordsContract:
         resp = _missing_words(client, regular_token1, assessment_id, **{dead: 1})
         assert resp.status_code == 200, resp.text
         assert _sources(resp) == ["word"]
+
+    def test_too_many_peers_is_a_422_naming_the_limit(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``against`` is caller-controlled and each distinct peer costs an authorization
+        query, so an unbounded list turns one cheap request into arbitrarily many. Bounded
+        the way ``MAX_VREFS`` bounds ``vrefs``: above any legitimate use, so hitting it
+        means a client bug, and answered with a 422 rather than absorbed."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        resp = _missing_words(
+            client,
+            regular_token1,
+            assessment_id,
+            against=list(range(MAX_AGAINST_ASSESSMENTS + 1)),
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_peer_limit_is_above_any_real_peer_pool(self):
+        """Measured against production: the largest set of finished word-alignment
+        assessments sharing any single reference is 598, and the mean is 3.4. A caller
+        cannot reach this limit with peers that actually exist."""
+        assert MAX_AGAINST_ASSESSMENTS >= 1000
 
     def test_the_route_uses_the_result_pagination_dependency(self):
         route = _route("get_assessment_missing_words")

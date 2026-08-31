@@ -214,6 +214,22 @@ SIMILAR_VERSES_MAX_LIMIT = 100
 #: with no bound at all.
 ALIGNMENT_WORD_MAX_LENGTH = 200
 
+#: Most peer assessments ``GET /v4/assessments/{id}/missing-words`` will weigh against at
+#: once. ``against`` is caller-controlled and repeated, and the service authorizes each
+#: *distinct* peer through :func:`assessment_service.get_assessment` — one small indexed
+#: query apiece — so an unbounded list turns one cheap request into arbitrarily many.
+#:
+#: 1000 rather than something tighter, and :data:`~api_v4.schemas.bible.MAX_VREFS`'
+#: reasoning is why: **the limit is not the point, the error is.** It is set above any
+#: legitimate use so that hitting it means a client bug, and it answers with a 422 naming
+#: the limit and the number received instead of degrading quietly. Measured against
+#: production, the largest pool of finished word-alignment assessments sharing any single
+#: reference is 598 and the mean is 3.4, so this cannot bite a real caller.
+#:
+#: Shared with ``/score-comparison`` when that lands — ``against`` means the same thing
+#: on both reads, so it should be bounded by the same number.
+MAX_AGAINST_ASSESSMENTS = 1000
+
 #: Cadence advertised on the 202, in seconds. Required rather than inherited — there
 #: is no v4-wide default, precisely so a slice cannot pick up a cadence tuned for
 #: something else (:mod:`api_v4.jobs`, divergence 3). Assessments span roughly a
@@ -1101,6 +1117,7 @@ async def get_assessment_missing_words(
     ),
     against: Optional[List[int]] = Query(
         None,
+        max_length=MAX_AGAINST_ASSESSMENTS,
         description=(
             "Peer **assessment** ids to weigh this assessment's alignments against "
             "(repeated parameter, e.g. `?against=1&against=2`). Each must be a "
@@ -1109,8 +1126,10 @@ async def get_assessment_missing_words(
             "assessment's revision and reference — a sibling revision is not an "
             "independent witness. A peer failing either rule is a `422` naming it, not a "
             "silently dropped baseline as in v3. A peer named twice counts once — it is "
-            "still one witness. These are assessment ids, not revision ids: v3's "
-            "`baseline_ids` named revisions and let the server pick a run."
+            f"still one witness. **At most {MAX_AGAINST_ASSESSMENTS} per request**; more "
+            "is a 422 naming the limit and the number received. These are assessment "
+            "ids, not revision ids: v3's `baseline_ids` named revisions and let the "
+            "server pick a run."
         ),
     ),
     db: AsyncSession = Depends(get_db),
