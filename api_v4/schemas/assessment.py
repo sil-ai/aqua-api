@@ -143,14 +143,21 @@ missing-words-shaped assessments, whose per-word rows this read does not serve, 
 Serving them here would be a new capability rather than a port, so they wait for the
 read that actually needs them.
 
-:class:`ResultScope` is the request half, and it is where #486's principle is paid off.
-v3 guards the same four parameters with ``validate_parameters``, a runtime function that
-raises five separate ``HTTPException(400)``s and is frozen with the rest of v3. Here the
-invariants are a ``model_validator``, so an inconsistent scope **cannot be constructed**:
-the service layer never has to re-check, the rules are unit-testable without an HTTP
+:class:`VerseScope` and :class:`ResultScope` are the request half, and they are where
+#486's principle is paid off. v3 guards the same four parameters with
+``validate_parameters``, a runtime function that raises five separate
+``HTTPException(400)``s and is frozen with the rest of v3. Here the invariants are
+``model_validator`` methods, so an inconsistent scope **cannot be constructed**: the
+service layer never has to re-check, the rules are unit-testable without an HTTP
 client, and the failure is the standard 422 envelope rather than a bespoke 400. The
-adapter that turns query parameters into one of these lives with the route, so OpenAPI
-still documents four flat query parameters rather than one object.
+adapters that turn query parameters into one of these live with the routes, so OpenAPI
+still documents flat query parameters rather than one object.
+
+The split is by what a read's row *is*. :class:`VerseScope` holds the three narrowing
+parameters and the two rules over them; :class:`ResultScope` adds ``aggregate`` and the
+three rules that stop a rollup being narrower than the scope it rolls up. The
+word-keyed reads (:class:`AlignmentScoreOut`, :class:`MissingWordOut`) take the base
+only — a row there is a word, so there is no per-verse set for a rollup to summarize.
 
 ``reverse`` is not carried. v3's only branch on it tests
 ``assessment_type in ["question-answering", "word-tests"]``, and neither value is in
@@ -204,6 +211,39 @@ attach, which makes the response depend on a display preference rather than on t
 assessment. v4 uses the assessment's own reference where it has one and returns
 ``reference_text: null`` where it does not. A caller who wants arbitrary verse text
 already has the verses read (#892).
+
+
+The alignment reads: word rows, and the endpoint that stopped existing
+-----------------------------------------------------------------------
+
+``GET /v4/assessments/{id}/alignment-scores`` (:class:`AlignmentScoreOut`) and
+``GET /v4/assessments/{id}/missing-words`` (:class:`MissingWordOut`) both serve
+``word-alignment`` and both read the same table. Their rows are **words** — one source
+word aligned to one target word in one verse — which is why neither carries
+``aggregate``: a chapter mean over word rows would produce a number that looks like the
+one ``/results`` gives for the same assessment and is not it.
+
+**``/alignment-scores`` absorbs v3's ``GET /alignmentmatches`` rather than porting it.**
+That endpoint is this read filtered to one ``source`` above one score, so it is a filter
+and not a resource. The fold is only lossless because the two verse texts come back on
+every row — ``/alignmentmatches`` joins ``verse_text`` twice and dropping them would lose
+output. That is deliberately the opposite call from ``/results``, which *dropped* its
+text fields: there the parameter that would have filled them was ignored and they were
+always null, so nothing was lost.
+
+**``/missing-words`` keeps its own endpoint by the same test**, because it adds fields
+derived from *other* assessments — the same test that kept ``/score-comparison`` off
+``/results``. :class:`MissingWordTargetOut` is that addition, and it carries the peer's
+**assessment** id as well as its revision id, since ``against`` now names assessments
+where v3's ``baseline_ids`` named revisions.
+
+**``missing-words`` is not an assessment type** — no enum value, no table, no runner.
+Both reads take a ``word-alignment`` assessment id. The client's ``missing-words`` is a
+UI category, and "pass the id of the missing-words assessment" is the natural and wrong
+guess, so both the endpoint and :class:`MissingWordOut` say so.
+
+:class:`AlignmentScoreType` chooses *which stored rows* to read, not how to read them;
+the two tables hold different things, and there is no fallback between them.
 """
 
 from datetime import datetime
@@ -657,26 +697,25 @@ class ResultAggregate(str, Enum):
     text = "text"
 
 
-class ResultScope(V4BaseModel):
-    """Which slice of a result set to return, and at what level.
+class VerseScope(V4BaseModel):
+    """Which verses of a verse-keyed result set to return.
 
-    The four parameters are v3's, and so are the invariants — but they hold *by
-    construction* here (see the module docstring). Five rules, each of which v3 raises a
+    The three parameters are v3's, and so are the invariants — but they hold *by
+    construction* here (see the module docstring). Two rules, each of which v3 raises a
     separate ``HTTPException(400)`` for:
 
     1. ``chapter`` requires ``book``
     2. ``verse`` requires ``chapter`` (and so, transitively, ``book``)
-    3. ``aggregate=book`` conflicts with ``chapter``
-    4. ``aggregate=chapter`` conflicts with ``verse``
-    5. ``aggregate=text`` conflicts with ``book``, ``chapter`` and ``verse``
-
-    Rules 3-5 are all the same statement — a rollup cannot be narrower than the scope it
-    rolls up — but they are written out one at a time so the 422's message names the pair
-    the caller actually sent.
 
     A ``book`` that is well-formed but names no book yields an empty page rather than a
     404. It narrows an already-authorized set instead of naming the collection's parent,
     which is the same rule ``GET /v4/assessments``' filters follow.
+
+    Split out of :class:`ResultScope` rather than duplicated because four reads on this
+    parent take these three parameters and only ``/results`` and ``/text-lengths`` also
+    take ``aggregate``. One implementation means the narrowing rules cannot drift between
+    reads, and a reader comparing two endpoints' 422s finds one rule rather than two
+    copies of it.
     """
 
     book: str | None = Field(
@@ -699,15 +738,6 @@ class ResultScope(V4BaseModel):
         ge=1,
         description="Restrict to one verse. Requires `book` and `chapter`.",
     )
-    aggregate: ResultAggregate | None = Field(
-        default=None,
-        description=(
-            "Roll the scores up to this level instead of returning verses. Omit it for "
-            "verse level. An aggregate level cannot be narrower than the scope it "
-            "summarizes, so `chapter` excludes `verse`, `book` excludes `chapter`, and "
-            "`text` excludes all three."
-        ),
-    )
 
     @field_validator("book")
     @classmethod
@@ -722,11 +752,45 @@ class ResultScope(V4BaseModel):
         return value.upper() if value is not None else None
 
     @model_validator(mode="after")
-    def _consistent_scope(self) -> "ResultScope":
+    def _consistent_scope(self) -> "VerseScope":
         if self.chapter is not None and self.book is None:
             raise ValueError("chapter requires book")
         if self.verse is not None and self.chapter is None:
             raise ValueError("verse requires book and chapter")
+        return self
+
+
+class ResultScope(VerseScope):
+    """:class:`VerseScope` plus the rollup level, for the two reads that aggregate.
+
+    Adds three rules to the base's two, each of which v3 also raises a separate
+    ``HTTPException(400)`` for:
+
+    3. ``aggregate=book`` conflicts with ``chapter``
+    4. ``aggregate=chapter`` conflicts with ``verse``
+    5. ``aggregate=text`` conflicts with ``book``, ``chapter`` and ``verse``
+
+    All three are the same statement — a rollup cannot be narrower than the scope it
+    rolls up — but they are written out one at a time so the 422's message names the pair
+    the caller actually sent.
+
+    The two validators both run: they have different names, so the subclass's is an
+    addition rather than an override, and a request violating a base rule and an
+    aggregate rule at once is rejected by the base rule first.
+    """
+
+    aggregate: ResultAggregate | None = Field(
+        default=None,
+        description=(
+            "Roll the scores up to this level instead of returning verses. Omit it for "
+            "verse level. An aggregate level cannot be narrower than the scope it "
+            "summarizes, so `chapter` excludes `verse`, `book` excludes `chapter`, and "
+            "`text` excludes all three."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _aggregate_is_not_narrower(self) -> "ResultScope":
         if self.aggregate is ResultAggregate.book and self.chapter is not None:
             raise ValueError("aggregate=book cannot be combined with chapter")
         if self.aggregate is ResultAggregate.chapter and self.verse is not None:
@@ -1023,11 +1087,231 @@ class SimilarVersesOut(V4BaseModel):
     )
 
 
+class AlignmentScoreType(str, Enum):
+    """Which of the two word-alignment score tables ``/alignment-scores`` reads.
+
+    Not a display preference and not interchangeable: the runner writes both, and they
+    hold *different rows*. ``top`` is ``alignment_top_source_scores`` — the single
+    best-scoring target for each source word in each verse, so ``(vref, source)`` is a
+    natural key. ``threshold`` is ``alignment_threshold_scores`` — every target that
+    scored above the runner's cutoff, so one source word in one verse can appear several
+    times with different targets. Confirmed against production: 31,038 sampled
+    ``top`` rows have no duplicate ``(vref, source)`` at all, while the same assessments'
+    ``threshold`` rows have thousands.
+
+    v3's enum of the same name (``results_query_routes.py``) has the same two values.
+    Redeclared here rather than imported because that module is frozen v3 code and a v4
+    wire contract should not be able to change underneath by an edit there.
+    """
+
+    top = "top"
+    threshold = "threshold"
+
+
+class AlignmentScoreOut(V4BaseModel):
+    """One row of ``GET /v4/assessments/{id}/alignment-scores``.
+
+    **A row is a word pairing, not a verse.** ``/results`` gives one row per verse for the
+    same assessment; this gives one row per aligned *word*, so a single verse contributes
+    as many rows as it has source words. That is why there is no ``aggregate`` here — see
+    the endpoint description.
+
+    This row shape is also what lets v3's ``GET /alignmentmatches`` disappear rather than
+    be ported: that endpoint is this read filtered to one ``source`` above one score, and
+    the only fields it returned that a bare score row lacks are the two verse texts, which
+    are always populated here.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored row's id. Part of the ordering tiebreak, but not a handle: no v4 "
+            "endpoint addresses a single alignment row."
+        ),
+    )
+    assessment_id: int = Field(
+        description="The assessment this alignment belongs to (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse this alignment was found in — the **first** verse of the span "
+            "when the revision merged several. Always a literal canonical vref."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, in canonical order and beginning with `vref`. "
+            "A single entry unless the revision merged verses into this one (`<range>`), "
+            "in which case the continuations follow — the same field, derived the same "
+            "way, as on `/results`."
+        ),
+    )
+    source: str = Field(
+        description=(
+            "The source-side word, as the runner stored it — lower-cased. Match it with "
+            "the `source` query parameter, which is case-insensitive."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description="The target-side word this source word aligned to.",
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "The alignment score for this word pair, higher being a stronger alignment. "
+            "Filter on it with `min_score`."
+        ),
+    )
+    flag: bool = Field(
+        default=False,
+        description=(
+            "Whether the row was flagged for attention. Coerced from null on legacy rows "
+            "written before the column had a default — the shape that once 500'd v3's "
+            "`/alignmentscores`."
+        ),
+    )
+    hide: bool = Field(
+        default=False,
+        description=(
+            "Whether the row is marked as hidden from display. Advisory — the row is "
+            "still returned; it is up to the client to honour it."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description="Free-text note the runner attached to this row, or null.",
+    )
+    text: str | None = Field(
+        default=None,
+        description=(
+            "The assessed revision's stored text for `vref`, so a word list is "
+            "renderable without a request per row. Where `vrefs` lists several verses "
+            "this is the **whole merged span's** text, which is how a vref-aligned "
+            "upload stores it — the continuations hold the `<range>` marker and carry no "
+            "text of their own. So this is exactly the text the alignment ran over. Null "
+            "if the revision has no row for the verse."
+        ),
+    )
+    reference_text: str | None = Field(
+        default=None,
+        description=(
+            "The same verse in the assessment's reference revision, for side-by-side "
+            "display. Word alignment always has a reference, so this is null only where "
+            "the reference lacks the verse."
+        ),
+    )
+
+
+class MissingWordTargetOut(V4BaseModel):
+    """What one peer assessment had for a word ``GET …/missing-words`` reports as missing.
+
+    Present for **every** peer named in ``against``, whether or not it had anything to
+    say — a peer that produced no translation for the word is reported with
+    ``target: null`` rather than omitted, because its silence is part of the evidence.
+    v3 pads the list the same way, keyed by revision id alone.
+    """
+
+    assessment_id: int = Field(
+        description=(
+            "The peer assessment, as named in `against`. New in v4: v3 identified a peer "
+            "only by its revision, because `against` did not exist and peers were "
+            "resolved from revision ids."
+        ),
+    )
+    revision_id: int = Field(
+        description=(
+            "The revision that peer assessed — v3's only peer identifier, kept because "
+            "it is what a client joins against to name the translation."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description=(
+            "The word this peer aligned the source word to, or null. **Null has two "
+            "causes and they are not distinguished**, exactly as in v3: the peer had no "
+            "alignment for this word at this verse, or it had one scoring below the "
+            "match threshold and so too weak to count as a translation."
+        ),
+    )
+
+
+class MissingWordOut(V4BaseModel):
+    """One row of ``GET /v4/assessments/{id}/missing-words``.
+
+    A source word that this assessment aligned *poorly* (below ``max_score``), together
+    with what each peer assessment made of the same word. The row is a word, as on
+    ``/alignment-scores``; what it adds is the ``targets`` column derived from other
+    assessments, which is why it is its own sub-resource rather than a filter.
+
+    ``target`` is deliberately **not** a field here, even though the underlying row has
+    one: a word this assessment scored below the threshold has no target worth reporting,
+    and the interesting targets are the peers'. v3 reuses its generic ``Result`` schema
+    and so returns the peer list under the name ``target``; ``targets`` says what it is.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored ``alignment_top_source_scores`` row's id. Not a handle: no v4 "
+            "endpoint addresses a single row."
+        ),
+    )
+    assessment_id: int = Field(
+        description=(
+            "The **subject** word-alignment assessment (echoed from the path), not a "
+            "peer. Peers are identified inside `targets`."
+        ),
+    )
+    vref: str = Field(
+        description=(
+            "The verse this word was found in — the first verse of the span when the "
+            "revision merged several. Always a literal canonical vref."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, beginning with `vref`. Derived from the "
+            "revision's `<range>` markers, exactly as on `/results`."
+        ),
+    )
+    source: str = Field(
+        description="The source-side word that appears to be missing, lower-cased.",
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "How well this assessment aligned the word — below `max_score` by "
+            "construction, which is what put the row in this list."
+        ),
+    )
+    flag: bool = Field(
+        default=False,
+        description=(
+            "Whether the peers make this look like a genuine omission rather than a "
+            "scoring artefact. True when the mean peer score is **above 0.35** *and* "
+            "**more than five times** this assessment's score: the word is well aligned "
+            "in the peers and much better aligned there than here. False whenever no "
+            "peer had a row for the word, so an unflagged row with an empty or all-null "
+            "`targets` means *no evidence*, not *evidence of nothing*. v3's rule, "
+            "unchanged; this is not the stored `flag` column, which this read ignores."
+        ),
+    )
+    targets: list[MissingWordTargetOut] = Field(
+        description=(
+            "One entry per assessment named in `against`, in the order given, including "
+            "peers that had nothing for this word. Empty when `against` was not passed — "
+            "in which case `flag` is always false and this read is just "
+            "`/alignment-scores` filtered to low scores."
+        ),
+    )
+
+
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
     "VREF_MAX_LENGTH",
     "AgentCritiqueOptions",
+    "AlignmentScoreOut",
+    "AlignmentScoreType",
     "AssessmentCreate",
     "AssessmentJob",
     "AssessmentOptions",
@@ -1036,6 +1320,8 @@ __all__ = [
     "AssessmentResultAggregateOut",
     "AssessmentResultOut",
     "AssessmentResultRow",
+    "MissingWordOut",
+    "MissingWordTargetOut",
     "NgramResultOut",
     "NgramsOptions",
     "ReferencedAssessmentOptions",
@@ -1047,5 +1333,6 @@ __all__ = [
     "SimilarVersesOut",
     "TextLengthsOptions",
     "TfidfOptions",
+    "VerseScope",
     "WordAlignmentOptions",
 ]
