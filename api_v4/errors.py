@@ -48,6 +48,7 @@ place; moving it to a status-code handler would break the re-raise.
 from __future__ import annotations
 
 import http
+import math
 
 import fastapi
 from fastapi import status
@@ -101,6 +102,35 @@ class V4ErrorResponse(V4BaseModel):
     error: V4ErrorDetail
 
 
+def _json_safe_floats(value):
+    """Replace ``nan``/``inf``/``-inf`` with their names, recursively.
+
+    The second half of the same landmine :func:`_error_response` describes.
+    ``jsonable_encoder`` makes unknown *types* safe but leaves non-finite floats as
+    floats, and Starlette's ``JSONResponse`` dumps with ``allow_nan=False`` — so a
+    ``details`` payload holding one raises inside the handler, and the catch-all
+    reshapes the intended 4xx into a generic 500 that does not even chain it.
+
+    Reachable rather than theoretical, and one endpoint is why. Strict JSON has no
+    literal for either value, but Python's own ``json`` module *emits* ``NaN`` and
+    ``Infinity`` and *accepts* them on the way in — so a Python client can send one
+    without noticing. ``POST /v4/assessments/{id}/similar-verses`` takes a list of 300
+    raw floats, rejects non-finite ones with a 422, and Pydantic's validation error
+    echoes the offending input straight back into ``details``. Without this the
+    rejection is a 500.
+
+    The names go out as strings (``"nan"``, ``"inf"``, ``"-inf"``) rather than being
+    dropped, so the error still shows the caller what it objected to.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, dict):
+        return {key: _json_safe_floats(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_floats(item) for item in value]
+    return value
+
+
 def _error_response(
     *,
     status_code: int,
@@ -125,10 +155,15 @@ def _error_response(
     error, so logs show only the serialization failure). Coercing up front turns
     that landmine into a normal serialization. ``jsonable_encoder(None)`` is
     ``None``, so absent details still drop out via ``exclude_none``.
+
+    :func:`_json_safe_floats` then covers the one thing ``jsonable_encoder`` does not:
+    ``nan`` and ``inf`` survive it as floats, and ``JSONResponse`` refuses them.
     """
     payload = V4ErrorResponse(
         error=V4ErrorDetail(
-            code=code, message=message, details=jsonable_encoder(details)
+            code=code,
+            message=message,
+            details=_json_safe_floats(jsonable_encoder(details)),
         )
     )
     return JSONResponse(
@@ -202,8 +237,9 @@ async def _handle_validation_error(
         code="VALIDATION_ERROR",
         message="Request validation failed.",
         # exc.errors() can hold non-serializable objects (e.g. the original
-        # ValueError under `ctx`); _error_response jsonable-encodes details, so
-        # they are made JSON-safe there.
+        # ValueError under `ctx`) and non-finite floats echoed back under `input`;
+        # _error_response jsonable-encodes details and scrubs those floats, so they
+        # are made JSON-safe there.
         details={"errors": exc.errors()},
     )
 
