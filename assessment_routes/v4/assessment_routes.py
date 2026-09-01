@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Ten endpoints:
+happens somewhere else. Eleven endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -24,9 +24,12 @@ happens somewhere else. Ten endpoints:
 * ``GET    /v4/assessments/{id}/text-lengths`` — the ``text-lengths`` type's per-verse
   word and character counts and their z-scores, paginated, with the same scoping and
   ``aggregate`` rollups as ``/results``.
+* ``GET    /v4/assessments/{id}/score-comparison`` — the same rows as ``/results``, with
+  each score placed against a distribution built from the peer assessments named by
+  ``against``. The only paginated read here that does not return a bare ``V4Page``.
 
-The remaining typed result sub-resources (``/score-comparison`` and the ``POST`` form of
-``/similar-verses``) are the rest of #893 and land in follow-up PRs.
+The one remaining typed result sub-resource (the ``POST`` form of ``/similar-verses``) is
+the rest of #893 and lands in a follow-up PR.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -122,7 +125,24 @@ id; a readable but incomparable one — different reference, or a revision shari
 version with the subject's revision or reference — is a ``422``
 ``INCOMPATIBLE_BASELINE_ASSESSMENT`` naming it. v3 dropped such peers silently, which
 was defensible when the caller handed over a list of revisions to be resolved and is not
-now that they name assessments explicitly.
+now that they name assessments explicitly. Both reads that take ``against`` share one
+service helper for all of it, so the guarantees cannot drift apart between them; what
+differs is the type filter, which ``/score-comparison`` has to pin to the subject's own
+type because it serves three of them.
+
+That sharing is what closes **#862** (``/compareresults`` does not authorize baselines),
+the last of this slice's five security issues, and it closes it the way #858 and #860
+were closed — by leaving no place for a check to be forgotten rather than by adding one.
+As with those, a property of the design and **not** an argument about scheduling: the v3
+exposure lasts until v3 is retired regardless.
+
+**``/score-comparison`` is the only *paginated* read here that does not return a plain
+``V4Page``** — ``/similar-verses`` departs too, but by not being a page at all. Q2 §4
+requires both sides of a comparison to be named, and the path names only the subject, so
+:class:`~api_v4.schemas.assessment.ScoreComparisonPage` subclasses
+the shared envelope to add ``against_assessment_ids``. The shared envelope itself is
+untouched — a peer-ids field means nothing on the eleven other lists that use it — and
+the subclass rather than a standalone model is argued on that class.
 
 **The list's filters cannot 404.** They are applied after the visibility predicate and
 only ever narrow what the caller could already see, so a ``revision_id`` outside the
@@ -198,6 +218,9 @@ from api_v4.schemas.assessment import (
     NgramResultOut,
     ResultAggregate,
     ResultScope,
+    ScoreComparisonAggregateOut,
+    ScoreComparisonOut,
+    ScoreComparisonPage,
     SimilarVerseOut,
     SimilarVersesOut,
     TextLengthsAggregateOut,
@@ -234,10 +257,12 @@ SIMILAR_VERSES_MAX_LIMIT = 100
 #: with no bound at all.
 ALIGNMENT_WORD_MAX_LENGTH = 200
 
-#: Most peer assessments ``GET /v4/assessments/{id}/missing-words`` will weigh against at
-#: once. ``against`` is caller-controlled and repeated, and the service authorizes each
-#: *distinct* peer through :func:`assessment_service.get_assessment` — one small indexed
-#: query apiece — so an unbounded list turns one cheap request into arbitrarily many.
+#: Most peer assessments ``GET /v4/assessments/{id}/missing-words`` and
+#: ``GET /v4/assessments/{id}/score-comparison`` will weigh against at once — one bound,
+#: because ``against`` means the same thing on both. ``against`` is caller-controlled and
+#: repeated, and the service authorizes each *distinct* peer through
+#: :func:`assessment_service.get_assessment` — one small indexed query apiece — so an
+#: unbounded list turns one cheap request into arbitrarily many.
 #:
 #: 1000 rather than something tighter, and :data:`~api_v4.schemas.bible.MAX_VREFS`'
 #: reasoning is why: **the limit is not the point, the error is.** It is set above any
@@ -245,9 +270,6 @@ ALIGNMENT_WORD_MAX_LENGTH = 200
 #: the limit and the number received instead of degrading quietly. Measured against
 #: production, the largest pool of finished word-alignment assessments sharing any single
 #: reference is 598 and the mean is 3.4, so this cannot bite a real caller.
-#:
-#: Shared with ``/score-comparison`` when that lands — ``against`` means the same thing
-#: on both reads, so it should be bounded by the same number.
 MAX_AGAINST_ASSESSMENTS = 1000
 
 #: Cadence advertised on the 202, in seconds. Required rather than inherited — there
@@ -452,6 +474,27 @@ def _not_found_error(exc: Exception, assessment_id: int) -> V4APIError:
         code="ASSESSMENT_NOT_FOUND",
         message=str(exc),
         details={"assessment_id": assessment_id},
+    )
+
+
+def _incompatible_peer_error(
+    exc: "assessment_service.IncompatiblePeerAssessment",
+) -> V4APIError:
+    """The 422 for an ``against`` peer that is readable but cannot serve as a baseline.
+
+    Shared by the two reads that take ``against``, for the same reason
+    :func:`_not_found_error` is shared: the comparability rules live in one service
+    helper, so the answer they produce should be built in one place too. A 422 rather
+    than a 404 because the id is real and the caller has already been shown they may read
+    it — the peer went through the same visibility predicate first — so naming it in
+    ``details`` discloses nothing new and is the only way the caller can tell which of
+    several peers was refused.
+    """
+    return V4APIError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="INCOMPATIBLE_BASELINE_ASSESSMENT",
+        message=str(exc),
+        details={"assessment_id": exc.assessment_id, "reason": exc.reason},
     )
 
 
@@ -1208,12 +1251,7 @@ async def get_assessment_missing_words(
         # name the id that was actually refused or the caller cannot tell which.
         raise _not_found_error(exc, exc.assessment_id) from exc
     except assessment_service.IncompatiblePeerAssessment as exc:
-        raise V4APIError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code="INCOMPATIBLE_BASELINE_ASSESSMENT",
-            message=str(exc),
-            details={"assessment_id": exc.assessment_id, "reason": exc.reason},
-        ) from exc
+        raise _incompatible_peer_error(exc) from exc
     # No next_updated_since, for the reason /results gives.
     return V4Page[MissingWordOut].create(
         items=[MissingWordOut(**row) for row in rows], total=total, pagination=page
@@ -1350,6 +1388,146 @@ async def get_assessment_text_lengths(
     # and null, per the envelope's contract that adding delta support later is not a
     # response-shape change.
     return V4Page[TextLengthsRow].create(items=items, total=total, pagination=page)
+
+
+@router.get(
+    "/{assessment_id}/score-comparison",
+    response_model=ScoreComparisonPage,
+)
+async def get_assessment_score_comparison(
+    assessment_id: int,
+    page: ResultPaginationParams = Depends(),
+    scope: ResultScopeParams = Depends(),
+    against: List[int] = Query(
+        ...,
+        min_length=1,
+        max_length=MAX_AGAINST_ASSESSMENTS,
+        description=(
+            "Peer **assessment** ids to build the baseline distribution from (repeated "
+            "parameter, e.g. `?against=1&against=2`). **Required**: without peers there "
+            "is no distribution, and the read would be `/results` with three null "
+            "columns. Each must be an assessment you can read, of the **same type** as "
+            "this one, against the **same reference**, and on a **different Bible "
+            "version** from this assessment's revision and reference — a sibling "
+            "revision is not an independent witness. A peer failing any of those is a "
+            "`422` naming it, not a silently dropped baseline as in v3. A peer named "
+            f"twice counts once. **At most {MAX_AGAINST_ASSESSMENTS} per request**; more "
+            "is a 422 naming the limit and the number received. These are assessment "
+            "ids, not revision ids: v3's `baseline_ids` named revisions and let the "
+            "server pick a run."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> ScoreComparisonPage:
+    """Read how unusual a translation's scores are, against comparable translations.
+
+    **A row is one verse of this assessment, plus the shape of the peers' scores at the
+    same verse.** `score` is this assessment's own — the same number `/results` returns,
+    from the same query. `mean_score` and `stdev_score` describe the peers named by
+    `against`, and `z_score` says how many standard deviations this assessment sits from
+    them. Near zero means it scores about like its peers here; a large negative one is the
+    case this read exists to find.
+
+    **Serves `word-alignment`, `semantic-similarity` and `sentence-length`.** v3's
+    `/compareresults` is word-alignment only, which is an artifact of how it finds its
+    subject — by `(revision_id, reference_id, type='word-alignment')` — rather than a fact
+    about the data: all three types' rows live in the same table with the same shape. An
+    assessment of any other type reports `404 ASSESSMENT_NOT_FOUND`, the same answer as
+    one that does not exist, is outside your groups, or is a training run.
+
+    **Every `against` peer is authorized exactly as the subject is** (#862). v3 never
+    checked baselines at all, so any authenticated caller could name any assessment id and
+    read its aggregate scores. Here a peer you cannot see is the ordinary 404 naming
+    *that* id, indistinguishable from one that does not exist.
+
+    **A peer must be the same type, on the same reference, and on a different Bible
+    version** from this assessment's revision and its reference. The first two keep the
+    scores on one scale — a mean across references is a number that means nothing — and
+    the third is what makes a peer an independent witness rather than a sibling of the
+    text under assessment. It also rules out naming this assessment as its own peer. Any
+    of them failing is a `422 INCOMPATIBLE_BASELINE_ASSESSMENT` naming the peer; v3
+    dropped it silently, which was defensible when you handed over revision ids for the
+    server to resolve and is not now that you name the assessment.
+
+    **Read `baseline_count` on every row.** It says how many peers actually contributed.
+    v3 reports a mean with no way to tell five peers from one, and a peer with no row at a
+    verse drops out of it silently. `0` means the row is uncompared, not that the peers
+    agreed.
+
+    **One baseline never produces a `z_score`.** `stdev_score` is the sample standard
+    deviation, undefined for a single observation, so both it and `z_score` come back
+    null. Expected rather than an error, and v3 answers the same way without saying so.
+
+    **A score is never combined across a merged verse span, so where two revisions merge
+    differently the peer is dropped rather than averaged in.** If this revision publishes
+    `MAT 9:20-21` as one span and a peer's revision does not — or merges a different span
+    — that peer contributes nothing at that verse: it leaves `mean_score`, `stdev_score`
+    and `baseline_count` together, while this assessment's own `score` still comes back.
+    The reason is that a span's score is a property of the span's *text*: the similarity
+    of two verses concatenated is not any function of their two similarities, and a mean
+    would weight a three-word verse like a forty-word one. Nothing here holds a model to
+    recompute with, so comparability is a precondition, not something to compute around.
+
+    **So `vrefs` here is the *comparable* population, not the assessed one.** On
+    `/results` a verse in no row's `vrefs` was never scored; here it may be scored on both
+    sides and simply not comparable. Do not derive coverage from this read.
+
+    **Scoping and rollups** work as on `/results`. `book`, `chapter` and `verse` narrow
+    progressively; `aggregate` rolls up to `chapter`, `book` or the whole `text` and
+    cannot be combined with a scope narrower than itself. Aggregated rows are a different
+    shape — they carry the location they summarize (`book`/`chapter`, neither at
+    `aggregate=text`) and have no `id`, `vref` or `vrefs`. Each peer is rolled up the same
+    way this assessment is before the distribution is taken, so a peer is one observation
+    whether it contributed one verse or a whole book. **The span test does not apply under
+    a rollup** — there is no per-verse row left to refuse — so a rollup can average across
+    a span disagreement the verse level would have excluded. That is v3's behaviour at
+    every level, and small next to the rollup itself, but it is real.
+
+    **This read will not find "the latest assessment" for you.** v3 resolves its subject
+    and each baseline independently with `ORDER BY end_time DESC LIMIT 1`, so two
+    identical requests can compare different assessments, and the subject can land on a
+    different runner than its own baselines.
+    `GET /v4/assessments?revision_id=&reference_id=&type=` answers that question
+    explicitly and paginated. `use_eflomal` is gone with it: naming the assessment already
+    determines the runner, so there is nothing left to select.
+
+    Rows are in canonical Bible order, one per verse, which is what makes `offset`
+    pagination stable across pages.
+    """
+    try:
+        items, total, against_ids = await assessment_service.get_score_comparison(
+            db,
+            current_user,
+            assessment_id,
+            scope=scope.scope,
+            against=against,
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        # exc.assessment_id, not the path id: an `against` peer the caller cannot read is
+        # refused in the same shape as an unreachable subject, so the details must name
+        # the id that was actually refused or the caller cannot tell which.
+        raise _not_found_error(exc, exc.assessment_id) from exc
+    except assessment_service.IncompatiblePeerAssessment as exc:
+        raise _incompatible_peer_error(exc) from exc
+
+    row_model = (
+        ScoreComparisonOut
+        if scope.scope.aggregate is None
+        else ScoreComparisonAggregateOut
+    )
+    # No next_updated_since, for the reason /results gives: assessment_result carries no
+    # modification timestamp, so there is no watermark to publish. The key stays present
+    # and null, per the envelope's contract that adding delta support later is not a
+    # response-shape change.
+    return ScoreComparisonPage.create(
+        items=[row_model(**item) for item in items],
+        total=total,
+        pagination=page,
+        against_assessment_ids=against_ids,
+    )
 
 
 @router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)

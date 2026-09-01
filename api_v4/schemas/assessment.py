@@ -271,6 +271,40 @@ than a code comment.
 does not declare the parameter, so FastAPI discards it, and v3's ``TextLengthsResult`` has
 no text field it could have filled anyway. ``aqua-django-app`` sends it regardless. Dead
 v3 parameters do not come into v4 — not carried, not deprecated, not "for parity".
+
+
+The score-comparison read: the same two shapes, plus the one envelope that grew a field
+---------------------------------------------------------------------------------------
+
+``GET /v4/assessments/{id}/score-comparison`` (:class:`ScoreComparisonOut`,
+:class:`ScoreComparisonAggregateOut`, :data:`ScoreComparisonRow`) is ``/results``' verse
+row and aggregate row with four fields added — ``mean_score``, ``stdev_score``,
+``z_score`` and ``baseline_count`` — and three dropped: ``flag``, ``hide`` and ``note``,
+all properties of the subject's stored row alone, which ``/results`` already serves.
+
+Two things a reader should take from these models rather than discover:
+
+**What a union of ``vrefs`` tells you is narrower here.** The field itself means the
+same on all six row models that carry one — :class:`AssessmentResultOut`,
+:class:`TextLengthsOut`, :class:`AlignmentScoreOut`, :class:`MissingWordOut`,
+:class:`ScoreComparisonOut` and the verses read's ``VerseOut``: the verses this row covers,
+read off its revision's span map. What differs is what the *union* across a result set
+means. On ``/results`` and ``/text-lengths``, where a row is a verse and every scored verse
+has one, that union is the *assessed* (or measured) population. Here it is not: a verse can
+be scored on both sides and still uncompared, because the two revisions merge it
+differently. The name and type are identical, so nothing errors when the two readings are
+confused — which is why the difference is stated on the field as well as here.
+
+**``z_score`` null at one baseline is arithmetic, not a gap.** ``stdev_score`` is the
+sample standard deviation, undefined at n = 1, so a single peer yields no z-score. v3
+reaches the same answer and documents none of it, which leaves a client to discover that
+naming one baseline produces a column of nulls.
+
+:class:`ScoreComparisonPage` is the only model in this module that extends the shared page
+envelope: it subclasses :class:`~api_v4.pagination.V4Page` to add
+``against_assessment_ids``, because
+the path names the subject and something has to name the peers. The subclass rather than a
+standalone model, and the shared envelope left untouched, are argued on the class itself.
 """
 
 from datetime import datetime
@@ -280,6 +314,7 @@ from typing import Annotated, Literal, Union
 from pydantic import Field, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
+from api_v4.pagination import V4Page
 from api_v4.schemas.base import V4BaseModel
 
 # A book abbreviation being three characters is a fact about the *Bible* domain, not
@@ -1523,6 +1558,256 @@ class TextLengthsAggregateOut(V4BaseModel):
 TextLengthsRow = Union[TextLengthsOut, TextLengthsAggregateOut]
 
 
+class ScoreComparisonOut(V4BaseModel):
+    """One verse-level row of ``GET /v4/assessments/{id}/score-comparison``.
+
+    An :class:`AssessmentResultOut` row with the peer distribution attached, and
+    deliberately so: ``id``, ``vref``, ``vrefs`` and ``score`` are the *same values* that
+    read returns for the same verse, produced by the same query. What is added is the
+    four fields that say how this score sits among the peers named by ``against``.
+
+    ``flag``, ``hide`` and ``note`` are **not** carried across, and their absence is a
+    decision rather than an oversight. All three are properties of the subject's stored
+    row alone, so a caller who wants them is asking a single-assessment question and
+    ``/results`` already answers it; repeating them here would make this read look like a
+    superset of that one, which it is not — it is that read plus a comparison, over the
+    rows the comparison can place. v3 does not return them either.
+
+    **``vrefs`` means something narrower here than on ``/results``, and that is the one
+    thing to read before using it for coverage.** There it is the *assessed* population:
+    a verse in no row's ``vrefs`` was never scored. Here it is the *comparable*
+    population, which is smaller. A verse can be perfectly well assessed on both sides and
+    still be absent, or present with ``baseline_count`` 0, because the two revisions merge
+    it differently — see the endpoint description for the span rule that decides this.
+    """
+
+    id: int = Field(
+        description=(
+            "The subject's stored ``assessment_result`` row id — the same id "
+            "`/results` reports for this verse. Not a handle: no v4 endpoint addresses "
+            "a single result row."
+        ),
+    )
+    assessment_id: int = Field(
+        description=(
+            "The subject assessment (echoed from the path). The peers are named once "
+            "for the whole page, in the envelope's `against_assessment_ids`, rather "
+            "than repeated on every row."
+        ),
+    )
+    vref: str = Field(
+        description=(
+            "The verse this row is stored under — the **first** verse of the span when "
+            "the revision merged several. Always a literal canonical vref."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, in canonical order and beginning with `vref`. "
+            "A single entry unless the subject's revision merged verses into this one "
+            "(`<range>`). **The union across a page set is the *comparable* population, "
+            "not the assessed one** — narrower than the same field on `/results`. A "
+            "verse missing here may be scored on both sides and simply not comparable."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "The subject's score for this verse — the same number `/results` returns. "
+            "Null only if the row was stored without one; what it means is the "
+            "assessment type's business."
+        ),
+    )
+    mean_score: float | None = Field(
+        default=None,
+        description=(
+            "Mean of the contributing peers' scores at this verse. Null when no peer "
+            "contributed. Each peer counts once however many rows it has here, so a "
+            "peer is one observation rather than one per verse."
+        ),
+    )
+    stdev_score: float | None = Field(
+        default=None,
+        description=(
+            "**Sample** standard deviation of those peer scores — Postgres' `stddev`, "
+            "which is `stddev_samp`. Null at fewer than two contributing peers, because "
+            "a single observation says nothing about spread. That is a definition, not "
+            "a missing value to substitute zero for."
+        ),
+    )
+    z_score: float | None = Field(
+        default=None,
+        description=(
+            "How many standard deviations the subject's `score` sits from `mean_score`. "
+            "**Null whenever it cannot be computed**, and there are four such cases: no "
+            "subject score, no peer contributed, exactly one peer contributed (so "
+            "`stdev_score` is null), or every peer scored the verse identically (so it "
+            "is zero). One baseline therefore never yields a z-score — expected, not a "
+            "bug, and v3 answers the same way without saying so."
+        ),
+    )
+    baseline_count: int = Field(
+        description=(
+            "How many peers actually contributed to the three fields above. **New in "
+            "v4, and worth reading on every row**: v3 reports a mean with no way to "
+            "tell five peers from one. A peer is absent from the count when it has no "
+            "row at this verse, when its rows here carry no score, or when its revision "
+            "merges this verse differently from the subject's — see the endpoint on the "
+            "last of those. `0` means the row is uncompared, not that the peers agreed."
+        ),
+    )
+
+
+class ScoreComparisonAggregateOut(V4BaseModel):
+    """One rolled-up row of ``GET …/score-comparison?aggregate=...``.
+
+    Its own type rather than the verse row with fields nulled, for the reason the module
+    docstring gives for :class:`AssessmentResultAggregateOut`: ``id``, ``vref`` and
+    ``vrefs`` are *absent* here, not null — an aggregate row is not a stored row, and the
+    range merge is verse-level only.
+
+    ``score`` is the same mean ``/results`` reports for this scope, from the same query.
+    The three baseline fields are then computed **across peers over that scope**, each
+    peer first rolled up to one value the same way the subject was — so a peer is one
+    observation whether it contributed a verse or a book.
+
+    **No span test applies under a rollup**, which is the one place this shape is weaker
+    than the verse-level one. Where two revisions merge verses differently, the subject
+    averages one row over a span while the peer averages two, and nothing here can tell.
+    The verse level refuses that comparison; a rollup cannot, because it has no per-verse
+    row to refuse. v3 behaves this way at every level.
+    """
+
+    assessment_id: int = Field(
+        description="The subject assessment (echoed from the path).",
+    )
+    book: str | None = Field(
+        default=None,
+        description=(
+            "The book this row summarizes, or null at `aggregate=text`, which "
+            "summarizes everything and so has no location. v3 rendered these as a "
+            "`vref` string (`MAT`, `MAT 9`); build that from `book` and `chapter` if "
+            "you need it."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        description=(
+            "The chapter this row summarizes; null at `aggregate=book` and "
+            "`aggregate=text`."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "Mean of the subject's scores across the verses in scope — the same number "
+            "`/results` returns for this scope. Null only if none of them had a score."
+        ),
+    )
+    mean_score: float | None = Field(
+        default=None,
+        description=(
+            "Mean across the contributing peers of each peer's own mean over this "
+            "scope. Null when no peer contributed."
+        ),
+    )
+    stdev_score: float | None = Field(
+        default=None,
+        description=(
+            "Sample standard deviation of those per-peer means, with the same "
+            "null-at-one-peer definition as on a verse row."
+        ),
+    )
+    z_score: float | None = Field(
+        default=None,
+        description=(
+            "How many standard deviations this scope's `score` sits from `mean_score`, "
+            "or null in the four cases the verse row lists. Note this is a z-score of "
+            "the scope against *its peers' same scope* — a real distribution over "
+            "assessments, unlike `/text-lengths`' rolled-up z-scores, which are means "
+            "of per-verse z-scores."
+        ),
+    )
+    baseline_count: int = Field(
+        description=(
+            "How many peers contributed a value for this scope. A peer with no "
+            "placeable scored row in it is absent from all three fields above."
+        ),
+    )
+
+
+#: The item type of the score-comparison page: a verse row, or an aggregated row. A union
+#: for exactly the reason :data:`AssessmentResultRow` is one — ``id``/``vref``/``vrefs``
+#: must be *absent* under aggregation rather than conventionally null. Which one a page
+#: holds is decided by the request's ``aggregate``, so a client never has to sniff it.
+ScoreComparisonRow = Union[ScoreComparisonOut, ScoreComparisonAggregateOut]
+
+
+class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
+    """``V4Page`` plus the one thing a comparison response cannot leave out: the peers.
+
+    Q2 §4 requires both sides of the comparison to be named in the response, and the path
+    only names one. The example it gives was written for a read that was later withdrawn,
+    so the shape is decided here.
+
+    **A subclass rather than a purpose-built model**, and the deciding fact is that this
+    read pages a real population: ``total`` is the number of subject rows matching the
+    query and ``offset`` walks them, so all four shared fields mean exactly what they mean
+    on every other v4 list. Redeclaring them in a standalone model would let those
+    meanings drift with nothing to notice. Contrast :class:`SimilarVersesOut`, which
+    *is* standalone precisely because its rows do not pre-exist and a ``total`` there
+    would be a number that is present, defensible and misleading.
+
+    **:class:`~api_v4.pagination.V4Page` itself is untouched**, which is the constraint
+    that rules out the obvious alternative. It is the shared envelope for the eleven v4
+    list endpoints that use it — versions, revisions, verses, both groups reads,
+    assessments, results, ngrams, alignment-scores, missing-words and text-lengths — and a
+    peer-ids field has no meaning on any of them.
+
+    ``next_updated_since`` is inherited and stays null, for the reason ``/results`` gives:
+    ``assessment_result`` carries no modification timestamp, so there is no watermark to
+    publish and this list has no delta feed.
+    """
+
+    against_assessment_ids: list[int] = Field(
+        description=(
+            "The peer assessments this page was compared against, deduplicated and in "
+            "the order `against` named them. Present because the path names only the "
+            "subject: a response holding `mean_score` without saying what the mean is "
+            "over cannot be interpreted on its own, and a client holding several of "
+            "these needs to tell them apart. Shorter than the `against` you sent if you "
+            "repeated an id — a peer named twice is one witness."
+        ),
+    )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        items: list,
+        total: int,
+        pagination,
+        against_assessment_ids: list[int],
+        next_updated_since=None,
+    ) -> "ScoreComparisonPage":
+        """As :meth:`V4Page.create`, with the peer ids the envelope also carries.
+
+        Overridden rather than inherited because the extra field is *required*: giving it
+        a default so the parent's ``create`` could build this model would mean a page that
+        forgot to name its peers would serialize as one compared against nobody. The four
+        shared values still come off the ``pagination`` dependency rather than being
+        copied by the caller, which is the drift the parent's ``create`` exists to prevent.
+        """
+        return cls(
+            items=items,
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            next_updated_since=next_updated_since,
+            against_assessment_ids=against_assessment_ids,
+        )
+
+
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
@@ -1545,6 +1830,10 @@ __all__ = [
     "ReferencedAssessmentOptions",
     "ResultAggregate",
     "ResultScope",
+    "ScoreComparisonAggregateOut",
+    "ScoreComparisonOut",
+    "ScoreComparisonPage",
+    "ScoreComparisonRow",
     "SemanticSimilarityOptions",
     "SentenceLengthOptions",
     "SimilarVerseOut",
