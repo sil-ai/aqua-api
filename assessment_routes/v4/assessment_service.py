@@ -3026,6 +3026,17 @@ async def get_score_comparison(
     together. That is what makes ``baseline_count`` load-bearing rather than decoration:
     it is how a caller sees this happening.
 
+    **Each row walks its own contributions, not the whole ``against`` list.** Those are
+    the same set — :func:`_peer_scores` selects ``assessment_id IN`` the peers
+    :func:`_baseline_peers` authorized, and drops a null score — so nothing unauthorized
+    can reach ``contributions`` by this route either. What changes is the cost: over a
+    1000-row page naming 1000 peers of which five have rows here, walking the list is
+    ~44 ms of dictionary lookups against ~1 ms, and the sparse shape is the realistic one
+    (a caller names a large pool, then pages through a book most of it does not cover).
+    Iteration order moves with this, and cannot move the numbers:
+    :func:`statistics.fmean` sums with :func:`math.fsum`, which is exactly rounded, and
+    :func:`statistics.stdev` works in :class:`~fractions.Fraction` arithmetic.
+
     Two v3 mechanisms are deliberately not reached for, both flagged by Q1:
     ``utils.verse_range_utils.merge_verse_ranges`` is v3's sentinel-driven design and not
     what the rule describes, and v3's range sentinel (``is_range_marker=lambda x: x == 0``)
@@ -3084,19 +3095,21 @@ async def get_score_comparison(
     for row, key in zip(rows, keys):
         scores_here = peer_scores.get(key, {})
         span = continuations.get(key, [])
-        contributions = []
-        for peer in peers:
-            score = scores_here.get(peer.id)
-            if score is None:
-                continue
-            # The span test, verse level only. ``.get(key, [])`` on both sides, so "this
-            # verse merged nothing" compares equal to "this verse merged nothing" rather
-            # than to a missing key. Indexed rather than ``.get``: reaching here means the
-            # peer scored this group, so it is a contributor and its map was loaded — a
+        if scope.aggregate is not None:
+            # No span test under a rollup, so every peer that produced a value for this
+            # group contributes and there is nothing left to filter.
+            contributions = list(scores_here.values())
+        else:
+            # The span test. ``.get(key, [])`` on both sides, so "this verse merged
+            # nothing" compares equal to "this verse merged nothing" rather than to a
+            # missing key. ``peer_spans`` is indexed rather than ``.get``-ed: a peer with
+            # a score here is by construction a contributor, so its map was loaded, and a
             # default would turn that invariant breaking into a silently skipped test.
-            if scope.aggregate is None and peer_spans[peer.id].get(key, []) != span:
-                continue
-            contributions.append(score)
+            contributions = [
+                score
+                for peer_id, score in scores_here.items()
+                if peer_spans[peer_id].get(key, []) == span
+            ]
 
         mean, stdev, count = _baseline_statistics(contributions)
         item = {
