@@ -194,6 +194,7 @@ from assessment_routes.v3 import assessment_routes as v3_assessment_routes
 from assessment_routes.v3.results_query_routes import router as v3_results_router
 from assessment_routes.v4 import assessment_service
 from assessment_routes.v4.assessment_routes import (
+    _SIMILAR_VERSES_QUERY_ECHOES,
     ALIGNMENT_WORD_MAX_LENGTH,
     ASSESSMENT_RETRY_AFTER_S,
     MAX_AGAINST_ASSESSMENTS,
@@ -6748,6 +6749,20 @@ class TestSimilarVersesPostContract:
             for member in get_args(get_args(SimilarVersesQueryOut)[0])
         }
         assert request_kinds == echo_kinds == {"text", "vref", "vector"}
+
+    def test_every_query_kind_has_an_echo_builder(self):
+        """The gap the test above does not close.
+
+        It pins that the request union and the echo union agree on their *tags*. The
+        handler does not index the echo union — it indexes a mapping, by the request
+        model's class. So a fourth kind added to both unions and forgotten in that mapping
+        passes every other test here and raises ``KeyError`` on the first request that uses
+        it, which the #828 catch-all turns into a 500. Cheap to pin, and invisible until
+        production otherwise.
+        """
+        assert set(_SIMILAR_VERSES_QUERY_ECHOES) == set(
+            get_args(get_args(SimilarVersesQuery)[0])
+        )
 
     def test_only_the_vref_echo_carries_a_payload(self):
         """``vref`` is short and names a verse a client wants to label the ranking with;
