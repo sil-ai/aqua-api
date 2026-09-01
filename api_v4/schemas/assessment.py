@@ -1466,14 +1466,19 @@ class TextLengthsAggregateOut(V4BaseModel):
         default=None,
         description=(
             "The book this row summarizes, or null at `aggregate=text`, which summarizes "
-            "everything and so has no location."
+            "everything and so has no location. v3 rendered these as a single `vref` "
+            "string (`MAT`, `MAT 9`) with no `book` or `chapter` field at all; build that "
+            "string from `book` and `chapter` if you need it. Worth checking against your "
+            "own code rather than skimming: a v3 client that recovers the book and chapter "
+            "by splitting that string apart can drop the split entirely, because `chapter` "
+            "arrives as the same integer it sent in the request."
         ),
     )
     chapter: int | None = Field(
         default=None,
         description=(
             "The chapter this row summarizes; null at `aggregate=book` and "
-            "`aggregate=text`."
+            "`aggregate=text`. An integer, where v3's `vref` string carried it as text."
         ),
     )
     word_lengths: float | None = Field(
