@@ -82,6 +82,26 @@ What each group of tests pins down:
 * ``TestSimilarVersesContract`` — the shape decisions that are easiest to undo by
   accident: no ``total``, no ``offset``, a required ``vref``, a bounded ``limit``, and
   ``reference_id`` ignored rather than honoured.
+* ``TestTextLengthsAuthorization`` — the same family 404 a fourth time, ``text-lengths``
+  being the served type now. Still a near-copy on purpose.
+* ``TestTextLengthsOrdering`` — the class this read exists for. ``text_lengths_table``
+  stores only ``vref``, so canonical order comes from a three-table reference join; the
+  fixture holds ``GEN 2:1`` with ``GEN 10:1`` and two books out of alphabetical order so
+  it fails under lexical order, alphabetical order and insertion order alike, and one
+  statement-shape assertion pins the join itself rather than the rows it happens to
+  produce.
+* ``TestTextLengthsRows`` — the ``vref``/``vrefs`` split over a span the runner already
+  totalled, one verse one row (v3 averages duplicates at *every* level here), and the
+  null-``vref`` row that must leave ``total`` as well as the page.
+* ``TestTextLengthsPage`` / ``TestTextLengthsScope`` — the 100/1000 bounds, and the three
+  filters as exact equality on the joined tables rather than v3's ``ilike`` prefix and
+  ``split_part`` slicing.
+* ``TestTextLengthsAggregation`` — v3's four ``avg``s preserved, the per-level projection,
+  and the one thing a reader can be silently wrong about: a rolled-up z-score is the mean
+  of per-verse z-scores, pinned as a number and as a published description.
+* ``TestTextLengthsContract`` — that the two row shapes stay two types on the wire as well
+  as in ``model_validate``, and that the read cannot gain ``include_text`` or v3's
+  ``page``/``page_size``.
 """
 
 import itertools
@@ -124,6 +144,9 @@ from api_v4.schemas.assessment import (
     ResultScope,
     SimilarVerseOut,
     SimilarVersesOut,
+    TextLengthsAggregateOut,
+    TextLengthsOut,
+    TextLengthsRow,
     VerseScope,
 )
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
@@ -135,6 +158,7 @@ from assessment_routes.v4.assessment_routes import (
     MAX_AGAINST_ASSESSMENTS,
     SIMILAR_VERSES_DEFAULT_LIMIT,
     SIMILAR_VERSES_MAX_LIMIT,
+    ResultScopeParams,
     VerseScopeParams,
 )
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
@@ -151,6 +175,7 @@ from database.models import (
     Group,
     NgramsTable,
     NgramVrefTable,
+    TextLengthsTable,
     TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
@@ -7002,3 +7027,1155 @@ class TestVerseScopeContract:
 
     def test_the_book_abbreviation_is_normalized_by_the_base_model(self):
         assert VerseScope(book="mat").book == "MAT"
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/text-lengths
+# ---------------------------------------------------------------------------
+
+TEXT_LENGTHS_SERVED_TYPES = ("text-lengths",)
+TEXT_LENGTHS_UNSERVED_TYPES = tuple(
+    t.value for t in AssessmentType if t.value not in TEXT_LENGTHS_SERVED_TYPES
+)
+
+
+def _make_text_length(
+    db_session,
+    assessment_id,
+    vref,
+    *,
+    word_lengths=5.0,
+    char_lengths=25.0,
+    word_lengths_z=0.5,
+    char_lengths_z=-0.5,
+):
+    """Insert one ``text_lengths_table`` row.
+
+    Inserted directly for the reasons the sibling helpers are: the only writer is the
+    runner-facing v3 push, and these tests need duplicate rows for one vref, a row whose
+    ``vref`` is null, and rows belonging to assessments of types no v4 read serves — none
+    of which that endpoint will produce on request.
+
+    Note what this helper does **not** take: there is no ``book``/``chapter``/``verse`` to
+    pass. That absence is the whole subject of this group of tests.
+    """
+    row = TextLengthsTable(
+        assessment_id=assessment_id,
+        vref=vref,
+        word_lengths=word_lengths,
+        char_lengths=char_lengths,
+        word_lengths_z=word_lengths_z,
+        char_lengths_z=char_lengths_z,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    return row.id
+
+
+def _make_text_lengths(db_session, assessment_id, vrefs, **kwargs):
+    """One plain row per vref, in the order given (so ids follow that order)."""
+    return [
+        _make_text_length(db_session, assessment_id, vref, **kwargs) for vref in vrefs
+    ]
+
+
+def _text_lengths(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/text-lengths",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _measured(db_session, version_id, vrefs, **kwargs):
+    """A fresh ``text-lengths`` assessment carrying one row per vref."""
+    revision_id, reference_id = _pair(db_session, version_id)
+    assessment_id = _make_assessment(
+        db_session, revision_id, reference_id, type_="text-lengths"
+    )
+    _make_text_lengths(db_session, assessment_id, vrefs, **kwargs)
+    return assessment_id
+
+
+class TestTextLengthsAuthorization:
+    """``GET …/text-lengths`` — the family's single 404, reused unchanged.
+
+    Deliberately a near-copy of ``TestResultsAuthorization`` and
+    ``TestNgramsAuthorization`` with the served type inverted again. The duplication *is*
+    the assertion: every read on this parent must refuse identically, because
+    authorization written per endpoint is what produced four of this slice's five security
+    issues, and a second predicate here would drift from the first silently.
+    """
+
+    def _with_rows(self, db_session, version_id, **kwargs):
+        """A fresh assessment carrying one measured verse, so a 404 is never emptiness."""
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        _make_text_length(db_session, assessment_id, "MAT 1:1")
+        return revision_id, assessment_id
+
+    def test_the_served_type_returns_its_rows(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_rows(
+            db_session, group1_version, type_="text-lengths"
+        )
+        assert _vrefs(_text_lengths(client, regular_token1, assessment_id)) == [
+            "MAT 1:1"
+        ]
+
+    @pytest.mark.parametrize("type_", TEXT_LENGTHS_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """Rows are inserted anyway, so this pins a refusal by *type* rather than a read
+        that happens to find nothing. ``word-alignment`` is in this list, which is the
+        pair worth noticing: it is served by ``/results``, ``/alignment-scores`` and
+        ``/missing-words`` and refused here."""
+        _, assessment_id = self._with_rows(db_session, group1_version, type_=type_)
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _text_lengths(client, regular_token1, 10**9)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._with_rows(
+            db_session, group2_version, type_="text-lengths"
+        )
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_rows_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        """Both halves of the visibility rule apply even though ``text-lengths`` needs no
+        reference: a row stored with one is still scoped by it, which is what stops a
+        v3-created assessment being the hole in the predicate."""
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="text-lengths"
+        )
+        _make_text_length(db_session, assessment_id, "MAT 1:1")
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_rows(
+            db_session, group1_version, type_="text-lengths", is_training=True
+        )
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_rows(
+            db_session, group1_version, type_="text-lengths", deleted=True
+        )
+        assert _text_lengths(client, regular_token1, assessment_id).status_code == 404
+
+    def test_a_soft_deleted_revision_hides_its_rows(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._with_rows(
+            db_session, version_id, type_="text-lengths"
+        )
+        assert _text_lengths(client, regular_token1, assessment_id).status_code == 200
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert _text_lengths(client, regular_token1, assessment_id).status_code == 404
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        _, unserved = self._with_rows(db_session, group1_version, type_="ngrams")
+        _, theirs = self._with_rows(db_session, group2_version, type_="text-lengths")
+        _, training = self._with_rows(
+            db_session, group1_version, type_="text-lengths", is_training=True
+        )
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _text_lengths(client, regular_token1, 10**9),
+                _text_lengths(client, regular_token1, unserved),
+                _text_lengths(client, regular_token1, theirs),
+                _text_lengths(client, regular_token1, training),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._with_rows(db_session, version_id, type_="text-lengths")
+        # Owned by testuser1, requested by testuser2, who shares the group.
+        assert _text_lengths(client, regular_token2, assessment_id).status_code == 200
+
+
+class TestTextLengthsOrdering:
+    """Canonical Bible order, over a table that stores only ``vref``.
+
+    This is the class the read actually exists to get right, so its fixture is chosen to
+    fail under every wrong ordering rather than to pass under the right one. A test over a
+    single chapter passes under lexical order too and proves nothing.
+    """
+
+    @pytest.fixture
+    def measured(self, db_session, group1_version):
+        """Two books out of alphabetical order, and a chapter that sorts wrong lexically.
+
+        * ``GEN`` is book 1 and ``EXO`` is book 2, so canonical order puts ``GEN`` first
+          while alphabetical order puts ``EXO`` first.
+        * ``GEN 2:1`` precedes ``GEN 10:1`` canonically and follows it lexically, because
+          ``"GEN 1"`` sorts before ``"GEN 2"`` character by character.
+
+        Insertion order is neither, which also rules out v3's ``ORDER BY min(id)``.
+        """
+        return _measured(
+            db_session,
+            group1_version,
+            ["EXO 1:1", "GEN 10:1", "GEN 2:1", "GEN 1:1"],
+        )
+
+    def test_books_are_in_bible_order_not_alphabetical(
+        self, client, regular_token1, measured
+    ):
+        vrefs = _vrefs(_text_lengths(client, regular_token1, measured))
+        assert vrefs.index("GEN 1:1") < vrefs.index("EXO 1:1")
+
+    def test_chapters_are_in_numeric_order_not_lexical(
+        self, client, regular_token1, measured
+    ):
+        """``ORDER BY vref`` would put ``GEN 10:1`` second. This is the assertion the
+        whole three-table join exists for."""
+        vrefs = _vrefs(_text_lengths(client, regular_token1, measured))
+        assert vrefs.index("GEN 2:1") < vrefs.index("GEN 10:1")
+
+    def test_the_whole_order_is_canonical(self, client, regular_token1, measured):
+        assert _vrefs(_text_lengths(client, regular_token1, measured)) == [
+            "GEN 1:1",
+            "GEN 2:1",
+            "GEN 10:1",
+            "EXO 1:1",
+        ]
+
+    def test_canonical_order_holds_across_a_page_boundary(
+        self, client, regular_token1, measured
+    ):
+        """Offset pagination is only stable under a total order, and the dedup on ``vref``
+        is what makes the three projected numbers total on their own."""
+        first = _text_lengths(client, regular_token1, measured, limit=2)
+        second = _text_lengths(client, regular_token1, measured, limit=2, offset=2)
+        assert _vrefs(first) == ["GEN 1:1", "GEN 2:1"]
+        assert _vrefs(second) == ["GEN 10:1", "EXO 1:1"]
+        assert first.json()["total"] == second.json()["total"] == 4
+
+    def test_verses_within_a_chapter_are_in_numeric_order(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The third join column, pinned separately: ``PSA 119:2`` before ``PSA 119:10``
+        is numeric order on ``verse_reference.number``, not lexical order on the vref.
+        """
+        assessment_id = _measured(
+            db_session, group1_version, ["PSA 119:10", "PSA 119:2", "PSA 119:1"]
+        )
+        assert _vrefs(_text_lengths(client, regular_token1, assessment_id)) == [
+            "PSA 119:1",
+            "PSA 119:2",
+            "PSA 119:10",
+        ]
+
+    def test_the_ordering_comes_from_the_reference_tables_not_from_string_surgery(
+        self, client, regular_token1, measured
+    ):
+        """A statement-shape assertion, because the behavioural tests above cannot tell a
+        correct join from a lucky one that happens to agree on this fixture.
+
+        v3 filters and groups these rows with ``split_part(vref, ' ', 2)`` and
+        ``vref.ilike(f"{book}%")``. Both are the thing not to port: ``split_part`` cannot
+        use an index, and no v4 assertion above would fail if someone reintroduced them
+        together with a correct sort. So this pins the *mechanism* — the three reference
+        tables are joined, and no string function touches ``vref``.
+        """
+        with _captured_sql() as captured:
+            assert _text_lengths(client, regular_token1, measured).status_code == 200
+        statements = _touching(captured, "text_lengths_table")
+        assert statements, "no statement touched text_lengths_table"
+        for statement, _ in statements:
+            for table in ("verse_reference", "chapter_reference", "book_reference"):
+                assert table in statement, (table, statement)
+            assert "split_part" not in statement, statement
+            assert "ilike" not in statement.lower(), statement
+            # Inner, not outer. The ``verse_reference`` join *is* this read's
+            # placeability rule — it is what drops a null ``vref`` from the page and,
+            # because it sits inside the subquery the ``COUNT`` also reads, from
+            # ``total``. A well-meant ``outerjoin`` would break both and no fixture here
+            # would notice, because a null ``vref`` is not a row the runner can write.
+            assert "OUTER JOIN" not in statement.upper(), statement
+
+
+class TestTextLengthsRows:
+    """What a row is: the ``vref`` / ``vrefs`` split, the four measures, one row per verse."""
+
+    def _assessment_on(self, db_session, group1_version, verse_texts):
+        """A ``text-lengths`` assessment whose revision carries the given verse texts."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, verse_texts)
+        return _make_assessment(
+            db_session, revision_id, reference_id, type_="text-lengths"
+        )
+
+    def test_a_row_carries_the_four_measures_and_nothing_else(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(
+            db_session,
+            assessment_id,
+            "GEN 1:1",
+            word_lengths=11.0,
+            char_lengths=52.0,
+            word_lengths_z=1.25,
+            char_lengths_z=-0.75,
+        )
+        row = _rows(_text_lengths(client, regular_token1, assessment_id))[0]
+        assert set(row) == {
+            "id",
+            "assessment_id",
+            "vref",
+            "vrefs",
+            "word_lengths",
+            "char_lengths",
+            "word_lengths_z",
+            "char_lengths_z",
+        }
+        assert row["assessment_id"] == assessment_id
+        assert (row["word_lengths"], row["char_lengths"]) == (11.0, 52.0)
+        assert (row["word_lengths_z"], row["char_lengths_z"]) == (1.25, -0.75)
+
+    def test_vrefs_is_just_the_verse_when_nothing_was_merged(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        row = _rows(_text_lengths(client, regular_token1, assessment_id))[0]
+        assert row["vrefs"] == ["GEN 1:1"]
+
+    def test_a_merged_span_is_one_row_under_its_first_verse(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The runner drops range vrefs before writing, so the span's totals arrive on the
+        anchor row and the continuation has no row of its own. ``vrefs`` is what says the
+        continuation is *covered* rather than unmeasured."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {"MAT 9:20": "text", "MAT 9:21": RANGE, "MAT 9:22": "text"},
+        )
+        _make_text_lengths(db_session, assessment_id, ["MAT 9:20", "MAT 9:22"])
+        rows = _rows(_text_lengths(client, regular_token1, assessment_id))
+        assert [row["vref"] for row in rows] == ["MAT 9:20", "MAT 9:22"]
+        assert rows[0]["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert rows[1]["vrefs"] == ["MAT 9:22"]
+
+    def test_an_unmeasured_verse_is_distinguishable_from_a_covered_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The point of the field. ``MAT 9:21`` is merged into the row above and appears in
+        its ``vrefs``; ``MAT 9:23`` has real text, no row, and appears in nobody's
+        ``vrefs`` — so a client can tell "look above" from "no data"."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {
+                "MAT 9:20": "text",
+                "MAT 9:21": RANGE,
+                "MAT 9:22": "text",
+                "MAT 9:23": "text",
+            },
+        )
+        _make_text_lengths(db_session, assessment_id, ["MAT 9:20", "MAT 9:22"])
+        covered = {
+            vref
+            for row in _rows(_text_lengths(client, regular_token1, assessment_id))
+            for vref in row["vrefs"]
+        }
+        assert "MAT 9:21" in covered
+        assert "MAT 9:23" not in covered
+
+    def test_the_vref_is_the_stored_column_and_is_always_canonical(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``vref`` is served from the stored column rather than rebuilt from the joined
+        triple, which is the inversion of what ``/results`` does — there the triple is
+        stored and ``vref`` is the copy. The inner join through ``verse_reference`` is what
+        makes the stored value trustworthy, so this pins that a returned ``vref`` is a
+        literal line of the canonical set rather than a range label."""
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1", "GEN 1:2"])
+        for row in _rows(_text_lengths(client, regular_token1, assessment_id)):
+            assert row["vref"] == row["vrefs"][0]
+            assert "-" not in row["vref"]
+
+    def test_one_verse_is_one_row_first_write_wins(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3 groups by ``(assessment_id, vref)`` with ``avg()`` at *every* level, so two
+        rows for one verse are silently averaged into the verse a client is shown. There is
+        no legitimate two-measurements case, so the first copy is served whole and the
+        retry duplicate is discarded — not blended into a number that was never measured.
+        """
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=10.0)
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=20.0)
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        assert rows[0]["word_lengths"] == 10.0
+
+    def test_a_duplicate_does_not_shift_a_page_boundary(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Why the dedup is not merely cosmetic: without it the two rows for ``GEN 1:1``
+        would both occupy the first page and ``GEN 1:2`` would be pushed off it, so a
+        client paging with ``limit=1`` would see one verse twice and miss the other."""
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(db_session, assessment_id, "GEN 1:1")
+        _make_text_length(db_session, assessment_id, "GEN 1:1")
+        _make_text_length(db_session, assessment_id, "GEN 1:2")
+        first = _text_lengths(client, regular_token1, assessment_id, limit=1)
+        second = _text_lengths(client, regular_token1, assessment_id, limit=1, offset=1)
+        assert _vrefs(first) == ["GEN 1:1"]
+        assert _vrefs(second) == ["GEN 1:2"]
+        assert first.json()["total"] == 2
+
+    def test_a_null_vref_row_is_excluded_from_the_page_and_from_the_total(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``text_lengths_table.vref`` is nullable, so such a row cannot be placed in
+        canonical order and cannot serialize (``vref`` is required on the row model). The
+        inner join to ``verse_reference`` is what drops it, and because that join lives in
+        the subquery both the page and the ``COUNT`` read, ``total`` excludes it too —
+        counting it while hiding it would publish a page count no sequence of requests can
+        reach.
+        """
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        _make_text_length(db_session, assessment_id, None)
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert _vrefs(resp) == ["GEN 1:1"]
+        assert resp.json()["total"] == 1
+
+    def test_a_row_stored_without_measures_returns_nulls_rather_than_500ing(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """All four columns are nullable and the runner-facing push requires all four, so a
+        null can only come from a direct write. Served as null rather than refused: unlike
+        ``/ngrams``' ``ngram``, the verse is still identified and the row still says which
+        verses were covered, so dropping it would lose coverage information.
+
+        This is also a fix rather than a looser contract. v3's ``TextLengthsResult``
+        declares the four as required ``float`` while its route passes ``None`` for a null
+        column, so the same row is a ``ValidationError`` and a 500 on v3.
+        """
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(
+            db_session,
+            assessment_id,
+            "GEN 1:1",
+            word_lengths=None,
+            char_lengths=None,
+            word_lengths_z=None,
+            char_lengths_z=None,
+        )
+        row = _rows(_text_lengths(client, regular_token1, assessment_id))[0]
+        assert row["vref"] == "GEN 1:1"
+        assert row["word_lengths"] is None and row["char_lengths_z"] is None
+
+
+class TestTextLengthsPage:
+    """The dedicated 100/1000 pagination, shared with ``/results``."""
+
+    def test_page_envelope(self, client, regular_token1, db_session, group1_version):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1", "GEN 1:2"])
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"items", "total", "limit", "offset", "next_updated_since"}
+        assert body["total"] == 2
+        assert body["offset"] == 0
+        # No delta feed: text_lengths_table carries no modification timestamp. Present and
+        # null rather than missing, so adding one later is not a shape change.
+        assert body["next_updated_since"] is None
+
+    def test_the_default_limit_is_the_result_default_not_the_catalog_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        assert _text_lengths(client, regular_token1, assessment_id).json()["limit"] == (
+            RESULT_DEFAULT_LIMIT
+        )
+        assert RESULT_DEFAULT_LIMIT != DEFAULT_LIMIT
+
+    def test_limit_at_the_result_max_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        resp = _text_lengths(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+
+    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        resp = _text_lengths(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_offset_past_the_end_is_an_empty_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        resp = _text_lengths(client, regular_token1, assessment_id, offset=5)
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 1
+
+    def test_an_assessment_with_no_rows_is_an_empty_page_not_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, [])
+        resp = _text_lengths(client, regular_token1, assessment_id)
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+    def test_another_assessments_rows_are_not_in_this_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        mine = _measured(db_session, group1_version, ["GEN 1:1"])
+        theirs = _measured(db_session, group1_version, ["EXO 1:1"])
+        assert _vrefs(_text_lengths(client, regular_token1, mine)) == ["GEN 1:1"]
+        assert _vrefs(_text_lengths(client, regular_token1, theirs)) == ["EXO 1:1"]
+
+
+class TestTextLengthsScope:
+    """The ``book`` / ``chapter`` / ``verse`` filters, which here go through the join.
+
+    v3 filters this table with ``vref.ilike(f"{book}%")``, ``split_part(vref, ' ', 2)``
+    and ``split_part(vref, ':', 2)``. Here all three are exact equality against
+    ``verse_reference.book_reference``, ``chapter_reference.number`` and
+    ``verse_reference.number``.
+    """
+
+    @pytest.fixture
+    def measured(self, db_session, group1_version):
+        return _measured(
+            db_session,
+            group1_version,
+            ["GEN 1:1", "GEN 1:2", "GEN 2:1", "GEN 10:1", "MAT 1:1"],
+        )
+
+    def test_book_narrows_to_one_book(self, client, regular_token1, measured):
+        assert _vrefs(_text_lengths(client, regular_token1, measured, book="GEN")) == [
+            "GEN 1:1",
+            "GEN 1:2",
+            "GEN 2:1",
+            "GEN 10:1",
+        ]
+
+    def test_book_is_case_insensitive(self, client, regular_token1, measured):
+        assert _vrefs(
+            _text_lengths(client, regular_token1, measured, book="gen")
+        ) == _vrefs(_text_lengths(client, regular_token1, measured, book="GEN"))
+
+    def test_chapter_narrows_within_the_book(self, client, regular_token1, measured):
+        assert _vrefs(
+            _text_lengths(client, regular_token1, measured, book="GEN", chapter=1)
+        ) == ["GEN 1:1", "GEN 1:2"]
+
+    def test_chapter_one_does_not_also_match_chapter_ten(
+        self, client, regular_token1, measured
+    ):
+        """The equality-versus-prefix assertion. An integer comparison against
+        ``chapter_reference.number`` cannot confuse 1 with 10; a filter that got at the
+        chapter by slicing the vref string could."""
+        assert "GEN 10:1" not in _vrefs(
+            _text_lengths(client, regular_token1, measured, book="GEN", chapter=1)
+        )
+        assert _vrefs(
+            _text_lengths(client, regular_token1, measured, book="GEN", chapter=10)
+        ) == ["GEN 10:1"]
+
+    def test_verse_narrows_to_one_row(self, client, regular_token1, measured):
+        resp = _text_lengths(
+            client, regular_token1, measured, book="GEN", chapter=1, verse=2
+        )
+        assert _vrefs(resp) == ["GEN 1:2"]
+        assert resp.json()["total"] == 1
+
+    def test_a_well_formed_book_that_names_nothing_is_an_empty_page(
+        self, client, regular_token1, measured
+    ):
+        resp = _text_lengths(client, regular_token1, measured, book="XYZ")
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+    def test_a_book_that_is_not_three_letters_is_a_422(
+        self, client, regular_token1, measured
+    ):
+        for bad in ("G", "GENESIS"):
+            resp = _text_lengths(client, regular_token1, measured, book=bad)
+            assert resp.status_code == 422, (bad, resp.text)
+            assert _error_code(resp) == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"chapter": 1}, id="chapter-without-book"),
+            pytest.param({"book": "GEN", "verse": 1}, id="verse-without-chapter"),
+            pytest.param(
+                {"aggregate": "book", "book": "GEN", "chapter": 1},
+                id="aggregate-book-with-chapter",
+            ),
+            pytest.param(
+                {"aggregate": "chapter", "book": "GEN", "chapter": 1, "verse": 1},
+                id="aggregate-chapter-with-verse",
+            ),
+            pytest.param(
+                {"aggregate": "text", "book": "GEN"}, id="aggregate-text-with-book"
+            ),
+        ],
+    )
+    def test_every_inconsistent_combination_is_a_422(
+        self, client, regular_token1, measured, params
+    ):
+        resp = _text_lengths(client, regular_token1, measured, **params)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_an_unknown_aggregate_level_is_a_422(
+        self, client, regular_token1, measured
+    ):
+        resp = _text_lengths(client, regular_token1, measured, aggregate="verse")
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_scope_filters_compose_with_pagination(
+        self, client, regular_token1, measured
+    ):
+        resp = _text_lengths(
+            client, regular_token1, measured, book="GEN", limit=2, offset=2
+        )
+        assert _vrefs(resp) == ["GEN 2:1", "GEN 10:1"]
+        assert resp.json()["total"] == 4
+
+    def test_the_scope_filter_survives_the_deduplication(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Filtering and deduplicating compose: the narrowed page is still first-write-wins.
+
+        Deliberately *not* claiming the ordering of the two matters. Every column these
+        filters compare is functionally determined by ``vref``, which is the dedup key, so
+        filtering before or after the ``DISTINCT ON`` returns the same rows — the reason
+        the join can sit inside the subquery here and has to sit outside on ``/results``,
+        where the location columns are stored per row. What this pins is that combining
+        them does not lose the dedup, which a rewrite that filtered a raw-table subquery
+        and forgot to carry the ``DISTINCT ON`` through would break.
+        """
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=10.0)
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=20.0)
+        resp = _text_lengths(
+            client, regular_token1, assessment_id, book="GEN", chapter=1, verse=1
+        )
+        rows = _rows(resp)
+        assert [row["word_lengths"] for row in rows] == [10.0]
+        assert resp.json()["total"] == 1
+
+
+class TestTextLengthsAggregation:
+    """v3's rollup, in the shape ``/results`` ships it — plus the z-score caveat."""
+
+    @pytest.fixture
+    def measured(self, db_session, group1_version):
+        """Values chosen so a mean cannot be confused with a min, max or sum, and so the
+        two books have different means. The z-scores straddle zero for the same reason.
+        """
+        assessment_id = _measured(db_session, group1_version, [])
+        for vref, words, chars, wz, cz in [
+            ("GEN 1:1", 2.0, 10.0, -1.0, -2.0),
+            ("GEN 1:2", 6.0, 30.0, 1.0, 2.0),
+            ("GEN 2:1", 10.0, 50.0, 3.0, 4.0),
+            ("MAT 1:1", 4.0, 20.0, 0.0, 1.0),
+        ]:
+            _make_text_length(
+                db_session,
+                assessment_id,
+                vref,
+                word_lengths=words,
+                char_lengths=chars,
+                word_lengths_z=wz,
+                char_lengths_z=cz,
+            )
+        return assessment_id
+
+    def test_chapter_level_rolls_up_per_chapter_in_canonical_order(
+        self, client, regular_token1, measured
+    ):
+        rows = _rows(
+            _text_lengths(client, regular_token1, measured, aggregate="chapter")
+        )
+        assert [(row["book"], row["chapter"]) for row in rows] == [
+            ("GEN", 1),
+            ("GEN", 2),
+            ("MAT", 1),
+        ]
+        assert [row["word_lengths"] for row in rows] == [4.0, 10.0, 4.0]
+        assert [row["char_lengths"] for row in rows] == [20.0, 50.0, 20.0]
+
+    def test_book_level_rolls_up_per_book(self, client, regular_token1, measured):
+        rows = _rows(_text_lengths(client, regular_token1, measured, aggregate="book"))
+        assert [row["book"] for row in rows] == ["GEN", "MAT"]
+        assert [row["chapter"] for row in rows] == [None, None]
+        # mean(2, 6, 10) — not the mean of the chapter means, which would be 7.
+        assert rows[0]["word_lengths"] == pytest.approx(6.0)
+
+    def test_text_level_is_exactly_one_row(self, client, regular_token1, measured):
+        """A port here, not a new capability — unlike on ``/results``, where v3 answers 500
+        at this level. v3's text-lengths endpoint branches on the level and sets
+        ``vref = None``, so whole-text rollup already works there and v4 preserves it.
+        """
+        resp = _text_lengths(client, regular_token1, measured, aggregate="text")
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        assert rows[0]["book"] is None and rows[0]["chapter"] is None
+        assert rows[0]["word_lengths"] == pytest.approx(5.5)
+        assert rows[0]["char_lengths"] == pytest.approx(27.5)
+
+    def test_the_chapter_is_an_integer_where_v3_returns_a_string(
+        self, client, regular_token1, measured
+    ):
+        """v3 gets ``chapter`` out of ``split_part`` on the vref, so its rollup returns
+        ``"1"``. Here it comes from ``chapter_reference.number``, so a client compares it
+        against the ``chapter`` it sent rather than parsing it back."""
+        rows = _rows(
+            _text_lengths(client, regular_token1, measured, aggregate="chapter")
+        )
+        assert all(isinstance(row["chapter"], int) for row in rows)
+
+    def test_the_z_scores_roll_up_as_the_mean_of_the_verses_z_scores(
+        self, client, regular_token1, measured
+    ):
+        """The ruling's fourth decision, pinned as a number rather than as prose.
+
+        ``GEN 1``'s verses have ``word_lengths_z`` of -1 and 1, so the chapter reports 0.
+        That is the mean of two per-verse z-scores — *not* the chapter's own z-score
+        against a distribution of chapters, which is what a reader assumes and which
+        nothing here computes. A rollup that recomputed a z-score at chapter level, or that
+        propagated one verse's, would fail this.
+        """
+        rows = {
+            (row["book"], row["chapter"]): row
+            for row in _rows(
+                _text_lengths(client, regular_token1, measured, aggregate="chapter")
+            )
+        }
+        assert rows[("GEN", 1)]["word_lengths_z"] == pytest.approx(0.0)
+        assert rows[("GEN", 1)]["char_lengths_z"] == pytest.approx(0.0)
+        assert rows[("GEN", 2)]["word_lengths_z"] == pytest.approx(3.0)
+        whole = _rows(
+            _text_lengths(client, regular_token1, measured, aggregate="text")
+        )[0]
+        # mean(-1, 1, 3, 0), which is not zero: averaging z-scores does not renormalize.
+        assert whole["word_lengths_z"] == pytest.approx(0.75)
+
+    def test_the_endpoint_documents_what_a_rolled_up_z_score_means(self):
+        """The ruling requires this in the response, not only in a code comment, so the
+        field descriptions and the endpoint description are part of the contract."""
+        for model in (TextLengthsAggregateOut,):
+            for field in ("word_lengths_z", "char_lengths_z"):
+                description = model.model_fields[field].description
+                assert "mean of the verses" in description, (field, description)
+        route_description = _route("get_assessment_text_lengths").description
+        assert "mean of that chapter's verses' z-scores" in route_description
+
+    @pytest.mark.parametrize("level", ["chapter", "book", "text"])
+    def test_the_verse_only_fields_are_absent_at_every_aggregate_level(
+        self, client, regular_token1, measured, level
+    ):
+        """Absent, not empty. The range merge is verse-level only, and an aggregate row is
+        not a stored row so it has no ``id`` either — v3 projects ``min(id)`` and calls it
+        one."""
+        for row in _rows(
+            _text_lengths(client, regular_token1, measured, aggregate=level)
+        ):
+            assert not {"vref", "vrefs", "id"} & set(row)
+            assert set(row) == {
+                "assessment_id",
+                "book",
+                "chapter",
+                "word_lengths",
+                "char_lengths",
+                "word_lengths_z",
+                "char_lengths_z",
+            }
+
+    def test_aggregation_composes_with_the_scope_filters(
+        self, client, regular_token1, measured
+    ):
+        rows = _rows(
+            _text_lengths(
+                client, regular_token1, measured, aggregate="chapter", book="GEN"
+            )
+        )
+        assert [(row["book"], row["chapter"]) for row in rows] == [
+            ("GEN", 1),
+            ("GEN", 2),
+        ]
+
+    def test_aggregated_rows_paginate(self, client, regular_token1, measured):
+        first = _text_lengths(
+            client, regular_token1, measured, aggregate="chapter", limit=2
+        )
+        second = _text_lengths(
+            client, regular_token1, measured, aggregate="chapter", limit=2, offset=2
+        )
+        assert [(r["book"], r["chapter"]) for r in _rows(first)] == [
+            ("GEN", 1),
+            ("GEN", 2),
+        ]
+        assert [(r["book"], r["chapter"]) for r in _rows(second)] == [("MAT", 1)]
+        assert first.json()["total"] == 3
+
+    def test_chapters_roll_up_in_numeric_order_not_lexical(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The rollup orders by the same joined numbers the verse level does, so ``GEN 2``
+        precedes ``GEN 10`` here too. Pinned separately because the aggregate query has its
+        own ``GROUP BY``/``ORDER BY`` and could regress on its own."""
+        assessment_id = _measured(
+            db_session, group1_version, ["GEN 10:1", "GEN 2:1", "GEN 1:1"]
+        )
+        rows = _rows(
+            _text_lengths(client, regular_token1, assessment_id, aggregate="chapter")
+        )
+        assert [row["chapter"] for row in rows] == [1, 2, 10]
+
+    def test_text_level_on_an_empty_set_returns_no_rows(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, [])
+        resp = _text_lengths(client, regular_token1, assessment_id, aggregate="text")
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+    def test_a_merged_span_counts_once_in_a_rollup(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """No row exists for a continuation verse, so a span contributes one measurement to
+        the mean rather than one per verse it covers — and the measurement it contributes is
+        the whole span's. Worth pinning: it is why there is no combine rule to invent.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(
+            db_session,
+            revision_id,
+            {"MAT 9:20": "text", "MAT 9:21": RANGE, "MAT 9:22": "text"},
+        )
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="text-lengths"
+        )
+        _make_text_length(db_session, assessment_id, "MAT 9:20", word_lengths=10.0)
+        _make_text_length(db_session, assessment_id, "MAT 9:22", word_lengths=20.0)
+        row = _rows(
+            _text_lengths(client, regular_token1, assessment_id, aggregate="text")
+        )[0]
+        assert row["word_lengths"] == pytest.approx(15.0)
+
+    @pytest.mark.parametrize("aggregate", ["chapter", "book", "text"])
+    def test_a_duplicate_row_is_not_averaged_into_a_rollup(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        """A rollup summarizes the deduplicated set, exactly like the verse level.
+
+        v3 does average the pair, at every level including the verse level. Keeping the
+        first copy at one level and averaging at the other would make a chapter mean
+        disagree with the very rows it summarizes — and only under aggregation, where the
+        verse rows are not returned for a client to notice. Pinned at all three levels
+        because each takes a different projection and grouping.
+        """
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=10.0)
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=30.0)
+        # A second verse, so the mean under test is not itself a single-row group.
+        _make_text_length(db_session, assessment_id, "GEN 1:2", word_lengths=30.0)
+        resp = _text_lengths(client, regular_token1, assessment_id, aggregate=aggregate)
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        # mean(10, 30), not mean(10, 30, 30): the duplicate is gone from the group rather
+        # than merely outvoted in it.
+        assert rows[0]["word_lengths"] == pytest.approx(20.0)
+
+    def test_a_null_vref_row_is_excluded_from_a_rollup_too(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The exclusion lives in the subquery both levels read, so the whole-text mean is
+        over exactly the verses the verse level serves."""
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(db_session, assessment_id, "GEN 1:1", word_lengths=10.0)
+        _make_text_length(db_session, assessment_id, None, word_lengths=1000.0)
+        row = _rows(
+            _text_lengths(client, regular_token1, assessment_id, aggregate="text")
+        )[0]
+        assert row["word_lengths"] == pytest.approx(10.0)
+
+    def test_a_group_whose_measures_are_all_null_reports_null_not_zero(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``avg`` over an all-null group is null, not zero, and the field is nullable on
+        the aggregate shape so it survives to the wire. Coercing it to 0.0 would report a
+        measured average of nothing."""
+        assessment_id = _measured(db_session, group1_version, [])
+        _make_text_length(
+            db_session,
+            assessment_id,
+            "GEN 1:1",
+            word_lengths=None,
+            char_lengths=None,
+            word_lengths_z=None,
+            char_lengths_z=None,
+        )
+        row = _rows(
+            _text_lengths(client, regular_token1, assessment_id, aggregate="text")
+        )[0]
+        assert row["word_lengths"] is None and row["word_lengths_z"] is None
+
+
+class TestTextLengthsContract:
+    """Pinned at the route and the models, so OpenAPI cannot drift by accident."""
+
+    VERSE_FIELDS = {
+        "id",
+        "assessment_id",
+        "vref",
+        "vrefs",
+        "word_lengths",
+        "char_lengths",
+        "word_lengths_z",
+        "char_lengths_z",
+    }
+    AGGREGATE_FIELDS = {
+        "assessment_id",
+        "book",
+        "chapter",
+        "word_lengths",
+        "char_lengths",
+        "word_lengths_z",
+        "char_lengths_z",
+    }
+
+    def test_each_row_type_has_exactly_its_own_fields(self):
+        assert set(TextLengthsOut.model_fields) == self.VERSE_FIELDS
+        assert set(TextLengthsAggregateOut.model_fields) == self.AGGREGATE_FIELDS
+
+    def test_the_four_measures_are_on_both_shapes(self):
+        measures = {
+            "word_lengths",
+            "char_lengths",
+            "word_lengths_z",
+            "char_lengths_z",
+        }
+        assert measures <= set(TextLengthsOut.model_fields)
+        assert measures <= set(TextLengthsAggregateOut.model_fields)
+
+    def test_vrefs_is_structurally_absent_from_the_aggregate_row(self):
+        assert not {"vref", "vrefs", "id"} & set(TextLengthsAggregateOut.model_fields)
+
+    def test_neither_row_carries_a_text_field(self):
+        """``include_text`` is not ported, so there is nothing for it to have filled. v3
+        does not declare the parameter either — the client sends it and FastAPI discards
+        it — which is what makes this dead rather than merely unimplemented."""
+        for model in (TextLengthsOut, TextLengthsAggregateOut):
+            assert not {"text", "reference_text", "revision_text"} & set(
+                model.model_fields
+            )
+
+    def test_a_verse_row_is_not_coerced_into_the_aggregate_shape(self):
+        """The union's members overlap on ``assessment_id`` and all four measures, so a
+        page validated against the aggregate member first would silently drop ``vref`` and
+        ``vrefs``. Pinned at the model, since FastAPI re-validates the body."""
+        page = V4Page[TextLengthsRow].model_validate(
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "assessment_id": 2,
+                        "vref": "MAT 9:20",
+                        "vrefs": ["MAT 9:20", "MAT 9:21"],
+                        "word_lengths": 5.0,
+                        "char_lengths": 25.0,
+                        "word_lengths_z": 0.5,
+                        "char_lengths_z": -0.5,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+            }
+        )
+        assert isinstance(page.items[0], TextLengthsOut)
+        assert page.items[0].vrefs == ["MAT 9:20", "MAT 9:21"]
+
+    def test_an_aggregate_row_resolves_to_the_aggregate_member(self):
+        page = V4Page[TextLengthsRow].model_validate(
+            {
+                "items": [
+                    {
+                        "assessment_id": 2,
+                        "book": "MAT",
+                        "chapter": 9,
+                        "word_lengths": 5.0,
+                        "char_lengths": 25.0,
+                        "word_lengths_z": 0.5,
+                        "char_lengths_z": -0.5,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+            }
+        )
+        assert isinstance(page.items[0], TextLengthsAggregateOut)
+
+    def test_both_union_members_serialize_as_their_own_shape_over_http(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The union resolved by the *response* rather than by ``model_validate``: FastAPI
+        re-validates what the handler returns, so a member ordering that works in isolation
+        can still drop fields on the wire."""
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        verse_row = _rows(_text_lengths(client, regular_token1, assessment_id))[0]
+        assert set(verse_row) == self.VERSE_FIELDS
+        aggregate_row = _rows(
+            _text_lengths(client, regular_token1, assessment_id, aggregate="book")
+        )[0]
+        assert set(aggregate_row) == self.AGGREGATE_FIELDS
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        """Pinned so the read cannot gain ``include_text``, ``page``/``page_size``, or a
+        ``reference_id`` by accident."""
+        route = _route("get_assessment_text_lengths")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {
+            "book",
+            "chapter",
+            "verse",
+            "aggregate",
+            "limit",
+            "offset",
+        }
+
+    def test_the_route_uses_the_result_pagination_dependency(self):
+        """Not the shared catalog params — 100/1000, the bounds ``/results`` uses."""
+        route = _route("get_assessment_text_lengths")
+        assert any(
+            dependency.call is ResultPaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
+        """``ResultScopeParams``, not ``VerseScopeParams``: a row here *is* a verse, so
+        unlike the word-keyed reads there is a per-verse set for a rollup to summarize.
+        """
+        route = _route("get_assessment_text_lengths")
+        assert any(
+            dependency.call is ResultScopeParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_returns_a_page_of_the_union(self):
+        route = _route("get_assessment_text_lengths")
+        assert route.response_model.__name__.startswith("V4Page")
+        assert set(get_args(TextLengthsRow)) == {
+            TextLengthsOut,
+            TextLengthsAggregateOut,
+        }
+
+    def test_the_served_type_is_text_lengths_alone(self):
+        assert set(assessment_service.TEXT_LENGTHS_ASSESSMENT_TYPES) == set(
+            TEXT_LENGTHS_SERVED_TYPES
+        )
+        assert set(TEXT_LENGTHS_SERVED_TYPES) | set(TEXT_LENGTHS_UNSERVED_TYPES) == {
+            t.value for t in AssessmentType
+        }
+
+    def test_the_served_type_has_no_generic_results(self):
+        """Unlike ``/alignment-scores``, this read does *not* overlap ``/results``:
+        ``text-lengths`` keeps its measurements in its own table, so the two reads serve
+        disjoint sets of assessments."""
+        assert not set(TEXT_LENGTHS_SERVED_TYPES) & set(
+            assessment_service.RESULT_ASSESSMENT_TYPES
+        )
+
+    def test_this_is_the_only_read_that_needs_a_triple_its_table_lacks(self):
+        """The premise of the whole three-table join, pinned so the docstrings cannot drift.
+
+        Written because an earlier draft of those docstrings claimed
+        ``text_lengths_table`` was the *only* vref-only result table. It is not:
+        ``tfidf_pca_vector`` and ``ngram_vref_table`` store only ``vref`` too. What is
+        actually unique is the combination — this is the only read that needs
+        ``book``/``chapter``/``verse`` (for canonical order, the scope filters and the span
+        map) whose table does not store them. ``/ngrams`` is not verse-keyed and
+        ``/similar-verses`` ranks by similarity with no scope filters, so neither ever
+        asks.
+
+        Asserting the column sets rather than restating the sentence, so that
+        denormalizing any of these tables makes this fail and the reader is sent to
+        re-read the reasoning.
+        """
+        triple = {"book", "chapter", "verse"}
+
+        def columns(model):
+            return {column.name for column in model.__table__.columns}
+
+        # The comparable reads: location stored, no reference-table join needed.
+        for model in (
+            AssessmentResult,
+            AlignmentTopSourceScores,
+            AlignmentThresholdScores,
+        ):
+            assert triple <= columns(model), model.__tablename__
+
+        # vref-only. Only the first of these has a read that needs the triple.
+        for model in (TextLengthsTable, TfidfPcaVector, NgramVrefTable):
+            assert "vref" in columns(model), model.__tablename__
+            assert not triple & columns(model), model.__tablename__
+
+    def test_the_v3_endpoint_is_untouched(self):
+        """v3 is frozen: this read is an addition to the v4 surface, not a replacement of
+        anything on v3, so a client still on v3 is unaffected."""
+        assert "/text_lengths_result" in {
+            route.path for route in v3_results_router.routes
+        }

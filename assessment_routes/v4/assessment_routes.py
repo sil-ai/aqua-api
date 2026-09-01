@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Nine endpoints:
+happens somewhere else. Ten endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -21,10 +21,12 @@ happens somewhere else. Nine endpoints:
   word-level pairings, paginated. Absorbs v3's ``GET /alignmentmatches``.
 * ``GET    /v4/assessments/{id}/missing-words`` — the same type's poorly-aligned words,
   weighed against peer assessments named by ``against``.
+* ``GET    /v4/assessments/{id}/text-lengths`` — the ``text-lengths`` type's per-verse
+  word and character counts and their z-scores, paginated, with the same scoping and
+  ``aggregate`` rollups as ``/results``.
 
-The remaining typed result sub-resources (``/text-lengths``, ``/score-comparison`` and
-the ``POST`` form of ``/similar-verses``) are the rest of #893 and land in follow-up
-PRs.
+The remaining typed result sub-resources (``/score-comparison`` and the ``POST`` form of
+``/similar-verses``) are the rest of #893 and land in follow-up PRs.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -128,6 +130,21 @@ caller's groups yields an empty page. That differs on purpose from
 ``GET /v4/revisions``, whose ``version_id`` names the collection's parent and is
 therefore validated; see :func:`assessment_service.list_assessments`.
 
+**``/text-lengths`` is the only read that needs a location triple its table does not
+store, and that is invisible from outside.** Precisely: three of the reads here filter and
+sort on stored ``book``/``chapter``/``verse`` columns (``/results`` and the two alignment
+reads, whose tables carry them); ``/ngrams`` and ``/similar-verses`` read vref-only tables
+but never need the triple, because one is not verse-keyed and the other ranks by
+similarity with no scope filters. This read is the intersection — it needs the triple and
+``text_lengths_table`` has none of it — so it reaches ``verse_reference`` →
+``chapter_reference`` → ``book_reference`` for the canonical order, for the scope filters,
+and for the key the ``<range>`` span map is keyed on. The
+wire shape is deliberately unchanged by that — it is the ``/results`` shape with four
+measures in place of one score — because a client should not be able to tell which of its
+result reads happens to have a denormalized table behind it. What it *does* have to know is
+that a rolled-up z-score is a mean of per-verse z-scores; the endpoint and the field
+descriptions both say so.
+
 **The result reads declare their own pagination and their own scope, and neither is
 re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than the
 shared catalog params (20/100), because a results consumer wants bulk —
@@ -183,6 +200,9 @@ from api_v4.schemas.assessment import (
     ResultScope,
     SimilarVerseOut,
     SimilarVersesOut,
+    TextLengthsAggregateOut,
+    TextLengthsOut,
+    TextLengthsRow,
     VerseScope,
 )
 from assessment_routes.v4 import assessment_service
@@ -1198,6 +1218,138 @@ async def get_assessment_missing_words(
     return V4Page[MissingWordOut].create(
         items=[MissingWordOut(**row) for row in rows], total=total, pagination=page
     )
+
+
+def _to_text_lengths_out(row, continuations: dict) -> TextLengthsOut:
+    """Build one verse-level text-lengths row, deriving its ``vrefs`` from the span map.
+
+    ``vref`` is the **stored** column here, not a string rebuilt from the location triple
+    the way :func:`_to_result_out` builds it. That inversion is deliberate and follows from
+    which value is the key: on ``assessment_result`` the triple is stored and ``vref`` is
+    the redundant copy, so formatting from the triple is what stops the two disagreeing;
+    on ``text_lengths_table`` ``vref`` is the only stored location and the triple is
+    derived from it by the join, so the stored value is the authority and rebuilding it
+    would be the redundant step. The inner join through ``verse_reference`` is what
+    guarantees it is a literal canonical vref and not null.
+
+    ``continuations`` is keyed on ``(book, chapter, verse)``, which is why the service
+    projects the derived triple even though the wire shape does not carry it.
+    """
+    return TextLengthsOut(
+        id=row.id,
+        assessment_id=row.assessment_id,
+        vref=row.vref,
+        vrefs=[row.vref, *continuations.get((row.book, row.chapter, row.verse), ())],
+        word_lengths=row.word_lengths,
+        char_lengths=row.char_lengths,
+        word_lengths_z=row.word_lengths_z,
+        char_lengths_z=row.char_lengths_z,
+    )
+
+
+def _to_text_lengths_aggregate(row) -> TextLengthsAggregateOut:
+    """Build one rolled-up text-lengths row.
+
+    ``book`` and ``chapter`` are read with a default for the reason
+    :func:`_to_result_aggregate` gives: the aggregate query projects different columns per
+    level — both at ``aggregate=chapter``, only ``book`` at ``aggregate=book``, neither at
+    ``aggregate=text``, where the single row summarizes everything and so has no location.
+    """
+    return TextLengthsAggregateOut(
+        assessment_id=row.assessment_id,
+        book=getattr(row, "book", None),
+        chapter=getattr(row, "chapter", None),
+        word_lengths=row.word_lengths,
+        char_lengths=row.char_lengths,
+        word_lengths_z=row.word_lengths_z,
+        char_lengths_z=row.char_lengths_z,
+    )
+
+
+@router.get(
+    "/{assessment_id}/text-lengths",
+    response_model=V4Page[TextLengthsRow],
+)
+async def get_assessment_text_lengths(
+    assessment_id: int,
+    page: ResultPaginationParams = Depends(),
+    scope: ResultScopeParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> V4Page[TextLengthsRow]:
+    """Read how long each verse of a translation is, in canonical Bible order.
+
+    Serves `type = text-lengths` only. An assessment of any other type reports
+    `404 ASSESSMENT_NOT_FOUND`, the same answer as one that does not exist, is outside
+    your groups, or is a training run — the other types keep their results in their own
+    tables and have their own sub-resources.
+
+    **A row is one verse, with four measures of it.** `word_lengths` and `char_lengths`
+    are counts; `word_lengths_z` and `char_lengths_z` are those counts standardized, so
+    they say how unusually long or short a verse is for this translation. All four are
+    computed by the runner and stored as they arrive — this read never recomputes them, and
+    the population a z-score was standardized over is the runner's choice rather than
+    something this API defines.
+
+    **A result set is not one row per verse, and you cannot derive coverage by
+    subtracting** — the same caveat as `/results`, and `vrefs` is the same answer to it. A
+    verse can be missing because the revision merges it into the verse above (published as
+    `MAT 9:20-21`, measured once under `MAT 9:20`, and the measurements are the whole
+    span's), or because it was never measured at all. Each row carries `vref`, the verse it
+    is stored under, and `vrefs`, every verse it covers, so the union of `vrefs` across a
+    set is exactly the measured set.
+
+    **Ordering is canonical vref order** — Bible order, then chapter, then verse — not
+    v3's insertion order, so a client no longer has to re-sort every page against a
+    `vref.txt` fixture. Exactly one row per verse, which is what makes `offset` pagination
+    stable across pages. Note this is a real behaviour change and not only a nicer
+    guarantee: v3 orders these rows by `min(id)` at every level, so its page order is the
+    order the runner happened to push in. And do not substitute a sort on `vref` for this
+    one — lexical vref order puts `GEN 10:1` before `GEN 2:1` and the books in alphabetical
+    order, which is neither Bible order nor v3's.
+
+    **Scoping and rollups.** `book`, `chapter` and `verse` narrow progressively; each needs
+    the one above it. `aggregate` rolls the measures up instead, to `chapter`, `book` or
+    the whole `text`, and cannot be combined with a scope narrower than itself. An
+    inconsistent combination is a `422`, not a silently ignored parameter.
+
+    Aggregated rows are a **different shape** — they carry the location they summarize
+    (`book`/`chapter`, and neither at `aggregate=text`, which is a single row) and have no
+    `id`, `vref` or `vrefs`. All four measures roll up as the plain mean.
+
+    **Read this before using an aggregated z-score.** `word_lengths_z` on a chapter row is
+    *the mean of that chapter's verses' z-scores*. It is **not** the chapter's own z-score
+    against a distribution of chapters — nothing in this system computes such a
+    distribution. A rolled-up value near zero therefore says "these verses are each
+    typical for the revision", not "this chapter is typical among chapters", which is a
+    stronger claim and the one the field name invites. v3 returns this same number and says
+    nothing about it.
+
+    `include_text` is not accepted. v3's endpoint does not declare it either — a client
+    that sends it has always had it discarded — and there is no text field on these rows
+    for it to fill. Verse text comes from the verses read.
+    """
+    try:
+        rows, total, continuations = await assessment_service.get_text_lengths(
+            db,
+            current_user,
+            assessment_id,
+            scope=scope.scope,
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+
+    if scope.scope.aggregate is None:
+        items = [_to_text_lengths_out(row, continuations) for row in rows]
+    else:
+        items = [_to_text_lengths_aggregate(row) for row in rows]
+    # No next_updated_since, for the reason /results gives: text_lengths_table carries no
+    # modification timestamp, so there is no watermark to publish. The key stays present
+    # and null, per the envelope's contract that adding delta support later is not a
+    # response-shape change.
+    return V4Page[TextLengthsRow].create(items=items, total=total, pagination=page)
 
 
 @router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -8,11 +8,11 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read, delete, and five of the typed result reads** — the generic
-per-verse ``/results``, ``/ngrams``, the ``/similar-verses`` ranking, and the two
-word-alignment reads ``/alignment-scores`` and ``/missing-words``. The remaining
-sub-resources (``/text-lengths``, ``/score-comparison``, and the ``POST`` form of
-``/similar-verses``) are follow-ups on #893; the runner-facing
+Scope is **create, read, delete, and six of the typed result reads** — the generic
+per-verse ``/results``, ``/ngrams``, the ``/similar-verses`` ranking, the two
+word-alignment reads ``/alignment-scores`` and ``/missing-words``, and
+``/text-lengths``. The remaining sub-resources (``/score-comparison`` and the ``POST``
+form of ``/similar-verses``) are follow-ups on #893; the runner-facing
 surface (``results_push_*``, ``eflomal-*``, ``tfidf-artifacts/*``, the status ``PATCH``)
 stays on v3 permanently — it is our own code talking to our own code and is not client
 contract (#842's 2026-08-25b decision 4).
@@ -317,6 +317,56 @@ handling once rather than twice.
   hydration and the ``/ngrams`` occurrence lookup are per page.
 
 
+How the text-lengths read is shaped (:func:`get_text_lengths`)
+---------------------------------------------------------------
+
+``GET /v4/assessments/{id}/text-lengths`` is close to a copy of ``/results`` on the wire:
+the same verse-level/aggregate split, the same ``vref``/``vrefs`` labelling, the same
+:class:`~api_v4.schemas.assessment.ResultScope`, the same 100/1000 pagination. Everything
+new about it is one fact about the table.
+
+* **``text_lengths_table`` stores only ``vref``.** No ``book``, no ``chapter``, no
+  ``verse`` — unlike ``assessment_result`` and the two alignment tables, which are
+  denormalized. It is *not* the only vref-only table here: ``tfidf_pca_vector`` and
+  ``ngram_vref_table`` are too. What is unique is the **combination** — this is the only
+  read that needs the triple and whose table lacks it, because ``/ngrams`` is not
+  verse-keyed and ``/similar-verses`` ranks by similarity with no scope filters, so
+  neither ever asks for it. So the helpers this read would otherwise copy do not port: there is nothing stored to filter on, to sort by,
+  or to key the span map with. :func:`_placed_text_lengths` replaces all three of
+  :func:`_placeable_results`, :func:`_deduplicated_results` and
+  :func:`_verse_level_results`' outer ``BookReference`` join with a single subquery that
+  joins ``verse_reference`` → ``chapter_reference`` → ``book_reference`` and projects the
+  triple. Denormalizing the columns onto the table instead is exactly the change the
+  shared-schema freeze forbids.
+* **The join does triple duty**, which is why it is one subquery rather than two. It
+  supplies the scope filters' columns, the canonical sort key, *and* the
+  ``(book, chapter, verse)`` key
+  :func:`~bible_routes.v4.verse_range_service.continuations_for_revision` is keyed on. It
+  sits *inside* the deduplication, the opposite arrangement from ``/results``;
+  :func:`_placed_text_lengths` says what forces each side and, more usefully, what does
+  not.
+* **Deduplicate first-write-wins on ``vref`` alone**, not v3's ``avg()`` over
+  ``(assessment_id, vref)`` at every level including the verse level. Same argument as
+  :func:`_deduplicated_results`, same natural-key reasoning, one column shorter.
+* **The rollup averages the stored z-scores, and the response says so.**
+  ``avg(word_lengths_z)`` over a chapter is the mean of the verses' z-scores, not the
+  chapter's own z-score against a chapter-level distribution. Both are defensible; only
+  one is what a reader assumes, and v3 computes the first silently. The correction lives
+  in the field descriptions, in the response — not only in a comment here.
+* **Cost is not the constraint it was on ``/alignment-scores``**, and that is worth
+  stating rather than assuming: ~3,300 rows per assessment against that read's ~242,000.
+  See :func:`get_text_lengths` for the figures.
+* **No rows exist for ``<range>`` continuations, confirmed at the runner and not only in
+  the data.** ``aqua-assessments/assessments/text_lengths/app.py`` loads text from
+  ``GET /v3/text`` with no ``include_verses``, so it gets the default ``union`` — spans
+  already merged, continuations absent, the anchor reported as ``first_verse_reference``
+  and carrying the span's whole text. The Q3 ruling cited
+  ``text_lengths/merge_revision.py:48`` for the drop; that line is real but is in
+  ``condense_df``, a *two-revision* helper this assessment type never calls. Same
+  conclusion, different mechanism — and the mechanism matters, because it is what makes
+  the anchor row's measurements the span's rather than the anchor verse's alone.
+
+
 """
 
 from datetime import date, datetime, timedelta
@@ -360,11 +410,14 @@ from database.models import (
     BibleVersion,
     BibleVersionAccess,
     BookReference,
+    ChapterReference,
     NgramsTable,
     NgramVrefTable,
+    TextLengthsTable,
     TfidfPcaVector,
     UserDB,
     UserGroup,
+    VerseReference,
     VerseText,
 )
 from schemas.assessment import (
@@ -2401,3 +2454,282 @@ async def get_missing_words(
             }
         )
     return items, total
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/text-lengths. See "How the text-lengths read is shaped"
+# in the module docstring.
+# ---------------------------------------------------------------------------
+
+#: The only assessment type whose measurements land in ``text_lengths_table``, and so the
+#: only type ``GET /v4/assessments/{id}/text-lengths`` serves. A tuple of one for the same
+#: reason :data:`NGRAMS_ASSESSMENT_TYPES` is one, and taken from the enum so a renamed
+#: value fails at import instead of silently narrowing the read to nothing.
+TEXT_LENGTHS_ASSESSMENT_TYPES = (AssessmentType.text_lengths.value,)
+
+
+def _placed_text_lengths(assessment_id: int, scope: ResultScope):
+    """The assessment's placeable rows as a subquery, one row per vref, first-write-wins.
+
+    This is :func:`_deduplicated_results` fused with the ``BookReference`` join that
+    :func:`_verse_level_results` makes *outside* its own dedup subquery, and the fusion
+    follows from the one way this table differs from the tables the *comparable* reads use
+    — ``assessment_result`` and the two alignment tables, which are denormalized:
+    **``text_lengths_table`` stores only ``vref``.** (``tfidf_pca_vector`` and
+    ``ngram_vref_table`` are vref-only as well; their reads simply never need the triple.) There is no ``book``, no ``chapter``
+    and no ``verse`` column to filter on, order by, or key the span map with, so the three
+    reference tables have to supply all of it::
+
+        text_lengths_table.vref  ->  verse_reference.full_verse_id
+        verse_reference.book_reference -> book_reference.abbreviation -> .number
+        verse_reference.chapter  ->  chapter_reference.full_chapter_id -> .number
+        verse_reference.number                                           = the verse
+
+    On ``/results`` the join *had* to stay outside the dedup subquery: ``DISTINCT ON``
+    requires the ``ORDER BY`` to begin with its own expressions, and there the canonical
+    order begins with ``book_reference.number``. Here that constraint does not bite —
+    ``DISTINCT ON (vref)``'s ``ORDER BY vref, id`` is over stored columns only — so the
+    joins can live inside, and do. The canonical ``ORDER BY`` then happens outside, on the
+    projected numbers.
+
+    Inside rather than outside is a **shape and work** choice, not a correctness one, and
+    it is worth being exact about that. Every column the scope filters compare is
+    functionally determined by ``vref``, which is also the deduplication key, so filtering
+    before or after the ``DISTINCT ON`` returns the same rows either way — unlike
+    ``/results``, where ``book``/``chapter``/``verse`` are separate stored columns that two
+    duplicate rows could in principle disagree on, which is why filtering there has to
+    precede the dedup. What putting the join inside buys here is that one subquery serves
+    all three of its consumers — the filters, the canonical sort key, and the
+    ``(book, chapter, verse)`` key the span map needs — and that the ``DISTINCT ON`` sorts
+    only the scoped rows rather than the whole assessment.
+
+    **Not ``ORDER BY vref``, and none of v3's string surgery.** v3 filters with
+    ``vref.ilike(f"{book}%")`` and ``split_part(vref, ' ', 2)`` and orders by ``min(id)``.
+    Lexical vref order puts ``GEN 10:1`` before ``GEN 2:1`` and the books in alphabetical
+    order, which is not Bible order in either dimension; ``split_part`` cannot use an
+    index; and ``ilike`` on a book prefix is a prefix match standing in for an equality.
+    The scope filters here are exact equality against ``verse_reference.book_reference``,
+    ``chapter_reference.number`` and ``verse_reference.number``.
+
+    **The ``verse_reference`` join must stay an inner join, and that is the whole of the
+    placeability rule.** ``text_lengths_table.vref`` is nullable, so an unplaceable row
+    exists in principle; the inner join drops it, and because the join lives inside the
+    subquery that *both* the page and the ``COUNT`` are built from, ``total`` excludes
+    exactly what the page excludes. An explicit ``vref IS NOT NULL`` was written here
+    first and removed as dead: it changed no result, because the join already decides it.
+    So the honest way to keep this correct is to leave the join inner — a well-meant
+    ``outerjoin`` would make ``total`` count rows no page can show *and* 500 on the row
+    itself, since ``vref`` is required on :class:`TextLengthsOut`. A statement-shape test
+    pins it, because no fixture in the suite makes the two joins behave differently.
+
+    That is the same discipline :func:`_placeable_results` documents, arrived at from the
+    other side: there the ``book`` join is inner and the other two conditions have to be
+    spelled out, because ``assessment_result`` stores them. Here there is nothing stored
+    to spell out.
+
+    **Deduplicated first-write-wins, not averaged.** v3's ``build_text_lengths_query``
+    groups by ``(assessment_id, vref)`` with ``avg()`` at *every* level including
+    ``aggregate is None``, so two rows for one verse are silently averaged into the verse
+    the client is shown. The natural key here is ``vref`` alone — the type is functionally
+    determined by ``assessment_id`` — and the argument for keeping the first copy is the
+    one :func:`_deduplicated_results` sets out in full: there is no legitimate "two
+    measurements for this verse in this assessment", so averaging would average a retried
+    push against its own copy. Offset pagination needs the total order regardless.
+
+    Both levels read through this, so a chapter mean can never summarize a set the verse
+    level does not serve.
+    """
+    clauses = [TextLengthsTable.assessment_id == assessment_id]
+    if scope.book is not None:
+        clauses.append(VerseReference.book_reference == scope.book)
+    if scope.chapter is not None:
+        clauses.append(ChapterReference.number == scope.chapter)
+    if scope.verse is not None:
+        clauses.append(VerseReference.number == scope.verse)
+
+    return (
+        select(
+            TextLengthsTable.id,
+            TextLengthsTable.assessment_id,
+            TextLengthsTable.vref,
+            TextLengthsTable.word_lengths,
+            TextLengthsTable.char_lengths,
+            TextLengthsTable.word_lengths_z,
+            TextLengthsTable.char_lengths_z,
+            VerseReference.book_reference.label("book"),
+            ChapterReference.number.label("chapter"),
+            VerseReference.number.label("verse"),
+            BookReference.number.label("book_number"),
+        )
+        .join(VerseReference, VerseReference.full_verse_id == TextLengthsTable.vref)
+        .join(
+            ChapterReference,
+            ChapterReference.full_chapter_id == VerseReference.chapter,
+        )
+        .join(
+            BookReference,
+            BookReference.abbreviation == VerseReference.book_reference,
+        )
+        .where(*clauses)
+        .distinct(TextLengthsTable.vref)
+        .order_by(TextLengthsTable.vref, TextLengthsTable.id)
+        .subquery()
+    )
+
+
+async def _verse_level_text_lengths(
+    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of verse-level rows in canonical order, plus the total row count.
+
+    Canonical Bible order — ``book_reference.number``, then the chapter number, then the
+    verse number — replacing v3's ``ORDER BY min(id)``, i.e. insertion order, which is why
+    the one known client re-sorts every result set against a ``vref.txt`` fixture on
+    arrival. The trailing ``id`` that makes the order total is already spent inside
+    :func:`_placed_text_lengths`, where the deduplication leaves exactly one row per
+    ``vref``; the three numbers are then a total order on their own.
+
+    ``total`` counts the same subquery the page is drawn from, so the two agree about
+    every exclusion (null ``vref``, and the duplicates the dedup discards). The usual rare
+    offset-pagination drift between two statements still applies.
+    """
+    placed = _placed_text_lengths(assessment_id, scope)
+    total = await db.scalar(select(func.count()).select_from(placed))
+    rows = (
+        await db.execute(
+            select(placed)
+            .order_by(placed.c.book_number, placed.c.chapter, placed.c.verse)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return list(rows), total or 0
+
+
+async def _aggregated_text_lengths(
+    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of rolled-up rows in canonical order, plus the number of groups.
+
+    **All four measures roll up as ``avg``**, which makes this rollup simpler than
+    ``/results``': there is no ``flag`` or ``hide`` column on this table, so the
+    "not symmetric across fields" wrinkle (mean score, *any* flag) does not arise.
+
+    What does need stating is what averaging the *z-score* columns produces.
+    ``avg(word_lengths_z)`` over a chapter is the mean of that chapter's verses'
+    z-scores — not the chapter's own z-score against a distribution of chapters, which is
+    what the field name suggests and which nothing in this system computes. v3 computes
+    the same number silently; :class:`TextLengthsAggregateOut`'s field descriptions say
+    which one it is, because the difference is invisible in the response.
+
+    The rollup runs over :func:`_placed_text_lengths`, not the raw table, so it summarizes
+    exactly the set the verse level serves — including the dedup, where v3 averages the
+    duplicates in. Doing that at one level and not the other would make a chapter mean
+    disagree with the very rows under it, and only under aggregation, where no client can
+    see the rows to notice.
+
+    ``book_number`` is grouped and ordered by at every level it is projected, and unlike
+    ``/results`` it needs no extra join to get there: :func:`_placed_text_lengths` already
+    carries it, because the join that produces it is also the join the scope filters and
+    the span map need. It has to enter ``GROUP BY`` wherever it is ordered by, since
+    ``book`` here is a projected label rather than a grouped primary key.
+
+    At ``aggregate=text`` the grouping is ``assessment_id`` alone, so the result is one
+    row — or none, when the assessment has no placeable rows at all. **Unlike ``/results``,
+    this level is a genuine port rather than a new capability**, and the difference was
+    checked rather than assumed: ``GET /v3/result?aggregate=text`` answers 500 because it
+    formats every row's ``vref`` from ``row.book`` at a level whose projection has no
+    ``book``, while ``GET /v3/text_lengths_result?aggregate=text`` branches on the level
+    and sets ``vref = None`` (``results_query_routes.py:894``). So v3 behaviour exists here
+    to preserve, and it is preserved — the whole-text row carries no location.
+
+    """
+    placed = _placed_text_lengths(assessment_id, scope)
+    if scope.aggregate is ResultAggregate.chapter:
+        group_columns = (placed.c.book, placed.c.chapter)
+        canonical_columns = (placed.c.book_number,)
+    elif scope.aggregate is ResultAggregate.book:
+        group_columns = (placed.c.book,)
+        canonical_columns = (placed.c.book_number,)
+    else:
+        group_columns = ()
+        canonical_columns = ()
+
+    grouped = (
+        select(
+            placed.c.assessment_id,
+            *group_columns,
+            func.avg(placed.c.word_lengths).label("word_lengths"),
+            func.avg(placed.c.char_lengths).label("char_lengths"),
+            func.avg(placed.c.word_lengths_z).label("word_lengths_z"),
+            func.avg(placed.c.char_lengths_z).label("char_lengths_z"),
+        )
+        .select_from(placed)
+        .group_by(placed.c.assessment_id, *canonical_columns, *group_columns)
+        # (number, book, chapter) sorts identically to (number, chapter) — the book
+        # abbreviation is determined by its number — so the group columns can just follow.
+        .order_by(*canonical_columns, *group_columns)
+    )
+    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
+    rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
+    return list(rows), total or 0
+
+
+async def get_text_lengths(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    scope: ResultScope,
+    limit: int,
+    offset: int,
+) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    """One page of an assessment's text-length measurements: rows, total, and the span map.
+
+    Authorized by :func:`get_assessment` with ``types=TEXT_LENGTHS_ASSESSMENT_TYPES``, so
+    the family's single visibility predicate decides this read too and an assessment of a
+    type this read does not serve is refused by the same clause as one the caller cannot
+    see. No authorization is written here; that uniformity is what four of this slice's
+    five security issues came from not having.
+
+    Returns the raw rows for the router to shape, the total ignoring ``limit``/``offset``,
+    and the assessed revision's ``<range>`` span map — ``{}`` when aggregating, where the
+    merge does not apply. The span map is keyed on ``(book, chapter, verse)``, the
+    denormalized triple this table does not store — so supplying that key is the third job
+    :func:`_placed_text_lengths`' join does, alongside the scope filters' columns and the
+    canonical sort key.
+
+    The span map is the **revision's** only, and there is no reference side to consider
+    here at all — ``text-lengths`` is a single-revision assessment type
+    (``TextLengthsOptions`` has no ``reference_id``), so the argument
+    :func:`get_results` has to make about not unioning the reference's markers does not
+    even arise.
+
+    Like ``/results``, no watermark: ``text_lengths_table`` carries no modification
+    timestamp, so this list has no delta feed.
+
+    **Cost is not a concern on this read, which is worth stating because the sibling
+    ``/alignment-scores`` had to design its filters around it.**
+    ``ASSESSMENT-STORAGE-ANALYSIS.md`` puts ``text_lengths_table`` at 14,075,033 rows
+    over 4,248 assessments — about 3,300 rows per assessment, and 41,899 at the absolute
+    ceiling of one row per canonical verse. So the unfiltered whole-Bible request is a
+    few thousand rows joined to three small reference tables, not the ~242,000-row scan
+    ``/alignment-scores`` faces, and the scope filters here are conveniences rather than
+    the way the read is meant to be used.
+    """
+    assessment = await get_assessment(
+        db, user, assessment_id, types=TEXT_LENGTHS_ASSESSMENT_TYPES
+    )
+    if scope.aggregate is not None:
+        rows, total = await _aggregated_text_lengths(
+            db, assessment_id, scope, limit=limit, offset=offset
+        )
+        return rows, total, {}
+
+    rows, total = await _verse_level_text_lengths(
+        db, assessment_id, scope, limit=limit, offset=offset
+    )
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+    return rows, total, continuations

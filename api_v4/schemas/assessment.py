@@ -244,6 +244,33 @@ guess, so both the endpoint and :class:`MissingWordOut` say so.
 
 :class:`AlignmentScoreType` chooses *which stored rows* to read, not how to read them;
 the two tables hold different things, and there is no fallback between them.
+
+
+The text-lengths read: the same two shapes, over a table that stores only ``vref``
+----------------------------------------------------------------------------------
+
+``GET /v4/assessments/{id}/text-lengths`` (:class:`TextLengthsOut`,
+:class:`TextLengthsAggregateOut`, :data:`TextLengthsRow`) is deliberately the closest
+thing in the family to ``/results``: the same verse-level/aggregate split, the same
+``vref``/``vrefs`` labelling, the same :class:`ResultScope`, and a union for the same
+reason. What differs is entirely below the wire — ``text_lengths_table`` carries no
+``book``/``chapter``/``verse`` columns, so canonical order and the span-map lookup both
+come from a join through the reference tables rather than from stored values. None of
+that is visible in these schemas, which is the point.
+
+**The rollup's z-scores are means of per-verse z-scores, and both fields say so.** That is
+the one place a reader can be silently wrong about what a number means: ``word_lengths_z``
+on a chapter row averages the chapter's verses' z-scores; it is not the chapter's own
+z-score against a distribution of chapters, and no such distribution exists anywhere in
+this system. v3 returns the same number and documents nothing, so a client that has been
+reading it as the second thing has been over-reading it. Both are defensible statistics;
+only one is what the field name suggests, so the description carries the correction rather
+than a code comment.
+
+``include_text`` is not ported, and it is dead twice over: ``GET /text_lengths_result``
+does not declare the parameter, so FastAPI discards it, and v3's ``TextLengthsResult`` has
+no text field it could have filled anyway. ``aqua-django-app`` sends it regardless. Dead
+v3 parameters do not come into v4 — not carried, not deprecated, not "for parity".
 """
 
 from datetime import datetime
@@ -1305,6 +1332,192 @@ class MissingWordOut(V4BaseModel):
     )
 
 
+class TextLengthsOut(V4BaseModel):
+    """One verse-level row of ``GET /v4/assessments/{id}/text-lengths``.
+
+    The same ``vref`` / ``vrefs`` pair as :class:`AssessmentResultOut`, for the same
+    reason and with the same meaning — see that class for the argument. It applies here
+    unchanged: ``text_lengths_table`` holds **no** row for a ``<range>`` continuation, so a
+    verse missing from a page is either covered by the row above it or was never measured,
+    and ``vrefs`` is what tells those apart.
+
+    That was confirmed twice over, at the data and at the source. Assessment 31038's
+    production check found no range-vref rows; and the runner cannot write one, because it
+    loads text from ``GET /v3/text``, whose default ``include_verses=union`` merges the
+    span *before* the runner sees it and reports the anchor as
+    ``first_verse_reference``. So the anchor row's measurements are the whole span's text,
+    which is what makes ``vrefs`` an honest claim about coverage rather than a label over a
+    number that excludes some of it.
+
+    What is different is where the label comes from. ``assessment_result`` stores
+    ``book``/``chapter``/``verse`` alongside its ``vref``; this table stores **only**
+    ``vref``, so the read reaches ``verse_reference`` → ``chapter_reference`` →
+    ``book_reference`` to place a row in canonical Bible order and to key into the span
+    map. ``vref`` itself is served from the stored column rather than rebuilt, because
+    here it *is* the natural key: it is the foreign key the join follows, so it cannot be
+    null on a returned row and cannot disagree with the triple the row was ordered on.
+
+    All four measures are the revision's own — there is no reference side to this
+    assessment type, and ``TextLengthsOptions`` has no ``reference_id`` to give it one.
+
+    **All four are nullable, and that is a fix rather than a looser contract.** The columns
+    are nullable and the runner-facing push requires all four, so a null can only come from
+    a direct database write — but v3 handles that case *incorrectly* rather than not at all:
+    its ``TextLengthsResult`` declares them as required ``float`` while
+    ``get_text_lengths`` passes ``None`` for a null column, so such a row is a
+    ``ValidationError`` and a 500 on v3. Here the verse is still identified and the row still
+    reports which verses it covers, so serving the measures as null keeps the coverage
+    information a refusal would throw away. It also has to match
+    :class:`TextLengthsAggregateOut`, where ``avg`` over an all-null group is null whatever
+    this model says; a required field at one level and a nullable one at the other would be
+    the worse asymmetry. Contrast :class:`NgramResultOut`, which *does* require its columns:
+    there the identifying value itself is the missing one.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored ``text_lengths_table`` row's id. Not a handle: no v4 endpoint "
+            "addresses a single row."
+        ),
+    )
+    assessment_id: int = Field(
+        description="The assessment these measurements belong to (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse this row measures — the **first** verse of the span when the "
+            "revision merged several, in which case the measurements are the whole "
+            "span's. Always a literal canonical vref, so it joins against `vref.txt`."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, in canonical order and beginning with `vref`. "
+            "A single entry unless the revision merged verses into this one (`<range>`). "
+            "The union of this field across a whole page set is the measured set: a "
+            "verse absent from every `vrefs` was never measured, rather than being "
+            "covered by a neighbour."
+        ),
+    )
+    word_lengths: float | None = Field(
+        default=None,
+        description=(
+            "How many words the verse holds. **Always a whole number**: the runner counts "
+            "with a plain whitespace split, with no preprocessing, so standalone "
+            "punctuation counts as a word. Typed as a number rather than an integer "
+            "because the column is `NUMERIC` and the aggregated form of this field is a "
+            "mean. Null only if the row was stored without the measure."
+        ),
+    )
+    char_lengths: float | None = Field(
+        default=None,
+        description=(
+            "How many characters the verse holds, counted as-is. **Always a whole "
+            "number**, and typed as a number for the same reason as `word_lengths`. Null "
+            "only if the row was stored without the measure."
+        ),
+    )
+    word_lengths_z: float | None = Field(
+        default=None,
+        description=(
+            "The verse's word count as a z-score — how unusually long or short the verse "
+            "is for this translation. **Computed by the runner and stored as-is**; this "
+            "read never recomputes it, and the population it was standardized over is the "
+            "runner's choice rather than something this API defines."
+        ),
+    )
+    char_lengths_z: float | None = Field(
+        default=None,
+        description=(
+            "The verse's character count as a z-score, with the same caveat as "
+            "`word_lengths_z`: stored, not recomputed."
+        ),
+    )
+
+
+class TextLengthsAggregateOut(V4BaseModel):
+    """One rolled-up row of ``GET /v4/assessments/{id}/text-lengths?aggregate=...``.
+
+    Its own type rather than the verse row with fields nulled, for the reason the module
+    docstring gives for :class:`AssessmentResultAggregateOut`: ``vrefs`` is structurally
+    absent because the range merge is verse-level only, and so are ``vref`` and ``id`` —
+    an aggregate row is not a stored row, so the lowest id among the verses it summarizes
+    identifies nothing it represents. (v3 projects ``min(id)`` here and calls it ``id``.)
+
+    **Every measure rolls up as a plain mean, the z-scores included, and that last part
+    is the thing to read before using them.** ``word_lengths_z`` on a chapter row is *the
+    mean of that chapter's verses' z-scores* — not the chapter's own z-score against a
+    distribution of chapters. The two are different numbers and only the second is what
+    "the chapter's z-score" usually means. v3 computes the first silently; v4 computes the
+    same number and says which one it is, here and in the field descriptions, because a
+    reader who assumes the second will read a near-zero mean as "this chapter is typical"
+    when it in fact says "this chapter's verses are individually typical for the
+    revision", which is a weaker claim.
+
+    ``chapter`` is an integer here, where v3's text-lengths rollup returns it as a string
+    (it comes out of ``split_part`` on the vref). Normalized to match ``/results`` and the
+    ``chapter`` query parameter, so a client compares what it sent.
+    """
+
+    assessment_id: int = Field(
+        description="The assessment these measurements belong to (echoed from the path).",
+    )
+    book: str | None = Field(
+        default=None,
+        description=(
+            "The book this row summarizes, or null at `aggregate=text`, which summarizes "
+            "everything and so has no location."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        description=(
+            "The chapter this row summarizes; null at `aggregate=book` and "
+            "`aggregate=text`."
+        ),
+    )
+    word_lengths: float | None = Field(
+        default=None,
+        description=(
+            "Mean word count across the verses in scope. Null only if none of them had "
+            "the measure."
+        ),
+    )
+    char_lengths: float | None = Field(
+        default=None,
+        description=(
+            "Mean character count across the verses in scope. Null only if none of them "
+            "had the measure."
+        ),
+    )
+    word_lengths_z: float | None = Field(
+        default=None,
+        description=(
+            "**The mean of the verses' own z-scores**, not this scope's z-score against "
+            "a distribution of scopes. A value near zero says these verses are each "
+            "typical for the revision; it does not say the chapter or book is typical "
+            "compared with other chapters or books — no such distribution is computed "
+            "anywhere. v3 returns this same number without saying so."
+        ),
+    )
+    char_lengths_z: float | None = Field(
+        default=None,
+        description=(
+            "**The mean of the verses' own character-length z-scores**, with the same "
+            "caveat as `word_lengths_z`: it averages per-verse z-scores rather than "
+            "scoring this scope against its peers."
+        ),
+    )
+
+
+#: The item type of the text-lengths page: a verse row, or an aggregated row. A union for
+#: exactly the reason :data:`AssessmentResultRow` is one — ``vref``/``vrefs``/``id`` must
+#: be *absent* under aggregation rather than conventionally null, and the aggregate shape
+#: must not be able to swallow a verse row. Which one a page holds is decided by the
+#: request's ``aggregate``, so a client never has to sniff the shape.
+TextLengthsRow = Union[TextLengthsOut, TextLengthsAggregateOut]
+
+
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
@@ -1331,7 +1544,10 @@ __all__ = [
     "SentenceLengthOptions",
     "SimilarVerseOut",
     "SimilarVersesOut",
+    "TextLengthsAggregateOut",
     "TextLengthsOptions",
+    "TextLengthsOut",
+    "TextLengthsRow",
     "TfidfOptions",
     "VerseScope",
     "WordAlignmentOptions",
