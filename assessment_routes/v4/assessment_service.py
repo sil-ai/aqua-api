@@ -367,8 +367,56 @@ new about it is one fact about the table.
   the anchor row's measurements the span's rather than the anchor verse's alone.
 
 
+How the score comparison read is shaped (:func:`get_score_comparison`)
+-----------------------------------------------------------------------
+
+``GET /v4/assessments/{id}/score-comparison?against=`` answers one question — *is this
+translation's score at this verse unusual?* — by scoring one subject against a
+distribution built from peer assessments of the same kind. It is v3's ``/compareresults``,
+and it carries **#862**, the last of this slice's five security issues.
+
+* **The subject's rows are ``/results``' rows, unchanged.** :func:`_verse_level_results`
+  and :func:`_aggregated_results` are called as they stand, so ``score``, ``total``, the
+  canonical order, the dedup and every scoping and rollup rule are literally the same
+  code. This read adds four fields; it recomputes nothing. That is the whole reason it
+  sits on the shared subquery layer rather than beside it — a parallel implementation
+  could disagree with ``/results`` about a chapter mean, and only under aggregation, where
+  no client can see the verse rows to notice.
+* **It serves all three of :data:`RESULT_ASSESSMENT_TYPES`.** v3 is word-alignment only,
+  but that falls out of resolving the subject from
+  ``(revision_id, reference_id, type='word-alignment')`` rather than from anything about
+  the data — all three types' rows live in ``assessment_result`` with the same shape. The
+  peers, though, must match the subject's type **exactly** rather than merely be one of
+  the three, which is the one thing :func:`_baseline_peers` could not get for free from
+  ``/missing-words`` and the reason it grew a ``types`` parameter.
+* **Peers are authorized before they are read, by the same predicate as the subject.**
+  That is #862's fix and it is structural: :func:`_baseline_peers` puts every ``against``
+  id through :func:`get_assessment`, so this read has no authorization code of its own to
+  forget. Its other three guarantees — same reference, a different Bible version, and
+  duplicate ids collapsed — are the same three ``/missing-words`` relies on, held in one
+  function so they cannot drift apart.
+* **``against`` is required here, where ``/missing-words`` leaves it optional.** Without
+  peers there is no distribution, so ``mean_score``, ``stdev_score`` and ``z_score`` would
+  all be null and the read would be ``/results`` with three empty columns. v3 permits it
+  and its own docstring admits the result "essentially returns the same results as the
+  /result route"; that is an argument for dropping the mode rather than porting it.
+* **The span rule is the only genuinely new behaviour in the family.** A score never
+  crosses a span boundary, so the boundary decides *comparability* instead of supplying a
+  combine operator: a peer contributes at a group only where its revision's span map
+  agrees with the subject's there. See :func:`get_score_comparison` for the argument and
+  Q1 §5 clause 5 for the ruling. Note this is the *other* branch of that ruling from the
+  ``sum``-the-lengths half, which was written for a read that is not being built.
+* **Two fields v3 does not report**, both from Q2 §8. ``baseline_count`` makes the
+  silent-dropout case visible — v3 gives a mean with no way to tell five peers from one —
+  and it is what the span rule needs anyway. ``z_score`` null at a single contributing
+  peer is not a bug but ``stddev_samp`` at n = 1, and the endpoint says so rather than
+  leaving a client to find out.
+
+
 """
 
+import statistics
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -1359,8 +1407,8 @@ RESULT_ASSESSMENT_TYPES = (
 )
 
 
-def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
-    """WHERE clauses for the assessment's rows that a canonically ordered read can place.
+def _placeable_results(assessment_ids: Sequence[int], scope: ResultScope) -> list:
+    """WHERE clauses for those assessments' rows a canonically ordered read can place.
 
     ``chapter`` and ``verse`` must be non-null, and the caller's join to
     ``book_reference`` supplies the third condition by being an inner join. The three
@@ -1375,9 +1423,16 @@ def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
     through v3's ``func.upper(column)``, which cannot use
     ``idx_assessment_result_main``. Stored abbreviations always come from
     ``fixtures/vref.txt`` and are upper case, so nothing is lost.
+
+    ``assessment_ids`` is a **sequence** rather than one id because
+    ``/score-comparison`` applies these same clauses to its peer assessments as a set.
+    Sharing the function rather than repeating the clauses is what makes a peer's
+    contribution come from exactly the population the subject's own rows come from: a
+    peer rolled up over rows the subject's rollup excludes would move the mean by an
+    amount no caller could see. Every caller that has one id passes a one-element list.
     """
     clauses = [
-        AssessmentResult.assessment_id == assessment_id,
+        AssessmentResult.assessment_id.in_(assessment_ids),
         AssessmentResult.chapter.is_not(None),
         AssessmentResult.verse.is_not(None),
     ]
@@ -1390,8 +1445,10 @@ def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
     return clauses
 
 
-def _deduplicated_results(assessment_id: int, scope: ResultScope):
-    """The assessment's placeable rows as a subquery, one row per verse, first-write-wins.
+def _deduplicated_results(
+    assessment_ids: Sequence[int], scope: ResultScope, *, per_assessment: bool = False
+):
+    """Those assessments' placeable rows as a subquery, one row per verse, first-write-wins.
 
     Shared by both levels — :func:`_verse_level_results` serves these rows and
     :func:`_aggregated_results` rolls them up — so a rollup can never summarize a set the
@@ -1438,7 +1495,22 @@ def _deduplicated_results(assessment_id: int, scope: ResultScope):
     though the rollups use four: the ``ORDER BY`` above fixes *which* row survives, so the
     surviving row's fields are the same set either way, and one projection keeps the two
     callers reading the same thing.
+
+    ``per_assessment`` widens the deduplication key to
+    ``(assessment_id, book, chapter, verse)``, for the one caller whose row set spans
+    several assessments at once — ``/score-comparison``'s peers. **The key has to grow
+    with the set.** Over one assessment ``(book, chapter, verse)`` is the natural key;
+    over N it identifies N rows, so the narrow ``DISTINCT ON`` would keep one peer's
+    score for a verse and silently discard every other peer's — a baseline population
+    quietly of size one, reported as whatever ``baseline_count`` counted. Nothing else
+    moves: the ``ORDER BY`` still ends in ``id``, so first-write-wins still decides which
+    of a verse's duplicate rows survives, now per assessment rather than outright.
     """
+    distinct_on = ((AssessmentResult.assessment_id,) if per_assessment else ()) + (
+        AssessmentResult.book,
+        AssessmentResult.chapter,
+        AssessmentResult.verse,
+    )
     return (
         select(
             AssessmentResult.id,
@@ -1451,16 +1523,9 @@ def _deduplicated_results(assessment_id: int, scope: ResultScope):
             AssessmentResult.hide,
             AssessmentResult.note,
         )
-        .where(*_placeable_results(assessment_id, scope))
-        .distinct(
-            AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse
-        )
-        .order_by(
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            AssessmentResult.verse,
-            AssessmentResult.id,
-        )
+        .where(*_placeable_results(assessment_ids, scope))
+        .distinct(*distinct_on)
+        .order_by(*distinct_on, AssessmentResult.id)
         .subquery()
     )
 
@@ -1481,7 +1546,7 @@ async def _verse_level_results(
     does, so it cannot be null and cannot disagree with the triple the row was
     deduplicated on.
     """
-    deduplicated = _deduplicated_results(assessment_id, scope)
+    deduplicated = _deduplicated_results([assessment_id], scope)
     placed = (
         select(*deduplicated.c, BookReference.number.label("book_number"))
         .select_from(deduplicated)
@@ -1536,7 +1601,7 @@ async def _aggregated_results(
     level" the Paratext extension needs, so no client can be relying on v3 behaviour here
     — there is none to preserve.
     """
-    deduplicated = _deduplicated_results(assessment_id, scope)
+    deduplicated = _deduplicated_results([assessment_id], scope)
     if scope.aggregate is ResultAggregate.chapter:
         group_columns = (deduplicated.c.book, deduplicated.c.chapter)
         canonical_columns = (BookReference.number,)
@@ -2162,16 +2227,36 @@ async def get_alignment_scores(
     ], total
 
 
-async def _missing_words_peers(
-    db: AsyncSession, user: UserDB, subject: Assessment, against: list[int]
+async def _baseline_peers(
+    db: AsyncSession,
+    user: UserDB,
+    subject: Assessment,
+    against: list[int],
+    *,
+    types: tuple[str, ...],
 ) -> list[Assessment]:
     """The ``against`` assessments, authorized and checked for comparability.
 
-    Every peer goes through :func:`get_assessment` with the *same* ``types`` filter as
-    the subject, so an unreachable peer is the family's ordinary 404 rather than a
-    special case, and the caller learns nothing about ids outside their groups. That is
-    what makes authorization here structural instead of remembered — the property Q2
-    chose the ``{id}`` + ``against`` shape for.
+    Shared by ``/missing-words`` and ``/score-comparison``, the two reads that weigh one
+    assessment against peers named by id.
+
+    Every peer goes through :func:`get_assessment` under a ``types`` filter, so an
+    unreachable peer is the family's ordinary 404 rather than a special case, and the
+    caller learns nothing about ids outside their groups. That is what makes
+    authorization here structural instead of remembered — the property Q2 chose the
+    ``{id}`` + ``against`` shape for, and what closes **#860** on the first read and
+    **#862** on the second.
+
+    **``types`` is the caller's, and the two callers pass different things.**
+    ``/missing-words`` passes :data:`ALIGNMENT_ASSESSMENT_TYPES`, which is also its own
+    subject gate, so subject-peer type equality falls out for free — the set holds one
+    value. ``/score-comparison`` serves all three of :data:`RESULT_ASSESSMENT_TYPES` and
+    cannot get it free, so it passes ``(subject.type,)``: the peer must be the *same* one
+    of the three, not merely one the read serves. A ``semantic-similarity`` peer under a
+    ``word-alignment`` subject is then the same 404 as an id that does not exist, because
+    the filter is a clause on the visibility statement rather than a check run after it.
+    Parameterizing rather than writing a second function is the deliberate call: the four
+    guarantees below are the same four on both reads, and a copy is how they drift apart.
 
     Two comparability rules then apply, both replacing a guarantee v3 got implicitly from
     resolving peers by content and both reported as a 422 naming the offending id:
@@ -2179,7 +2264,10 @@ async def _missing_words_peers(
     * **Same reference.** v3 selects baselines with ``reference_id = :reference_id``, so
       a peer aligned against a different reference could never be chosen. Scores against
       a different reference are not on a comparable scale, and the mean of them is the
-      number ``flag`` is computed from.
+      number ``flag`` (or, on ``/score-comparison``, ``z_score``) is computed from. On
+      ``sentence-length``, the one served type with no reference at all, both sides are
+      ``None`` and the rule reads as "the peer must not have one either" — the same
+      clause, not a special case.
     * **A different Bible version.** v3 drops any baseline whose revision shares a
       ``bible_version`` with the subject's revision *or* its reference: a sibling
       revision of the text being assessed is not an independent witness, and neither is a
@@ -2196,7 +2284,7 @@ async def _missing_words_peers(
     would mean writing the visibility rule twice.
     """
     peers = [
-        await get_assessment(db, user, peer_id, types=ALIGNMENT_ASSESSMENT_TYPES)
+        await get_assessment(db, user, peer_id, types=types)
         # dict.fromkeys, not set(): duplicates go, the caller's ordering stays, and
         # ``targets`` then lines up with the order they named the peers in.
         for peer_id in dict.fromkeys(against)
@@ -2399,7 +2487,7 @@ async def get_missing_words(
     absence of them.
 
     Five statements, in this order: authorize the subject; authorize and check the peers
-    (:func:`_missing_words_peers`); count and fetch one page; fetch that page's peer rows
+    (:func:`_baseline_peers`); count and fetch one page; fetch that page's peer rows
     (:func:`_peer_alignments`); load the span map. The peer work is bounded by the page,
     never by the assessment.
 
@@ -2417,7 +2505,9 @@ async def get_missing_words(
     subject = await get_assessment(
         db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES
     )
-    peers = await _missing_words_peers(db, user, subject, against)
+    peers = await _baseline_peers(
+        db, user, subject, against, types=ALIGNMENT_ASSESSMENT_TYPES
+    )
 
     clauses = _alignment_scope_clauses(
         AlignmentTopSourceScores, assessment_id, scope
@@ -2733,3 +2823,297 @@ async def get_text_lengths(
         db, assessment.revision_id
     )
     return rows, total, continuations
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/score-comparison. See "How the score comparison read is
+# shaped" in the module docstring.
+# ---------------------------------------------------------------------------
+
+
+def _comparison_group_names(aggregate: ResultAggregate | None) -> tuple[str, ...]:
+    """The location columns one comparison row is keyed on, at the request's level.
+
+    The single place the four levels' grain is written down. It decides three things at
+    once and they must not be allowed to disagree: which columns the peers are grouped by
+    in SQL, which columns the page's rows are keyed on in Python, and — at
+    ``aggregate is None``, where the tuple is also the span map's key — which peers are
+    comparable at all. Reading the same names out of the subject row and out of the peer
+    row is what lets the two be matched by an ordinary dict lookup rather than by a join
+    written twice.
+
+    ``()`` at ``aggregate=text`` is not a degenerate case to guard against: the whole text
+    is one group, so the empty tuple is its key, and every lookup below then works
+    unchanged.
+    """
+    if aggregate is None:
+        return ("book", "chapter", "verse")
+    if aggregate is ResultAggregate.chapter:
+        return ("book", "chapter")
+    if aggregate is ResultAggregate.book:
+        return ("book",)
+    return ()
+
+
+async def _peer_scores(
+    db: AsyncSession,
+    peers: list[Assessment],
+    scope: ResultScope,
+    keys: list[tuple],
+) -> dict[tuple, dict[int, float]]:
+    """``{group_key: {peer_assessment_id: score}}`` for one page's groups.
+
+    One statement for the whole page, over the exact groups it holds — the same shape
+    :func:`_peer_alignments` uses on ``/missing-words`` and for the same reason. v3
+    aggregates its baselines over the entire unpaginated result set; doing it per page is
+    what pagination requires, since the distribution has to cover *this page's* groups
+    rather than the assessment's.
+
+    **Two aggregations, not one, and the order matters.** Inside, ``avg`` collapses each
+    peer's rows to one value per group; outside — in :func:`_baseline_statistics`, over
+    what this returns — the mean and standard deviation run across *peers*. That is v3's
+    structure preserved (``avg(avg_score)``, ``stddev(avg_score)``), and it is what makes
+    each peer one observation however many verses it contributed. Flattening the two into
+    a single mean over every peer row would weight a peer with a whole book behind it more
+    heavily than one with a chapter, silently.
+
+    At ``aggregate is None`` the inner ``avg`` is a no-op — :func:`_deduplicated_results`
+    has already left one row per ``(assessment, verse)`` — and it is kept anyway so all
+    four levels are one query rather than a verse-level special case beside three rollups.
+
+    A group whose peer rows all carry a null score yields ``avg = NULL`` and is dropped
+    here, so that peer is absent from the distribution rather than present as a zero. SQL
+    would do the same thing one level up; doing it here keeps
+    :func:`_baseline_statistics` working on plain floats.
+
+    ``book_reference`` is joined at every level, including the verse level where the key
+    filter already implies it. It is the same "the join is also a filter" argument
+    :func:`_aggregated_results` makes: a peer's population is then defined by exactly the
+    predicate the subject's is, at whichever level is being read.
+    """
+    if not peers or not keys:
+        return {}
+
+    deduplicated = _deduplicated_results(
+        [peer.id for peer in peers], scope, per_assessment=True
+    )
+    names = _comparison_group_names(scope.aggregate)
+    group_columns = tuple(deduplicated.c[name] for name in names)
+    statement = (
+        select(
+            deduplicated.c.assessment_id,
+            *group_columns,
+            func.avg(deduplicated.c.score).label("score"),
+        )
+        .select_from(deduplicated)
+        .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
+        .group_by(deduplicated.c.assessment_id, *group_columns)
+    )
+    if len(group_columns) == 1:
+        # A one-column ``tuple_(...).in_(...)`` is legal but renders as ``(book) IN
+        # (('GEN'))``; the plain column form is what the index expects to see.
+        statement = statement.where(group_columns[0].in_([key[0] for key in keys]))
+    elif group_columns:
+        statement = statement.where(tuple_(*group_columns).in_(keys))
+
+    by_key: dict[tuple, dict[int, float]] = {}
+    for row in (await db.execute(statement)).all():
+        if row.score is None:
+            continue
+        by_key.setdefault(tuple(getattr(row, name) for name in names), {})[
+            row.assessment_id
+        ] = float(row.score)
+    return by_key
+
+
+def _baseline_statistics(
+    values: list[float],
+) -> tuple[float | None, float | None, int]:
+    """``(mean_score, stdev_score, baseline_count)`` over one group's contributing peers.
+
+    ``stdev`` is the **sample** standard deviation, which is Postgres' ``stddev`` (an
+    alias for ``stddev_samp``) and therefore what v3 computes. At one contributing peer it
+    is ``None`` rather than ``0.0``, which is that same definition rather than a guard
+    bolted on: a single observation carries no information about spread, so the answer is
+    "unknown", not "none". :func:`_comparison_z_score` then reports no z-score for that
+    row, matching v3's ``calculate_z_score``, which falls through to ``None`` on a null or
+    zero standard deviation.
+
+    ``baseline_count`` counts the peers behind the two numbers, which is the field v3 does
+    not report and the reason a caller can tell a mean over five peers from a mean over
+    one. It counts *contributors*, not the length of ``against``: a peer with no row at
+    this group, a peer whose rows here are all unscored, and a peer excluded by the span
+    rule are alike absent from all three values.
+    """
+    if not values:
+        return None, None, 0
+    return (
+        statistics.fmean(values),
+        statistics.stdev(values) if len(values) > 1 else None,
+        len(values),
+    )
+
+
+def _comparison_z_score(score, mean: float | None, stdev: float | None) -> float | None:
+    """How many standard deviations the subject sits from the peers, or ``None``.
+
+    v3's :func:`~assessment_routes.v3.results_query_routes.calculate_z_score` reproduced,
+    including every branch that falls through to ``None``: no subject score, no peer
+    contributed, one peer contributed (so ``stdev`` is null), or every peer scored the
+    group identically (so ``stdev`` is zero and the quotient would be undefined).
+    """
+    if score is None or mean is None or not stdev:
+        return None
+    return (float(score) - mean) / stdev
+
+
+async def get_score_comparison(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    scope: ResultScope,
+    against: list[int],
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int, list[int]]:
+    """One page of an assessment's scores against a peer distribution, plus the total.
+
+    Serves all three of :data:`RESULT_ASSESSMENT_TYPES`, authorized by the same
+    :func:`get_assessment` predicate as every other read on this parent. v3's
+    ``/compareresults`` is word-alignment only, but that is a consequence of resolving the
+    subject from ``(revision_id, reference_id, type='word-alignment')`` rather than a
+    statement about the data: all three types' rows live in ``assessment_result`` with the
+    same shape, so with an explicit id the restriction has nothing left to rest on.
+
+    **The subject's rows are ``/results``' rows.** :func:`_verse_level_results` and
+    :func:`_aggregated_results` are called unchanged, so ``score``, ``total``, the
+    canonical order and every scoping and rollup rule are the same values
+    ``GET /v4/assessments/{id}/results`` would return for the same query. This read adds
+    four fields to those rows; it does not recompute them. That also means the two reads
+    cannot drift — a change to the dedup or the rollup moves both at once. The cost is
+    that the shared rollup also computes ``bool_or(flag)`` and ``bool_or(hide)``, which
+    this read discards; two booleans over a group already being scanned is a smaller price
+    than a second rollup that could disagree with the first.
+
+    **#862 closes here**, and structurally: every ``against`` id goes through
+    :func:`_baseline_peers` and therefore through the same :func:`get_assessment` as the
+    subject, so an unreachable peer is a 404 in the same shape as an unreachable subject
+    and no authorization code is written on this read at all. Recorded as a property of
+    the design rather than an argument about scheduling — the v3 exposure lasts until v3
+    is retired regardless of when this ships.
+
+    Five statements plus the span maps: authorize the subject; authorize and check the
+    peers; count and fetch one page; fetch that page's peer scores; and, at the verse
+    level, the subject's span map plus one for each peer that actually reached the page.
+    Those are memoised per revision, so a peer costs a lookup rather than a scan. **Every
+    part of the peer work is bounded by the page rather than by ``against``** — which is
+    why the maps are loaded *after* the peer scores, not alongside the peers: a peer with
+    no scored row in any of this page's groups can never be span-tested, so its map is
+    never consulted and is not fetched.
+
+    **The span rule (Q1 §5 clause 5) is the only genuinely new behaviour here.** A score
+    never crosses a span boundary: semantic similarity of ``concat(v20, v21)`` is not any
+    function of ``sim(v20)`` and ``sim(v21)``, and a mean of the two would weight a
+    three-word verse like a forty-word one. Recomputation is not available to a read
+    holding no model. So the span boundary does not decide how to combine two scores — it
+    decides whether they may be compared at all: **a peer contributes at a group only
+    where its revision's span map agrees with the subject's there**, the group being one
+    verse in both or the identical multi-verse span in both. Where they disagree the
+    subject's own score still comes back and the peer is simply one that did not
+    contribute, so it drops out of ``mean_score``, ``stdev_score`` and ``baseline_count``
+    together. That is what makes ``baseline_count`` load-bearing rather than decoration:
+    it is how a caller sees this happening.
+
+    Two v3 mechanisms are deliberately not reached for, both flagged by Q1:
+    ``utils.verse_range_utils.merge_verse_ranges`` is v3's sentinel-driven design and not
+    what the rule describes, and v3's range sentinel (``is_range_marker=lambda x: x == 0``)
+    fires on nothing in the measured data and would be a false merge if it ever did.
+
+    **Under any rollup there is no span test**, exactly as there is no ``vrefs``, and that
+    is worth stating rather than leaving implicit. Q1 §5 scopes the whole rule to
+    ``aggregate is None``. A chapter mean is taken over each side's own verses, so where
+    the two revisions merge differently the subject averages one row over a span while the
+    peer averages two — v3's behaviour, and a small effect next to the rollup's own, but a
+    real one. The endpoint says so.
+    """
+    subject = await get_assessment(
+        db, user, assessment_id, types=RESULT_ASSESSMENT_TYPES
+    )
+    # (subject.type,) rather than RESULT_ASSESSMENT_TYPES: a peer must be the *same* one
+    # of the three, not merely one this read serves. Q2 §5.
+    peers = await _baseline_peers(db, user, subject, against, types=(subject.type,))
+
+    if scope.aggregate is not None:
+        rows, total = await _aggregated_results(
+            db, assessment_id, scope, limit=limit, offset=offset
+        )
+    else:
+        rows, total = await _verse_level_results(
+            db, assessment_id, scope, limit=limit, offset=offset
+        )
+
+    names = _comparison_group_names(scope.aggregate)
+    keys = [tuple(getattr(row, name) for name in names) for row in rows]
+    # dict.fromkeys: the page's *distinct* groups, keeping their order. At the verse level
+    # the keys are already distinct; under a rollup they are too. It costs nothing and
+    # means a duplicate could never widen the ``IN`` list.
+    peer_scores = await _peer_scores(db, peers, scope, list(dict.fromkeys(keys)))
+
+    continuations: dict[tuple[str, int, int], list[str]] = {}
+    peer_spans: dict[int, dict[tuple[str, int, int], list[str]]] = {}
+    if scope.aggregate is None:
+        # The subject's map is unconditional — it supplies every row's ``vrefs``, whether
+        # or not any peer reached that verse.
+        continuations = await verse_range_service.continuations_for_revision(
+            db, subject.revision_id
+        )
+        contributors = {
+            peer_id for at_key in peer_scores.values() for peer_id in at_key
+        }
+        peer_spans = {
+            peer.id: await verse_range_service.continuations_for_revision(
+                db, peer.revision_id
+            )
+            for peer in peers
+            if peer.id in contributors
+        }
+
+    items = []
+    for row, key in zip(rows, keys):
+        scores_here = peer_scores.get(key, {})
+        span = continuations.get(key, [])
+        contributions = []
+        for peer in peers:
+            score = scores_here.get(peer.id)
+            if score is None:
+                continue
+            # The span test, verse level only. ``.get(key, [])`` on both sides, so "this
+            # verse merged nothing" compares equal to "this verse merged nothing" rather
+            # than to a missing key. Indexed rather than ``.get``: reaching here means the
+            # peer scored this group, so it is a contributor and its map was loaded — a
+            # default would turn that invariant breaking into a silently skipped test.
+            if scope.aggregate is None and peer_spans[peer.id].get(key, []) != span:
+                continue
+            contributions.append(score)
+
+        mean, stdev, count = _baseline_statistics(contributions)
+        item = {
+            "assessment_id": row.assessment_id,
+            "score": row.score,
+            "mean_score": mean,
+            "stdev_score": stdev,
+            "z_score": _comparison_z_score(row.score, mean, stdev),
+            "baseline_count": count,
+        }
+        if scope.aggregate is None:
+            vref = f"{row.book} {row.chapter}:{row.verse}"
+            item["id"] = row.id
+            item["vref"] = vref
+            item["vrefs"] = [vref, *span]
+        else:
+            item["book"] = getattr(row, "book", None)
+            item["chapter"] = getattr(row, "chapter", None)
+        items.append(item)
+
+    return items, total, [peer.id for peer in peers]

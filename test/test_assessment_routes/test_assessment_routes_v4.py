@@ -142,6 +142,10 @@ from api_v4.schemas.assessment import (
     NgramResultOut,
     ResultAggregate,
     ResultScope,
+    ScoreComparisonAggregateOut,
+    ScoreComparisonOut,
+    ScoreComparisonPage,
+    ScoreComparisonRow,
     SimilarVerseOut,
     SimilarVersesOut,
     TextLengthsAggregateOut,
@@ -8179,3 +8183,1396 @@ class TestTextLengthsContract:
         assert "/text_lengths_result" in {
             route.path for route in v3_results_router.routes
         }
+
+
+def _against_bounds(route_name):
+    """``{"min_length": ..., "max_length": ...}`` off a route's declared ``against``.
+
+    The bounds live in the ``Query``'s ``metadata`` as annotated-types markers rather than
+    as attributes on the ``FieldInfo``, so a naive ``field_info.max_length`` is an
+    ``AttributeError`` rather than a wrong answer — but only on this FastAPI version, so
+    it is read once here instead of at each call site.
+    """
+    against = next(
+        param
+        for param in _route(route_name).dependant.query_params
+        if param.name == "against"
+    )
+    bounds = {}
+    for marker in against.field_info.metadata:
+        for name in ("min_length", "max_length"):
+            if getattr(marker, name, None) is not None:
+                bounds[name] = getattr(marker, name)
+    return bounds
+
+
+def _score_comparison(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/score-comparison",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _compared(db_session, group_name, *, type_="word-alignment", peers=2, **kwargs):
+    """A subject and ``peers`` independent peers, all against one shared reference.
+
+    Every revision lives in its own Bible version, because the peer guard rejects a peer
+    sharing a version with the subject's revision *or* with the reference — so a fixture
+    that reuses one version cannot express a legal comparison at all.
+
+    ``kwargs`` reach the *subject* only. A peer that is soft-deleted or a training run is
+    its own case and would otherwise be created by accident here.
+    """
+    reference_id = _make_revision(db_session, _make_version(db_session, group_name))
+    subject_version = _make_version(db_session, group_name)
+    revision_id = _make_revision(db_session, subject_version)
+    assessment_id = _make_assessment(
+        db_session, revision_id, reference_id, type_=type_, **kwargs
+    )
+    peer_rows = []
+    for _ in range(peers):
+        peer_version = _make_version(db_session, group_name)
+        peer_revision = _make_revision(db_session, peer_version)
+        peer_rows.append(
+            {
+                "assessment_id": _make_assessment(
+                    db_session, peer_revision, reference_id, type_=type_
+                ),
+                "revision_id": peer_revision,
+                "version_id": peer_version,
+            }
+        )
+    return {
+        "assessment_id": assessment_id,
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "reference_version": db_session.query(BibleRevision)
+        .filter_by(id=reference_id)
+        .first()
+        .bible_version_id,
+        "subject_version": subject_version,
+        "peers": peer_rows,
+        "peer_ids": [peer["assessment_id"] for peer in peer_rows],
+    }
+
+
+def _compared_pair(db_session, group_name, *, type_="word-alignment", **kwargs):
+    """``(revision_id, assessment_id, peer_id)`` with one scored verse on each side."""
+    fixture = _compared(db_session, group_name, type_=type_, peers=1, **kwargs)
+    _make_result(db_session, fixture["assessment_id"], "MAT 1:1", score=0.5)
+    _make_result(db_session, fixture["peer_ids"][0], "MAT 1:1", score=0.7)
+    return fixture["revision_id"], fixture["assessment_id"], fixture["peer_ids"][0]
+
+
+class TestScoreComparisonAuthorization:
+    """``GET …/score-comparison`` — the family's single 404, over three served types.
+
+    v3's ``/compareresults`` does authorize its *subject*, unlike ``/missingwords``, but
+    it answers **403** for an assessment the caller cannot see
+    (``results_query_routes.py:1940``), which makes its status code an existence oracle.
+    Here it is the same 404 every other read on this parent gives. #862 is about the
+    *baselines* and is pinned in :class:`TestScoreComparisonPeers`.
+    """
+
+    @pytest.mark.parametrize("type_", SERVED_TYPES)
+    def test_each_of_the_three_served_types_is_compared(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """Q2 §5's ruling as a test. v3 hardcodes ``word-alignment``, which follows from
+        resolving the subject by ``(revision, reference, type)`` rather than from the
+        data — all three types' rows are in ``assessment_result`` with the same shape.
+        """
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group1", type_=type_)
+        rows = _rows(
+            _score_comparison(client, regular_token1, assessment_id, against=[peer_id])
+        )
+        assert [row["vref"] for row in rows] == ["MAT 1:1"]
+
+    @pytest.mark.parametrize("type_", UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group1", type_=type_)
+        resp = _score_comparison(
+            client, regular_token1, assessment_id, against=[peer_id]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, _, peer_id = _compared_pair(db_session, "Group1")
+        resp = _score_comparison(client, regular_token1, 10**9, against=[peer_id])
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert resp.json()["error"]["details"]["assessment_id"] == 10**9
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404_not_v3s_403(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        """The status code v3 gets wrong here. ``/compareresults`` raises 403 for a
+        subject the caller cannot see, which tells them the id exists."""
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group2")
+        resp = _score_comparison(
+            client, regular_token1, assessment_id, against=[peer_id]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_comparison_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "MAT 1:1")
+        peer = _make_assessment(
+            db_session,
+            _make_revision(db_session, _make_version(db_session, "Group1")),
+            reference_id,
+        )
+        resp = _score_comparison(client, regular_token1, assessment_id, against=[peer])
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id, peer_id = _compared_pair(
+            db_session, "Group1", is_training=True
+        )
+        resp = _score_comparison(
+            client, regular_token1, assessment_id, against=[peer_id]
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group1", deleted=True)
+        assert (
+            _score_comparison(
+                client, regular_token1, assessment_id, against=[peer_id]
+            ).status_code
+            == 404
+        )
+
+    def test_a_soft_deleted_revision_hides_its_comparison(
+        self, client, regular_token1, db_session
+    ):
+        revision_id, assessment_id, peer_id = _compared_pair(db_session, "Group1")
+        assert (
+            _score_comparison(
+                client, regular_token1, assessment_id, against=[peer_id]
+            ).status_code
+            == 200
+        )
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert (
+            _score_comparison(
+                client, regular_token1, assessment_id, against=[peer_id]
+            ).status_code
+            == 404
+        )
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        _, unserved, peer_a = _compared_pair(db_session, "Group1", type_="ngrams")
+        _, theirs, peer_b = _compared_pair(db_session, "Group2")
+        _, training, peer_c = _compared_pair(db_session, "Group1", is_training=True)
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _score_comparison(client, regular_token1, 10**9, against=[peer_a]),
+                _score_comparison(client, regular_token1, unserved, against=[peer_a]),
+                _score_comparison(client, regular_token1, theirs, against=[peer_b]),
+                _score_comparison(client, regular_token1, training, against=[peer_c]),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        """A caller who can see the assessment but does not own it reads it fine —
+        ``AssessmentAccessForbidden`` belongs to the write path only."""
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group2")
+        assert (
+            _score_comparison(
+                client, regular_token2, assessment_id, against=[peer_id]
+            ).status_code
+            == 200
+        )
+
+
+class TestScoreComparisonPeers:
+    """``against``: #862, the four peer guarantees, and the type rule that is new here."""
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        fixture = _compared(db_session, "Group1")
+        _make_result(db_session, fixture["assessment_id"], "MAT 1:1", score=0.5)
+        return fixture
+
+    def test_against_is_required(self, client, regular_token1, compared):
+        """Without peers there is no distribution, so the read would be ``/results`` with
+        three null columns. v3 allows it and its own docstring concedes the result
+        "essentially returns the same results as the /result route"."""
+        resp = _score_comparison(client, regular_token1, compared["assessment_id"])
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_an_unreachable_peer_is_a_404_naming_that_peer(
+        self, client, regular_token1, db_session, compared, group2_version
+    ):
+        """**#862, stated as a test.** v3's ``/compareresults`` authorizes its subject and
+        then never checks the baselines at all, so any authenticated caller could name any
+        assessment id and read its per-verse means. Here every ``against`` id goes through
+        the same predicate as the subject, and ``details`` names the peer rather than the
+        path id or the caller cannot tell which was refused."""
+        theirs = _make_assessment(
+            db_session,
+            _make_revision(db_session, group2_version),
+            _make_revision(db_session, group2_version),
+        )
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[theirs]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert resp.json()["error"]["details"]["assessment_id"] == theirs
+
+    def test_a_peer_of_a_different_served_type_is_a_404(
+        self, client, regular_token1, db_session, compared
+    ):
+        """**The rule that is new on this read.** ``/missing-words`` gets type equality
+        for free because its subject gate holds one value; this read serves three, so the
+        peer filter has to be the subject's own type rather than the set. A
+        ``semantic-similarity`` peer under a ``word-alignment`` subject is scored on a
+        different quantity entirely."""
+        peer = _make_assessment(
+            db_session,
+            _make_revision(db_session, _make_version(db_session, "Group1")),
+            compared["reference_id"],
+            type_="semantic-similarity",
+        )
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert resp.json()["error"]["details"]["assessment_id"] == peer
+
+    @pytest.mark.parametrize("type_", SERVED_TYPES)
+    def test_a_peer_of_the_subjects_own_type_is_accepted(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """The other direction of the same rule, over all three: same type is fine."""
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group1", type_=type_)
+        resp = _score_comparison(
+            client, regular_token1, assessment_id, against=[peer_id]
+        )
+        assert resp.status_code == 200, resp.text
+        assert _rows(resp)[0]["baseline_count"] == 1
+
+    def test_a_peer_against_a_different_reference_is_a_422(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Scores against another reference are not on a comparable scale, and their mean
+        is what ``z_score`` is computed from. v3 selected baselines with
+        ``reference_id = :reference_id``, so this could never arise there."""
+        other_reference = _make_revision(
+            db_session, _make_version(db_session, "Group1")
+        )
+        peer = _make_assessment(
+            db_session,
+            _make_revision(db_session, _make_version(db_session, "Group1")),
+            other_reference,
+        )
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+        assert resp.json()["error"]["details"]["assessment_id"] == peer
+
+    def test_a_peer_sharing_the_subjects_version_is_a_422(
+        self, client, regular_token1, db_session, compared
+    ):
+        sibling = _make_revision(db_session, compared["subject_version"])
+        peer = _make_assessment(db_session, sibling, compared["reference_id"])
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+
+    def test_a_peer_sharing_the_references_version_is_a_422(
+        self, client, regular_token1, db_session, compared
+    ):
+        sibling = _make_revision(db_session, compared["reference_version"])
+        peer = _make_assessment(db_session, sibling, compared["reference_id"])
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer]
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+
+    def test_naming_the_subject_as_its_own_peer_is_refused_by_the_same_guard(
+        self, client, regular_token1, compared
+    ):
+        """A z-score against yourself is zero by construction. The version guard already
+        rules it out, so no separate check exists to forget."""
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=[compared["assessment_id"]],
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "INCOMPATIBLE_BASELINE_ASSESSMENT"
+
+    def test_an_incompatible_peer_is_reported_not_silently_dropped(
+        self, client, regular_token1, db_session, compared
+    ):
+        good = compared["peer_ids"][0]
+        bad = _make_assessment(
+            db_session,
+            _make_revision(db_session, compared["subject_version"]),
+            compared["reference_id"],
+        )
+        assert (
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[good]
+            ).status_code
+            == 200
+        )
+        assert (
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[good, bad]
+            ).status_code
+            == 422
+        )
+
+    def test_a_peer_named_twice_counts_once(
+        self, client, regular_token1, db_session, compared
+    ):
+        """One witness, whether or not the caller repeats it. Counting it twice would let
+        a caller move the mean — and so every z-score — by repeating one baseline."""
+        peer = compared["peer_ids"][0]
+        _make_result(db_session, peer, "MAT 1:1", score=0.9)
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer, peer]
+        )
+        assert resp.json()["against_assessment_ids"] == [peer]
+        row = _rows(resp)[0]
+        assert row["baseline_count"] == 1
+        # Two entries would give a stdev of 0.0 and so a z-score, instead of null.
+        assert row["stdev_score"] is None
+        assert row["z_score"] is None
+
+    def test_the_envelope_names_the_peers_in_the_order_given(
+        self, client, regular_token1, compared
+    ):
+        """Q2 §4: both sides must be named, and the path names only one."""
+        peer_a, peer_b = compared["peer_ids"]
+        resp = _score_comparison(
+            client, regular_token1, compared["assessment_id"], against=[peer_b, peer_a]
+        )
+        assert resp.json()["against_assessment_ids"] == [peer_b, peer_a]
+
+    def test_more_peers_than_the_limit_is_a_422(self, client, regular_token1, compared):
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=list(range(MAX_AGAINST_ASSESSMENTS + 1)),
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_peer_bound_is_the_one_missing_words_uses(self):
+        """One constant, because ``against`` means the same thing on both reads. Read off
+        the declared parameter rather than off the module constant, so re-declaring the
+        bound on one route would fail here rather than pass by importing the same name."""
+        for name in ("get_assessment_missing_words", "get_assessment_score_comparison"):
+            assert _against_bounds(name)["max_length"] == MAX_AGAINST_ASSESSMENTS
+
+    def test_peer_scores_are_fetched_once_for_the_page(
+        self, client, regular_token1, db_session, compared
+    ):
+        """v3 aggregates its baselines over the whole unpaginated result set; here the
+        work is bounded by the page. One statement whatever the row count and however
+        many peers — the body cannot show the difference, so this reads the statements.
+        """
+        _make_results(
+            db_session, compared["assessment_id"], [f"GEN 1:{n}" for n in range(2, 7)]
+        )
+        peer_a, peer_b = compared["peer_ids"]
+        with _captured_sql() as captured:
+            resp = _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        assert len(_rows(resp)) == 6
+        selects = [
+            statement
+            for statement, _p in _touching(captured, "assessment_result")
+            if "SELECT" in statement
+        ]
+        # The subject's count, the subject's page, and one lookup for both peers.
+        assert len(selects) == 3
+
+    def test_an_empty_page_skips_the_peer_query_entirely(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        fixture = _compared(db_session, "Group1", peers=1)
+        with _captured_sql() as captured:
+            resp = _score_comparison(
+                client,
+                regular_token1,
+                fixture["assessment_id"],
+                against=fixture["peer_ids"],
+            )
+        assert _rows(resp) == []
+        selects = [
+            statement
+            for statement, _p in _touching(captured, "assessment_result")
+            if "SELECT" in statement
+        ]
+        assert len(selects) == 2
+
+
+class TestScoreComparisonRows:
+    """What a row is: the subject's score, and the shape of the peers around it."""
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        return _compared(db_session, "Group1")
+
+    def _at(self, client, token, fixture, **params):
+        return _rows(
+            _score_comparison(
+                client,
+                token,
+                fixture["assessment_id"],
+                against=fixture["peer_ids"],
+                **params,
+            )
+        )
+
+    def test_the_row_carries_the_subject_score_and_the_peer_distribution(
+        self, client, regular_token1, db_session, compared
+    ):
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        peer_a, peer_b = compared["peer_ids"]
+        _make_result(db_session, peer_a, "MAT 1:1", score=0.6)
+        _make_result(db_session, peer_b, "MAT 1:1", score=0.8)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["score"] == pytest.approx(0.5)
+        assert row["mean_score"] == pytest.approx(0.7)
+        # Sample standard deviation — Postgres ``stddev`` — not the population one.
+        assert row["stdev_score"] == pytest.approx(0.1414213562)
+        assert row["z_score"] == pytest.approx(-1.4142135624)
+        assert row["baseline_count"] == 2
+
+    def test_the_standard_deviation_is_the_sample_one_not_the_population_one(
+        self, client, regular_token1, db_session, compared
+    ):
+        """``stddev_samp`` over ``{0.6, 0.8}`` is 0.1414; ``stddev_pop`` is 0.1. The
+        difference is invisible on the mean and changes every z-score."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        peer_a, peer_b = compared["peer_ids"]
+        _make_result(db_session, peer_a, "MAT 1:1", score=0.6)
+        _make_result(db_session, peer_b, "MAT 1:1", score=0.8)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["stdev_score"] != pytest.approx(0.1)
+
+    def test_both_peers_contribute_at_one_verse(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The deduplication key spans several assessments here, so it has to carry the
+        assessment id. Keyed on the verse alone, one peer's score would survive and the
+        other's would be discarded — a baseline of one reported as a baseline of two."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        for peer, score in zip(compared["peer_ids"], (0.2, 1.0)):
+            _make_result(db_session, peer, "MAT 1:1", score=score)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["baseline_count"] == 2
+        assert row["mean_score"] == pytest.approx(0.6)
+
+    def test_a_single_contributing_peer_gives_no_stdev_and_no_z_score(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Q2 §8: ``stddev_samp`` is undefined at n = 1, so v3 reaches the same answer
+        through ``calculate_z_score``'s null guard. Stated on the endpoint rather than
+        left for a client to discover."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        _make_result(db_session, compared["peer_ids"][0], "MAT 1:1", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[compared["peer_ids"][0]],
+            )
+        )[0]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+        assert row["stdev_score"] is None
+        assert row["z_score"] is None
+
+    def test_peers_that_agree_exactly_give_a_zero_stdev_and_no_z_score(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The fourth null branch, and the one a naive division would turn into a 500."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        for peer in compared["peer_ids"]:
+            _make_result(db_session, peer, "MAT 1:1", score=0.9)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["stdev_score"] == pytest.approx(0.0)
+        assert row["z_score"] is None
+        assert row["baseline_count"] == 2
+
+    def test_a_peer_with_no_row_at_this_verse_is_absent_rather_than_zero(
+        self, client, regular_token1, db_session, compared
+    ):
+        """A silent peer must not drag the mean toward zero — that would turn "one peer
+        had nothing" into evidence, which it is not."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        _make_result(db_session, compared["peer_ids"][0], "MAT 1:1", score=0.9)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+
+    def test_a_peer_row_without_a_score_does_not_contribute(
+        self, client, regular_token1, db_session, compared
+    ):
+        """``score`` is nullable. SQL's ``avg`` skips a NULL; so does this, and
+        ``baseline_count`` says so rather than counting a row that carried nothing."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        peer_a, peer_b = compared["peer_ids"]
+        _make_result(db_session, peer_a, "MAT 1:1", score=None)
+        _make_result(db_session, peer_b, "MAT 1:1", score=0.9)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+
+    def test_no_contributing_peer_leaves_the_subject_score_and_nulls_the_rest(
+        self, client, regular_token1, db_session, compared
+    ):
+        """``baseline_count: 0`` means uncompared, not that the peers agreed."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["score"] == pytest.approx(0.5)
+        assert row["mean_score"] is None
+        assert row["stdev_score"] is None
+        assert row["z_score"] is None
+        assert row["baseline_count"] == 0
+
+    def test_a_null_subject_score_gives_no_z_score(
+        self, client, regular_token1, db_session, compared
+    ):
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=None)
+        for peer, score in zip(compared["peer_ids"], (0.6, 0.8)):
+            _make_result(db_session, peer, "MAT 1:1", score=score)
+        row = self._at(client, regular_token1, compared)[0]
+        assert row["score"] is None
+        assert row["mean_score"] == pytest.approx(0.7)
+        assert row["z_score"] is None
+
+    def test_a_peers_rows_for_another_verse_do_not_bleed_across(
+        self, client, regular_token1, db_session, compared
+    ):
+        _make_results(db_session, compared["assessment_id"], ["MAT 1:1", "MAT 1:2"])
+        _make_result(db_session, compared["peer_ids"][0], "MAT 1:2", score=0.9)
+        rows = self._at(client, regular_token1, compared)
+        assert [(row["vref"], row["baseline_count"]) for row in rows] == [
+            ("MAT 1:1", 0),
+            ("MAT 1:2", 1),
+        ]
+
+    def test_a_duplicate_peer_row_counts_once_first_write_wins(
+        self, client, regular_token1, db_session, compared
+    ):
+        """#721's retry duplication, handled the way the rest of this module handles it —
+        and note it must not be averaged, or a corrupt retry would move the baseline."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        peer = compared["peer_ids"][0]
+        _make_result(db_session, peer, "MAT 1:1", score=0.9)
+        _make_result(db_session, peer, "MAT 1:1", score=0.1)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+
+    def test_the_subject_half_of_the_row_is_exactly_what_results_returns(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The rows come from ``/results``' own query, so ``id``, ``vref``, ``vrefs`` and
+        ``score`` are the same values rather than a second implementation of them."""
+        _make_results(
+            db_session, compared["assessment_id"], ["MAT 1:2", "MAT 1:1"], score=0.4
+        )
+        mine = self._at(client, regular_token1, compared)
+        theirs = _rows(_results(client, regular_token1, compared["assessment_id"]))
+        assert [
+            {key: row[key] for key in ("id", "assessment_id", "vref", "vrefs", "score")}
+            for row in mine
+        ] == [
+            {key: row[key] for key in ("id", "assessment_id", "vref", "vrefs", "score")}
+            for row in theirs
+        ]
+
+    def test_the_row_carries_no_flag_hide_or_note(
+        self, client, regular_token1, db_session, compared
+    ):
+        """All three are properties of the subject's stored row alone, so ``/results``
+        already answers for them; v3's ``MultipleResult`` does not carry them either."""
+        _make_result(
+            db_session,
+            compared["assessment_id"],
+            "MAT 1:1",
+            score=0.5,
+            flag=True,
+            note="looks wrong",
+        )
+        assert not {"flag", "hide", "note"} & set(
+            self._at(client, regular_token1, compared)[0]
+        )
+
+    def test_revision_id_and_reference_id_are_not_repeated_on_the_row(
+        self, client, regular_token1, db_session, compared
+    ):
+        """v3's ``MultipleResult`` echoes both on every row because that is how its caller
+        named the assessment. The assessment id carries them here."""
+        _make_result(db_session, compared["assessment_id"], "MAT 1:1", score=0.5)
+        assert not {"revision_id", "reference_id"} & set(
+            self._at(client, regular_token1, compared)[0]
+        )
+
+
+class TestScoreComparisonSpans:
+    """The span-agreement rule (Q1 §5 clause 5) — the one genuinely new behaviour here.
+
+    A score is never combined across a merged verse span, so the span boundary decides
+    whether two scores may be compared at all rather than how to fold them together.
+    """
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        return _compared(db_session, "Group1")
+
+    def _span(self, db_session, revision_id, anchor="MAT 9:20", covers=("MAT 9:21",)):
+        texts = {anchor: "the subject text"}
+        texts.update({vref: RANGE for vref in covers})
+        _make_verse_texts(db_session, revision_id, texts)
+
+    def _plain(self, db_session, revision_id, vrefs=("MAT 9:20", "MAT 9:21")):
+        _make_verse_texts(db_session, revision_id, {vref: "plain" for vref in vrefs})
+
+    def test_agreeing_spans_compare_normally(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Both revisions publish ``MAT 9:20-21`` as one span, so both rows measure the
+        same text and the peer contributes."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+
+    def test_a_peer_that_does_not_merge_the_span_is_not_compared(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The subject's row covers two verses and the peer's covers one, so the two
+        numbers are not measurements of the same thing. The subject's own score still
+        comes back; the peer is simply absent."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"])
+        self._plain(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        assert row["score"] == pytest.approx(0.5)
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert row["baseline_count"] == 0
+        assert row["mean_score"] is None
+        assert row["z_score"] is None
+
+    def test_a_peer_merging_a_different_span_is_not_compared(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Not merely "one merges and one does not" — two *different* merges are just as
+        incomparable, and an equality test on the span is what catches both."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"], covers=("MAT 9:21",))
+        self._span(
+            db_session,
+            compared["peers"][0]["revision_id"],
+            covers=("MAT 9:21", "MAT 9:22"),
+        )
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        assert row["baseline_count"] == 0
+
+    def test_an_unmerged_verse_is_compared_on_both_sides(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The common case, pinned so the span test cannot be made to exclude everything:
+        neither revision merges, so the maps agree by both being empty here."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:25", score=0.5)
+        _make_result(db_session, peer, "MAT 9:25", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        assert row["vrefs"] == ["MAT 9:25"]
+        assert row["baseline_count"] == 1
+
+    def test_one_agreeing_peer_and_one_disagreeing_peer(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The interaction the ruling calls out: an excluded peer leaves ``mean_score``,
+        ``stdev_score`` and ``baseline_count`` together, so a two-peer request can produce
+        the single-peer answer — and ``baseline_count`` is how a caller sees it."""
+        peer_a, peer_b = compared["peer_ids"]
+        self._span(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        self._plain(db_session, compared["peers"][1]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer_a, "MAT 9:20", score=0.9)
+        _make_result(db_session, peer_b, "MAT 9:20", score=0.1)
+        row = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        assert row["baseline_count"] == 1
+        assert row["mean_score"] == pytest.approx(0.9)
+        assert row["stdev_score"] is None
+        assert row["z_score"] is None
+
+    def test_the_excluded_peer_would_otherwise_have_changed_the_answer(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The same fixture with the span disagreement removed, so the assertion above is
+        pinned against a passing-for-the-wrong-reason reading of it."""
+        peer_a, peer_b = compared["peer_ids"]
+        self._span(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        self._span(db_session, compared["peers"][1]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer_a, "MAT 9:20", score=0.9)
+        _make_result(db_session, peer_b, "MAT 9:20", score=0.1)
+        row = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )[0]
+        assert row["baseline_count"] == 2
+        assert row["mean_score"] == pytest.approx(0.5)
+        assert row["stdev_score"] is not None
+
+    def test_the_span_test_does_not_apply_under_a_rollup(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Q1 §5 scopes the whole rule to ``aggregate is None``, and there is no per-verse
+        row left under a rollup to refuse. The endpoint says so, because it means a
+        chapter mean can compare across a disagreement the verse level excluded."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"])
+        self._plain(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        verse_row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        chapter_row = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer],
+                aggregate="chapter",
+            )
+        )[0]
+        assert verse_row["baseline_count"] == 0
+        assert chapter_row["baseline_count"] == 1
+
+    def test_vrefs_is_the_comparable_population_not_the_assessed_one(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The caveat the endpoint has to state: a verse can be well assessed on both
+        sides and still uncompared, so coverage cannot be read off this response the way
+        it can off ``/results``."""
+        peer = compared["peer_ids"][0]
+        self._span(db_session, compared["revision_id"])
+        self._plain(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        # Both sides scored the span; ``vrefs`` still lists both verses, and
+        # ``baseline_count`` is the only field that says they were not compared.
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert row["baseline_count"] == 0
+
+    def test_the_span_maps_are_read_per_revision_not_shared(
+        self, client, regular_token1, db_session, compared
+    ):
+        """Both maps, not one — the subject's alone would compare every peer as if it
+        merged identically, which is exactly the misalignment Q1 §4 describes."""
+        peer = compared["peer_ids"][0]
+        self._plain(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer, "MAT 9:20", score=0.9)
+        row = _rows(
+            _score_comparison(
+                client, regular_token1, compared["assessment_id"], against=[peer]
+            )
+        )[0]
+        # The subject merged nothing, so its own ``vrefs`` is one verse; the peer did, so
+        # it is excluded. Reading only the subject's map would have compared them.
+        assert row["vrefs"] == ["MAT 9:20"]
+        assert row["baseline_count"] == 0
+
+
+class TestScoreComparisonOrdering:
+    """Canonical Bible order, inherited from ``/results`` rather than rebuilt."""
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        fixture = _compared(db_session, "Group1", peers=1)
+        _make_results(
+            db_session,
+            fixture["assessment_id"],
+            ["EXO 1:1", "GEN 10:1", "GEN 2:1", "GEN 1:1"],
+        )
+        return fixture
+
+    def _vrefs_of(self, client, token, fixture, **params):
+        return [
+            row["vref"]
+            for row in _rows(
+                _score_comparison(
+                    client,
+                    token,
+                    fixture["assessment_id"],
+                    against=fixture["peer_ids"],
+                    **params,
+                )
+            )
+        ]
+
+    def test_the_whole_order_is_canonical(self, client, regular_token1, compared):
+        """``GEN`` before ``EXO`` is Bible order rather than alphabetical; ``GEN 2:1``
+        before ``GEN 10:1`` is numeric rather than lexical; and neither is the insertion
+        order v3 sorts by."""
+        assert self._vrefs_of(client, regular_token1, compared) == [
+            "GEN 1:1",
+            "GEN 2:1",
+            "GEN 10:1",
+            "EXO 1:1",
+        ]
+
+    def test_canonical_order_holds_across_a_page_boundary(
+        self, client, regular_token1, compared
+    ):
+        first = self._vrefs_of(client, regular_token1, compared, limit=2)
+        second = self._vrefs_of(client, regular_token1, compared, limit=2, offset=2)
+        assert first == ["GEN 1:1", "GEN 2:1"]
+        assert second == ["GEN 10:1", "EXO 1:1"]
+
+    def test_the_order_is_the_one_results_uses(self, client, regular_token1, compared):
+        assert self._vrefs_of(client, regular_token1, compared) == _vrefs(
+            _results(client, regular_token1, compared["assessment_id"])
+        )
+
+    def test_a_peers_own_row_order_does_not_reach_the_page(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The page is the subject's rows; a peer contributes numbers to them and never
+        rows of its own, so a peer with verses the subject lacks changes nothing."""
+        _make_results(
+            db_session, compared["peer_ids"][0], ["REV 1:1", "GEN 1:1"], score=0.9
+        )
+        assert self._vrefs_of(client, regular_token1, compared) == [
+            "GEN 1:1",
+            "GEN 2:1",
+            "GEN 10:1",
+            "EXO 1:1",
+        ]
+
+
+class TestScoreComparisonAggregation:
+    """The rollups: the subject's from ``/results``, the distribution taken over peers."""
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        """A subject over two chapters of ``GEN``, with two peers of unequal coverage.
+
+        Peer A has both verses of ``GEN 1``; peer B has only the first. A rollup that
+        averaged peer *rows* rather than peer *means* would get 0.667 where the two-stage
+        aggregation gets 0.5, so the fixture tells them apart.
+        """
+        fixture = _compared(db_session, "Group1")
+        _make_result(db_session, fixture["assessment_id"], "GEN 1:1", score=0.4)
+        _make_result(db_session, fixture["assessment_id"], "GEN 1:2", score=0.6)
+        _make_result(db_session, fixture["assessment_id"], "GEN 2:1", score=1.0)
+        peer_a, peer_b = fixture["peer_ids"]
+        _make_result(db_session, peer_a, "GEN 1:1", score=1.0)
+        _make_result(db_session, peer_a, "GEN 1:2", score=1.0)
+        _make_result(db_session, peer_b, "GEN 1:1", score=0.0)
+        return fixture
+
+    def _at(self, client, token, fixture, aggregate):
+        return _rows(
+            _score_comparison(
+                client,
+                token,
+                fixture["assessment_id"],
+                against=fixture["peer_ids"],
+                aggregate=aggregate,
+            )
+        )
+
+    def test_each_peer_is_one_observation_however_many_verses_it_has(
+        self, client, regular_token1, compared
+    ):
+        """v3's structure preserved: ``avg`` within a peer, then ``avg``/``stddev``
+        across peers. Flattening the two would weight a peer with a whole book behind it
+        more heavily than one with a chapter, silently."""
+        row = next(
+            row
+            for row in self._at(client, regular_token1, compared, "chapter")
+            if row["chapter"] == 1
+        )
+        assert row["mean_score"] == pytest.approx(0.5)
+        assert row["baseline_count"] == 2
+
+    def test_the_subject_rollup_is_exactly_what_results_returns(
+        self, client, regular_token1, compared
+    ):
+        mine = self._at(client, regular_token1, compared, "chapter")
+        theirs = _rows(
+            _results(
+                client, regular_token1, compared["assessment_id"], aggregate="chapter"
+            )
+        )
+        assert [(row["book"], row["chapter"], row["score"]) for row in mine] == [
+            (row["book"], row["chapter"], row["score"]) for row in theirs
+        ]
+
+    def test_a_chapter_no_peer_covers_is_uncompared(
+        self, client, regular_token1, compared
+    ):
+        row = next(
+            row
+            for row in self._at(client, regular_token1, compared, "chapter")
+            if row["chapter"] == 2
+        )
+        assert row["score"] == pytest.approx(1.0)
+        assert row["baseline_count"] == 0
+        assert row["mean_score"] is None
+        assert row["z_score"] is None
+
+    def test_aggregate_book_summarizes_the_whole_book(
+        self, client, regular_token1, compared
+    ):
+        rows = self._at(client, regular_token1, compared, "book")
+        assert len(rows) == 1
+        assert rows[0]["book"] == "GEN"
+        assert rows[0]["chapter"] is None
+        # The subject: mean of 0.4, 0.6 and 1.0. Peer A: 1.0. Peer B: 0.0.
+        assert rows[0]["score"] == pytest.approx(2.0 / 3)
+        assert rows[0]["mean_score"] == pytest.approx(0.5)
+        assert rows[0]["baseline_count"] == 2
+
+    def test_aggregate_text_is_one_row_with_no_location(
+        self, client, regular_token1, compared
+    ):
+        rows = self._at(client, regular_token1, compared, "text")
+        assert len(rows) == 1
+        assert rows[0]["book"] is None and rows[0]["chapter"] is None
+        assert rows[0]["baseline_count"] == 2
+
+    def test_an_aggregate_row_has_no_id_vref_or_vrefs(
+        self, client, regular_token1, compared
+    ):
+        """A rolled-up row is not a stored row, and the range merge is verse-level only,
+        so all three are *absent* rather than null."""
+        row = self._at(client, regular_token1, compared, "book")[0]
+        assert not {"id", "vref", "vrefs"} & set(row)
+        assert set(row) == {
+            "assessment_id",
+            "book",
+            "chapter",
+            "score",
+            "mean_score",
+            "stdev_score",
+            "z_score",
+            "baseline_count",
+        }
+
+    def test_a_z_score_here_is_against_a_real_distribution_of_assessments(
+        self, client, regular_token1, compared
+    ):
+        """Worth pinning because ``/text-lengths``' rolled-up z-scores are means of
+        per-verse z-scores, which is a different and weaker claim. This one standardizes
+        the scope against its peers' same scope."""
+        row = next(
+            row
+            for row in self._at(client, regular_token1, compared, "chapter")
+            if row["chapter"] == 1
+        )
+        assert row["stdev_score"] == pytest.approx(0.7071067812)
+        assert row["z_score"] == pytest.approx((0.5 - 0.5) / 0.7071067812)
+
+    def test_the_scope_rules_are_the_ones_results_uses(
+        self, client, regular_token1, compared
+    ):
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=compared["peer_ids"],
+            aggregate="book",
+            chapter=1,
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_a_scope_filter_narrows_both_sides(self, client, regular_token1, compared):
+        """The peers are rolled up over the *scoped* population, so a book filter cannot
+        leave a peer averaging verses the subject's own rollup excluded."""
+        rows = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=compared["peer_ids"],
+                aggregate="chapter",
+                book="GEN",
+                chapter=1,
+            )
+        )
+        assert len(rows) == 1
+        assert rows[0]["mean_score"] == pytest.approx(0.5)
+
+
+class TestScoreComparisonPage:
+    """The envelope: ``/results``' bounds, plus the field that names the peers."""
+
+    @pytest.fixture
+    def compared(self, db_session, group1_version):
+        fixture = _compared(db_session, "Group1", peers=1)
+        _make_results(
+            db_session, fixture["assessment_id"], [f"GEN 1:{n}" for n in range(1, 6)]
+        )
+        return fixture
+
+    def _page(self, client, token, fixture, **params):
+        resp = _score_comparison(
+            client,
+            token,
+            fixture["assessment_id"],
+            against=fixture["peer_ids"],
+            **params,
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def test_the_envelope_echoes_the_pagination_and_the_peers(
+        self, client, regular_token1, compared
+    ):
+        body = self._page(client, regular_token1, compared, limit=2, offset=1)
+        assert body["limit"] == 2
+        assert body["offset"] == 1
+        assert body["total"] == 5
+        assert len(body["items"]) == 2
+        assert body["against_assessment_ids"] == compared["peer_ids"]
+
+    def test_the_peers_are_named_on_every_page_including_an_empty_one(
+        self, client, regular_token1, compared
+    ):
+        body = self._page(client, regular_token1, compared, offset=99)
+        assert body["items"] == []
+        assert body["against_assessment_ids"] == compared["peer_ids"]
+
+    def test_the_default_and_maximum_limits_are_the_result_reads(
+        self, client, regular_token1, compared
+    ):
+        assert self._page(client, regular_token1, compared)["limit"] == (
+            RESULT_DEFAULT_LIMIT
+        )
+        assert (
+            self._page(client, regular_token1, compared, limit=RESULT_MAX_LIMIT)[
+                "limit"
+            ]
+            == RESULT_MAX_LIMIT
+        )
+
+    def test_a_limit_above_the_maximum_is_rejected_not_clamped(
+        self, client, regular_token1, compared
+    ):
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=compared["peer_ids"],
+            limit=RESULT_MAX_LIMIT + 1,
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_there_is_no_delta_watermark(self, client, regular_token1, compared):
+        """``assessment_result`` carries no modification timestamp, so the key is present
+        and null rather than absent — adding delta support later is then not a
+        response-shape change."""
+        body = self._page(client, regular_token1, compared)
+        assert "next_updated_since" in body
+        assert body["next_updated_since"] is None
+
+
+class TestScoreComparisonContract:
+    """Pinned at the route and the models, so OpenAPI cannot drift by accident."""
+
+    VERSE_FIELDS = {
+        "id",
+        "assessment_id",
+        "vref",
+        "vrefs",
+        "score",
+        "mean_score",
+        "stdev_score",
+        "z_score",
+        "baseline_count",
+    }
+    AGGREGATE_FIELDS = {
+        "assessment_id",
+        "book",
+        "chapter",
+        "score",
+        "mean_score",
+        "stdev_score",
+        "z_score",
+        "baseline_count",
+    }
+
+    def test_each_row_type_has_exactly_its_own_fields(self):
+        assert set(ScoreComparisonOut.model_fields) == self.VERSE_FIELDS
+        assert set(ScoreComparisonAggregateOut.model_fields) == self.AGGREGATE_FIELDS
+
+    def test_the_four_comparison_fields_are_on_both_shapes(self):
+        added = {"mean_score", "stdev_score", "z_score", "baseline_count"}
+        assert added <= set(ScoreComparisonOut.model_fields)
+        assert added <= set(ScoreComparisonAggregateOut.model_fields)
+
+    def test_the_verse_row_is_the_results_row_plus_those_four(self):
+        """Stated as an equation so the two cannot drift: the comparison row is
+        ``/results``' row, minus the three single-assessment fields, plus the four the
+        comparison adds."""
+        assert set(ScoreComparisonOut.model_fields) == (
+            set(AssessmentResultOut.model_fields) - {"flag", "hide", "note"}
+            | {"mean_score", "stdev_score", "z_score", "baseline_count"}
+        )
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        """Pinned so the read cannot pick up ``use_eflomal``, v3's ``page``/``page_size``,
+        or ``revision_id``/``reference_id``/``baseline_ids`` by accident. Each of those is
+        unreachable *by construction* once the subject is an explicit assessment id."""
+        route = _route("get_assessment_score_comparison")
+        declared = {param.name for param in route.dependant.query_params}
+        for dependency in route.dependant.dependencies:
+            declared |= {param.name for param in dependency.query_params}
+        assert declared == {
+            "against",
+            "book",
+            "chapter",
+            "verse",
+            "aggregate",
+            "limit",
+            "offset",
+        }
+
+    def test_against_is_a_required_parameter(self):
+        """Both halves matter: required at all, and ``min_length=1`` so ``?against=`` with
+        an empty list cannot slip through as a peerless comparison."""
+        route = _route("get_assessment_score_comparison")
+        against = next(
+            param for param in route.dependant.query_params if param.name == "against"
+        )
+        assert against.required is True
+        assert _against_bounds("get_assessment_score_comparison")["min_length"] == 1
+
+    def test_the_route_uses_the_result_pagination_dependency(self):
+        route = _route("get_assessment_score_comparison")
+        assert any(
+            dependency.call is ResultPaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
+        route = _route("get_assessment_score_comparison")
+        assert any(
+            dependency.call is ResultScopeParams
+            for dependency in route.dependant.dependencies
+        )
+
+    def test_the_response_model_is_the_subclassed_page(self):
+        assert _route("get_assessment_score_comparison").response_model is (
+            ScoreComparisonPage
+        )
+
+    def test_the_page_subclasses_the_shared_envelope_without_changing_it(self):
+        """The constraint the envelope decision turned on: ``against_assessment_ids``
+        means nothing on the other v4 lists, so it must not land on ``V4Page`` itself.
+        """
+        assert issubclass(ScoreComparisonPage, V4Page)
+        assert "against_assessment_ids" not in V4Page.model_fields
+        assert set(ScoreComparisonPage.model_fields) == set(V4Page.model_fields) | {
+            "against_assessment_ids"
+        }
+
+    def test_the_page_cannot_be_built_without_naming_its_peers(self):
+        """A default would let a page that forgot the peers serialize as one compared
+        against nobody, which is the reason ``create`` is overridden rather than
+        inherited."""
+        with pytest.raises(ValidationError):
+            ScoreComparisonPage(items=[], total=0, limit=1, offset=0)
+
+    def test_create_echoes_the_pagination_it_was_given(self):
+        page = ScoreComparisonPage.create(
+            items=[],
+            total=7,
+            pagination=ResultPaginationParams(limit=5, offset=2),
+            against_assessment_ids=[3, 4],
+        )
+        assert (page.limit, page.offset, page.total) == (5, 2, 7)
+        assert page.against_assessment_ids == [3, 4]
+        assert page.next_updated_since is None
+
+    def test_a_verse_row_is_not_coerced_into_the_aggregate_shape(self):
+        """The union's members overlap on six fields, so a page validated against the
+        aggregate member first would silently drop ``id``, ``vref`` and ``vrefs``."""
+        page = ScoreComparisonPage.model_validate(
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "assessment_id": 2,
+                        "vref": "MAT 9:20",
+                        "vrefs": ["MAT 9:20", "MAT 9:21"],
+                        "score": 0.5,
+                        "mean_score": 0.7,
+                        "stdev_score": 0.1,
+                        "z_score": -2.0,
+                        "baseline_count": 3,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+                "against_assessment_ids": [9],
+            }
+        )
+        assert isinstance(page.items[0], ScoreComparisonOut)
+        assert page.items[0].vrefs == ["MAT 9:20", "MAT 9:21"]
+
+    def test_an_aggregate_row_resolves_to_the_aggregate_member(self):
+        page = ScoreComparisonPage.model_validate(
+            {
+                "items": [
+                    {
+                        "assessment_id": 2,
+                        "book": "MAT",
+                        "chapter": 9,
+                        "score": 0.5,
+                        "mean_score": 0.7,
+                        "stdev_score": 0.1,
+                        "z_score": -2.0,
+                        "baseline_count": 3,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+                "against_assessment_ids": [9],
+            }
+        )
+        assert isinstance(page.items[0], ScoreComparisonAggregateOut)
+
+    def test_both_union_members_serialize_as_their_own_shape_over_http(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id, peer_id = _compared_pair(db_session, "Group1")
+        verse_row = _rows(
+            _score_comparison(client, regular_token1, assessment_id, against=[peer_id])
+        )[0]
+        assert set(verse_row) == self.VERSE_FIELDS
+        aggregate_row = _rows(
+            _score_comparison(
+                client,
+                regular_token1,
+                assessment_id,
+                against=[peer_id],
+                aggregate="book",
+            )
+        )[0]
+        assert set(aggregate_row) == self.AGGREGATE_FIELDS
+
+    def test_the_union_holds_exactly_the_two_members(self):
+        assert set(get_args(ScoreComparisonRow)) == {
+            ScoreComparisonOut,
+            ScoreComparisonAggregateOut,
+        }
+
+    def test_the_read_is_gated_on_the_three_result_types(self):
+        assert set(assessment_service.RESULT_ASSESSMENT_TYPES) == set(SERVED_TYPES)
+
+    def test_the_peer_helper_is_shared_with_missing_words(self):
+        """One helper for both reads, so the four peer guarantees cannot drift apart. The
+        only thing that varies is the ``types`` filter."""
+        assert callable(assessment_service._baseline_peers)
+        assert not hasattr(assessment_service, "_missing_words_peers")
