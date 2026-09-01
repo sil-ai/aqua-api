@@ -300,8 +300,9 @@ sample standard deviation, undefined at n = 1, so a single peer yields no z-scor
 reaches the same answer and documents none of it, which leaves a client to discover that
 naming one baseline produces a column of nulls.
 
-:class:`ScoreComparisonPage` is the only model here that is not a plain body or row: it
-subclasses :class:`~api_v4.pagination.V4Page` to add ``against_assessment_ids``, because
+:class:`ScoreComparisonPage` is the only model in this module that extends the shared page
+envelope: it subclasses :class:`~api_v4.pagination.V4Page` to add
+``against_assessment_ids``, because
 the path names the subject and something has to name the peers. The subclass rather than a
 standalone model, and the shared envelope left untouched, are argued on the class itself.
 """
