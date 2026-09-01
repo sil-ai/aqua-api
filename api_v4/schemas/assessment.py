@@ -284,12 +284,16 @@ all properties of the subject's stored row alone, which ``/results`` already ser
 
 Two things a reader should take from these models rather than discover:
 
-**``vrefs`` is narrower here than anywhere else it appears.** On ``/results`` and
-``/text-lengths`` the union of ``vrefs`` across a set is the *assessed* (or measured)
-population. On a comparison it is the *comparable* population, which is smaller, because a
-peer whose revision merges a verse differently cannot be compared at that verse at all. The
-field name and type are identical, so nothing errors when the two are confused — which is
-why the difference is stated on the field.
+**What a union of ``vrefs`` tells you is narrower here.** The field itself means the
+same on all six row models that carry one — :class:`AssessmentResultOut`,
+:class:`TextLengthsOut`, :class:`AlignmentScoreOut`, :class:`MissingWordOut`,
+:class:`ScoreComparisonOut` and the verses read's ``VerseOut``: the verses this row covers,
+read off its revision's span map. What differs is what the *union* across a result set
+means. On ``/results`` and ``/text-lengths``, where a row is a verse and every scored verse
+has one, that union is the *assessed* (or measured) population. Here it is not: a verse can
+be scored on both sides and still uncompared, because the two revisions merge it
+differently. The name and type are identical, so nothing errors when the two readings are
+confused — which is why the difference is stated on the field as well as here.
 
 **``z_score`` null at one baseline is arithmetic, not a gap.** ``stdev_score`` is the
 sample standard deviation, undefined at n = 1, so a single peer yields no z-score. v3

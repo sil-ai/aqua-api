@@ -2834,8 +2834,9 @@ async def get_text_lengths(
 def _comparison_group_names(aggregate: ResultAggregate | None) -> tuple[str, ...]:
     """The location columns one comparison row is keyed on, at the request's level.
 
-    The single place the four levels' grain is written down. It decides three things at
-    once and they must not be allowed to disagree: which columns the peers are grouped by
+    The single place *this read's* four levels are written down — ``/results`` and
+    ``/text-lengths`` each encode their own in their own rollup query. It decides three
+    things at once here and they must not be allowed to disagree: which columns the peers are grouped by
     in SQL, which columns the page's rows are keyed on in Python, and — at
     ``aggregate is None``, where the tuple is also the span map's key — which peers are
     comparable at all. Reading the same names out of the subject row and out of the peer

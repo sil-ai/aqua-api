@@ -8597,7 +8597,8 @@ class TestScoreComparisonPeers:
     def test_the_peer_bound_is_the_one_missing_words_uses(self):
         """One constant, because ``against`` means the same thing on both reads. Read off
         the declared parameter rather than off the module constant, so re-declaring the
-        bound on one route would fail here rather than pass by importing the same name."""
+        bound on one route would fail here rather than pass by importing the same name.
+        """
         for name in ("get_assessment_missing_words", "get_assessment_score_comparison"):
             assert _against_bounds(name)["max_length"] == MAX_AGAINST_ASSESSMENTS
 
@@ -8627,6 +8628,41 @@ class TestScoreComparisonPeers:
         ]
         # The subject's count, the subject's page, and one lookup for both peers.
         assert len(selects) == 3
+
+    def test_the_peer_query_carries_this_pages_groups_and_no_others(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The bound stated exactly, because no response body can show it: extra groups in
+        the peer statement would simply go unused, so a behavioural test passes either
+        way. v3 aggregates its baselines over the whole unpaginated result set.
+
+        Verse numbers are chosen to be unmistakable in the parameter list — a page holding
+        only ``GEN 3:17`` must not carry 5, 7, 9 or 11."""
+        _make_results(
+            db_session,
+            compared["assessment_id"],
+            ["GEN 3:17", "GEN 5:7", "GEN 9:11"],
+        )
+        peer = compared["peer_ids"][0]
+        _make_result(db_session, peer, "GEN 3:17", score=0.9)
+        with _captured_sql() as captured:
+            resp = _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer],
+                limit=1,
+            )
+        assert [row["vref"] for row in _rows(resp)] == ["GEN 3:17"]
+        grouped = [
+            (statement, parameters)
+            for statement, parameters in _touching(captured, "assessment_result")
+            if "GROUP BY" in statement
+        ]
+        # The peer lookup is the only grouped statement: the subject's two ride
+        # ``DISTINCT ON`` instead.
+        assert len(grouped) == 1
+        assert list(grouped[0][1]) == [peer, "GEN", 3, 17]
 
     def test_an_empty_page_skips_the_peer_query_entirely(
         self, client, regular_token1, db_session, group1_version
@@ -9057,6 +9093,41 @@ class TestScoreComparisonSpans:
         # ``baseline_count`` is the only field that says they were not compared.
         assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
         assert row["baseline_count"] == 0
+
+    def test_a_peer_with_nothing_on_this_page_costs_no_span_map(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The maps are loaded *after* the peer scores, for the peers that actually
+        reached the page. A peer that scored nothing here can never be span-tested, so
+        fetching its map would leave this part of the read bounded by ``against`` rather
+        than by the page — and the response body is identical either way, so this reads
+        the calls."""
+        peer_a, peer_b = compared["peer_ids"]
+        self._span(db_session, compared["revision_id"])
+        self._span(db_session, compared["peers"][0]["revision_id"])
+        _make_result(db_session, compared["assessment_id"], "MAT 9:20", score=0.5)
+        _make_result(db_session, peer_a, "MAT 9:20", score=0.9)
+        asked = []
+        real = verse_range_service.continuations_for_revision
+
+        async def _record(db, revision_id):
+            asked.append(revision_id)
+            return await real(db, revision_id)
+
+        with patch.object(verse_range_service, "continuations_for_revision", _record):
+            resp = _score_comparison(
+                client,
+                regular_token1,
+                compared["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        assert _rows(resp)[0]["baseline_count"] == 1
+        # The subject's map is unconditional — it supplies ``vrefs``. Peer B contributed
+        # nothing, so its revision is never asked for.
+        assert asked == [
+            compared["revision_id"],
+            compared["peers"][0]["revision_id"],
+        ]
 
     def test_the_span_maps_are_read_per_revision_not_shared(
         self, client, regular_token1, db_session, compared

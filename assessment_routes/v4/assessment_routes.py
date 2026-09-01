@@ -26,7 +26,7 @@ happens somewhere else. Eleven endpoints:
   ``aggregate`` rollups as ``/results``.
 * ``GET    /v4/assessments/{id}/score-comparison`` — the same rows as ``/results``, with
   each score placed against a distribution built from the peer assessments named by
-  ``against``. The only read whose envelope is not a bare ``V4Page``.
+  ``against``. The only paginated read here that does not return a bare ``V4Page``.
 
 The one remaining typed result sub-resource (the ``POST`` form of ``/similar-verses``) is
 the rest of #893 and lands in a follow-up PR.
@@ -136,9 +136,10 @@ were closed — by leaving no place for a check to be forgotten rather than by a
 As with those, a property of the design and **not** an argument about scheduling: the v3
 exposure lasts until v3 is retired regardless.
 
-**``/score-comparison`` is the one read here whose response envelope is not a plain
-``V4Page``.** Q2 §4 requires both sides of a comparison to be named, and the path names
-only the subject, so :class:`~api_v4.schemas.assessment.ScoreComparisonPage` subclasses
+**``/score-comparison`` is the only *paginated* read here that does not return a plain
+``V4Page``** — ``/similar-verses`` departs too, but by not being a page at all. Q2 §4
+requires both sides of a comparison to be named, and the path names only the subject, so
+:class:`~api_v4.schemas.assessment.ScoreComparisonPage` subclasses
 the shared envelope to add ``against_assessment_ids``. The shared envelope itself is
 untouched — a peer-ids field means nothing on the eleven other lists that use it — and
 the subclass rather than a standalone model is argued on that class.
