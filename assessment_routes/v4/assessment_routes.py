@@ -130,11 +130,15 @@ caller's groups yields an empty page. That differs on purpose from
 ``GET /v4/revisions``, whose ``version_id`` names the collection's parent and is
 therefore validated; see :func:`assessment_service.list_assessments`.
 
-**``/text-lengths`` is the read whose table is not denormalized, and that is invisible
-from outside.** Every other result read in this family filters and sorts on stored
-``book``/``chapter``/``verse`` columns; ``text_lengths_table`` has none, so this read
-reaches ``verse_reference`` → ``chapter_reference`` → ``book_reference`` for the canonical
-order, for the scope filters, and for the key the ``<range>`` span map is keyed on. The
+**``/text-lengths`` is the only read that needs a location triple its table does not
+store, and that is invisible from outside.** Precisely: three of the reads here filter and
+sort on stored ``book``/``chapter``/``verse`` columns (``/results`` and the two alignment
+reads, whose tables carry them); ``/ngrams`` and ``/similar-verses`` read vref-only tables
+but never need the triple, because one is not verse-keyed and the other ranks by
+similarity with no scope filters. This read is the intersection — it needs the triple and
+``text_lengths_table`` has none of it — so it reaches ``verse_reference`` →
+``chapter_reference`` → ``book_reference`` for the canonical order, for the scope filters,
+and for the key the ``<range>`` span map is keyed on. The
 wire shape is deliberately unchanged by that — it is the ``/results`` shape with four
 measures in place of one score — because a client should not be able to tell which of its
 result reads happens to have a denormalized table behind it. What it *does* have to know is

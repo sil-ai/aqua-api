@@ -8139,6 +8139,40 @@ class TestTextLengthsContract:
             assessment_service.RESULT_ASSESSMENT_TYPES
         )
 
+    def test_this_is_the_only_read_that_needs_a_triple_its_table_lacks(self):
+        """The premise of the whole three-table join, pinned so the docstrings cannot drift.
+
+        Written because an earlier draft of those docstrings claimed
+        ``text_lengths_table`` was the *only* vref-only result table. It is not:
+        ``tfidf_pca_vector`` and ``ngram_vref_table`` store only ``vref`` too. What is
+        actually unique is the combination — this is the only read that needs
+        ``book``/``chapter``/``verse`` (for canonical order, the scope filters and the span
+        map) whose table does not store them. ``/ngrams`` is not verse-keyed and
+        ``/similar-verses`` ranks by similarity with no scope filters, so neither ever
+        asks.
+
+        Asserting the column sets rather than restating the sentence, so that
+        denormalizing any of these tables makes this fail and the reader is sent to
+        re-read the reasoning.
+        """
+        triple = {"book", "chapter", "verse"}
+
+        def columns(model):
+            return {column.name for column in model.__table__.columns}
+
+        # The comparable reads: location stored, no reference-table join needed.
+        for model in (
+            AssessmentResult,
+            AlignmentTopSourceScores,
+            AlignmentThresholdScores,
+        ):
+            assert triple <= columns(model), model.__tablename__
+
+        # vref-only. Only the first of these has a read that needs the triple.
+        for model in (TextLengthsTable, TfidfPcaVector, NgramVrefTable):
+            assert "vref" in columns(model), model.__tablename__
+            assert not triple & columns(model), model.__tablename__
+
     def test_the_v3_endpoint_is_untouched(self):
         """v3 is frozen: this read is an addition to the v4 surface, not a replacement of
         anything on v3, so a client still on v3 is unaffected."""

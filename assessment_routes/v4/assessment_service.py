@@ -326,9 +326,12 @@ the same verse-level/aggregate split, the same ``vref``/``vrefs`` labelling, the
 new about it is one fact about the table.
 
 * **``text_lengths_table`` stores only ``vref``.** No ``book``, no ``chapter``, no
-  ``verse`` — unlike ``assessment_result`` and both alignment tables, which are
-  denormalized and which every other read in this family leans on. So the helpers this
-  read would otherwise copy do not port: there is nothing stored to filter on, to sort by,
+  ``verse`` — unlike ``assessment_result`` and the two alignment tables, which are
+  denormalized. It is *not* the only vref-only table here: ``tfidf_pca_vector`` and
+  ``ngram_vref_table`` are too. What is unique is the **combination** — this is the only
+  read that needs the triple and whose table lacks it, because ``/ngrams`` is not
+  verse-keyed and ``/similar-verses`` ranks by similarity with no scope filters, so
+  neither ever asks for it. So the helpers this read would otherwise copy do not port: there is nothing stored to filter on, to sort by,
   or to key the span map with. :func:`_placed_text_lengths` replaces all three of
   :func:`_placeable_results`, :func:`_deduplicated_results` and
   :func:`_verse_level_results`' outer ``BookReference`` join with a single subquery that
@@ -2470,9 +2473,10 @@ def _placed_text_lengths(assessment_id: int, scope: ResultScope):
 
     This is :func:`_deduplicated_results` fused with the ``BookReference`` join that
     :func:`_verse_level_results` makes *outside* its own dedup subquery, and the fusion
-    follows from the one way this table differs from every other result table in the
-    family:
-    **``text_lengths_table`` stores only ``vref``.** There is no ``book``, no ``chapter``
+    follows from the one way this table differs from the tables the *comparable* reads use
+    — ``assessment_result`` and the two alignment tables, which are denormalized:
+    **``text_lengths_table`` stores only ``vref``.** (``tfidf_pca_vector`` and
+    ``ngram_vref_table`` are vref-only as well; their reads simply never need the triple.) There is no ``book``, no ``chapter``
     and no ``verse`` column to filter on, order by, or key the span map with, so the three
     reference tables have to supply all of it::
 
