@@ -9,7 +9,7 @@ owns that. ``bible_routes/v3/verse_routes.py`` is the behavioral spec and stays 
 and untouched.
 
 Authorization is **not defined here at all**, and that is the point. Every one of the
-three reads begins with :func:`revision_service.get_revision`, the same predicate the
+four reads begins with :func:`revision_service.get_revision`, the same predicate the
 Revisions and Assessments slices already share: a revision is visible when its parent
 version is visible to the caller through a group and neither the revision nor its
 version is soft-deleted. So an unreachable revision, a soft-deleted one, a revision
@@ -17,7 +17,21 @@ under a soft-deleted version and a revision id that never existed all report the
 ``RevisionNotFound`` — never a 403, which would confirm the id exists. v3 gave this
 family six independent copies of an ``is_user_authorized_for_revision`` check returning
 403; per-endpoint authorization is where most of this family's security issues came
-from, so there is one call site per read and no local predicate.
+from, so there is one call site per read and no local predicate. The text search calls it
+**twice** — once for the path revision and once for ``comparison_revision_id`` — which is
+the only read here with two authorization surfaces, and still no new predicate.
+
+The fourth read, and why it is here
+-----------------------------------
+
+``GET /v4/revisions/{id}/text-search`` replaces v3's ``GET /textsearch``, whose source
+lives in ``assessment_routes/v3/search_routes.py`` rather than in the verse routes. It is
+in this module anyway, because what a thing *is* beats where it came from: the path names
+a revision, the rows are that revision's verses, the primary authorization is the same
+``get_revision`` its three siblings start with, and the output is ``VerseOut``'s three
+fields plus two. The alignment join is the exception, not the home — one revision
+sub-resource reading one assessment, accepted in T5 as the price of the annotation the
+endpoint exists for.
 
 Consolidating five v3 endpoints into one, and the fork that creates
 ------------------------------------------------------------------
@@ -108,23 +122,30 @@ revision id is fresh from a sequence every time. There is no retry path, no upse
 """
 
 import pathlib
+import re
+import unicodedata
+from decimal import Decimal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import Text, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.expression import literal_column
 
-from api_v4.schemas.bible import IncludeVerses, VerseScope
+from api_v4.schemas.bible import IncludeVerses, TextSearchQuery, VerseScope
 from bible_routes.v4 import revision_service
 from bible_routes.v4.verse_range_service import (
     VERSE_RANGE_MARKER,
     continuations_for_revision,
 )
 from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
     BookReference,
     ChapterReference,
     UserDB,
     VerseReference,
     VerseText,
 )
+from schemas.assessment import AssessmentType
 
 #: The canonical vref skeleton, one entry per line of ``fixtures/vref.txt``, read once at
 #: import. Used only by :func:`export_text`, whose contract *is* this file: line N of the
@@ -165,6 +186,32 @@ def _has_readable_text():
         VerseText.text.is_not(None),
         VerseText.text != VERSE_RANGE_MARKER,
     )
+
+
+def covered_vrefs(
+    vref: str, continuations: dict[tuple[str, int, int], list[str]]
+) -> list[str]:
+    """Every verse the row stored at ``vref`` covers, in canonical order, ``vref`` first.
+
+    One definition of the ``vref`` -> ``vrefs`` expansion, shared by the two reads that
+    need it: the verses read (through ``verse_routes._to_verse_out``) and the text search
+    (through :func:`search_text`). Both were doing this inline and identically, which put
+    the span map's **key convention** in two places — if the key shape or the vref format
+    ever changed, one site would be updated and the other would silently return
+    single-verse ``vrefs`` for merged spans.
+
+    The span map is keyed by the anchor's ``(book, chapter, verse)`` triple, the shape the
+    result tables carry, so the vref is split back into its parts to look it up. Parsing is
+    total over the values it is given: they come from ``verse_reference.full_verse_id``,
+    whose rows are ``fixtures/vref.txt``.
+
+    A verse that absorbed nothing has no entry, so the common case is a one-element list
+    built from a single failed dict lookup. ``{}`` — the ``include_verses=all`` case — makes
+    every row single-verse without a branch at the call site.
+    """
+    book, chapter_verse = vref.split(" ", 1)
+    chapter, verse = chapter_verse.split(":", 1)
+    return [vref, *continuations.get((book, int(chapter), int(verse)), ())]
 
 
 def _scoped_verses_query(revision_id: int, scope: VerseScope):
@@ -379,3 +426,650 @@ async def list_chapters(
     for book, chapter, _ in rows:
         chapters.setdefault(book, []).append(chapter)
     return chapters
+
+
+# ---------------------------------------------------------------------------
+# Text search
+# ---------------------------------------------------------------------------
+
+#: The most literal pieces a wildcarded term may be split into — four internal ``*``s.
+#: v3's ``MAX_PIECES``, and it exists for the same reason: each ``*`` becomes a ``\w*``
+#: gap, and ``*a*a*a*a*a*`` in a 200-character term builds a pattern whose backtracking
+#: is exponential in the piece count. The cap is far above any real query. v3 guards a
+#: Python :mod:`re` match this way; the hazard is unchanged by moving the match into
+#: Postgres, whose regex engine also backtracks.
+MAX_TERM_PIECES = 5
+
+#: Unicode general categories that carry no visible glyph, so a term made only of these
+#: is empty in the sense the caller means. v3's set, unchanged: format characters
+#: (zero-width space, BOM, soft hyphen), control characters, surrogates, and line and
+#: paragraph separators.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Cc", "Cs", "Zl", "Zp"})
+
+#: Every character Postgres treats as special in an Advanced Regular Expression, so a
+#: literal piece of the caller's term can be matched as itself. Deliberately **not**
+#: :func:`re.escape`: that escapes for Python's dialect, which is not this one — it leaves
+#: ``&``, ``~``, ``#`` and whitespace escaped as ``\&``, ``\~``, ``\#``, ``\ ``, which
+#: Postgres happens to accept as literals today but is not documented to. The ARE
+#: metacharacter set is small, closed and in the manual, so escaping exactly it says what
+#: is meant. ``-`` is absent because it is only special inside a bracket expression, and no
+#: piece is ever placed in one.
+_ARE_METACHARACTERS = frozenset(r"\^$.[]|()*+?{}")
+
+
+class InvalidSearchTerm(revision_service.RevisionServiceError):
+    """The ``term``'s wildcard syntax cannot be turned into a pattern.
+
+    Two causes, both client input and both therefore a stable 422 rather than a 500: more
+    internal ``*``s than :data:`MAX_TERM_PIECES` allows, or a term with no visible
+    character to match. ``details`` carries machine-readable context, per #828's rule that
+    prose lives in ``message``.
+
+    Not a Pydantic validator on :class:`~api_v4.schemas.bible.TextSearchQuery`, where the
+    endpoint's other input invariants live: the checks fall out of the same parse that
+    builds the pattern, and that parse belongs with the query builder rather than with the
+    wire schema. Putting them in the model would mean two implementations of the wildcard
+    grammar on either side of a layer boundary, which is the drift most worth avoiding
+    here — the grammar *is* the endpoint's behaviour.
+    """
+
+    def __init__(self, message: str, details: dict | None = None) -> None:
+        self.details = details or {}
+        super().__init__(message)
+
+
+class AlignmentAssessmentNotForPair(revision_service.RevisionServiceError):
+    """An explicit ``alignment_assessment_id`` that cannot annotate this revision pair.
+
+    Covers every way the named assessment fails to fit, with one signal, because the
+    caller's remedy is the same for all of them: it is not a ``word-alignment``
+    assessment, it has not finished, it is soft-deleted, or its
+    ``(revision_id, reference_id)`` is not
+    ``(revision_id, comparison_revision_id)``. v3 returns ``None`` from its resolver here
+    and silently omits the ``alignments`` field, so a caller who mistyped an id gets a
+    plausible-looking response with no annotation and no explanation (T9).
+
+    Naming the id back discloses nothing the caller does not already have: they sent it,
+    and an assessment's visibility in v4 *is* visibility of its two revisions
+    (``is_user_authorized_for_assessment``), both of which this read has already
+    authorized before it gets here. So the answer is the same whether the id names an
+    assessment on someone else's revisions, an assessment of the wrong type, or nothing at
+    all — see :func:`_resolve_alignment_assessment_id`.
+    """
+
+    def __init__(
+        self,
+        alignment_assessment_id: int,
+        revision_id: int,
+        comparison_revision_id: int,
+    ) -> None:
+        self.alignment_assessment_id = alignment_assessment_id
+        self.revision_id = revision_id
+        self.comparison_revision_id = comparison_revision_id
+        super().__init__(
+            f"Assessment {alignment_assessment_id} is not a finished word-alignment "
+            f"assessment for revisions ({revision_id}, {comparison_revision_id})."
+        )
+
+
+def _nfc(column):
+    """``normalize(column, NFC)`` — the expression the trigram index is built on.
+
+    Canonical composition only. NFKC is deliberately avoided, for the reason v3's
+    ``_nfc_sql`` records: it would fold ligatures and compatibility forms into their
+    canonical counterparts, so ``ﬁ`` would match ``fi`` and a fullwidth digit would match
+    an ASCII one. Those are different characters in a Bible text, not spellings of one
+    character.
+
+    Written out here rather than imported from ``assessment_routes.v3.search_routes``,
+    which holds the identical two-line helper: that module is frozen v3 code, and a v4
+    query should not be able to change underneath by an edit there.
+
+    **The exact spelling matters.** ``ix_verse_text_nfc_trgm`` (migration
+    ``7f2e9a4b8c31``) is an index on the expression ``NORMALIZE(text, NFC)``, and Postgres
+    can only use an expression index for a predicate that matches the expression. A
+    predicate written any other way — normalizing the pattern instead, or using a
+    different form — is correct and unindexed.
+    """
+    return func.normalize(column, literal_column("NFC"), type_=Text)
+
+
+def search_pattern(term: str) -> str:
+    """Translate a search term's wildcard syntax into a Postgres ARE pattern.
+
+    This is the endpoint's whole behaviour, and it is v3's grammar unchanged — carried over
+    rule for rule from ``search_revision_text``'s docstring, which is the authority:
+
+    * ``foo``     — whole-word match (the default)
+    * ``foo*``    — words starting with ``foo``
+    * ``*foo``    — words ending with ``foo``
+    * ``*foo*``   — ``foo`` anywhere inside a word
+    * ``fo*ar``   — a word starting with ``fo`` and ending with ``ar``
+    * ``*fo*ar*`` — ``fo`` followed, later in the *same word*, by ``ar``
+
+    Every ``*`` matches within a single word: it becomes ``\\w*``, never ``.*``, so an
+    internal wildcard cannot cross a space. A leading ``*`` drops the left word boundary
+    and a trailing ``*`` drops the right one; with neither, both boundaries are asserted,
+    which is what makes ``grace`` miss "disgraceful". Runs of ``*`` collapse first, so
+    ``foo**bar`` and ``foo*bar`` are the same query and the piece cap counts *effective*
+    wildcards.
+
+    **The translation from v3's Python pattern is mechanical, and the two dialects agree
+    on the two constructs that matter.** ``\\b`` becomes ``\\y`` and ``\\w`` stays ``\\w``
+    (Postgres defines it as ``[[:alnum:]_]``). Verified against v3's own wildcard fixture,
+    whose text is deliberately non-ASCII — ``akhagabhʉlanya``, ``zɨgabhʉlanye`` — because
+    that is where a word-character definition can differ: ``U+0289`` and ``U+0268`` are
+    matched by ``\\w`` and bound by ``\\y`` under Postgres just as under Python's
+    Unicode-aware :mod:`re`, so all six grammar cases return the same verses as v3.
+
+    One dialect difference is worth naming rather than discovering: Postgres classifies
+    characters for ``[[:alnum:]]`` by the database's ``LC_CTYPE``, where Python's ``\\w``
+    is Unicode-aware by definition. On a UTF-8 database (``en_US.utf8`` in development,
+    and the deployed databases) they agree; on a database created with ``LC_CTYPE=C`` they
+    would not, and a term wildcarded across a non-ASCII letter would stop matching. That is
+    a property of the database, not of this code, and the wildcard tests would catch it.
+
+    Case-insensitivity moves from lowering both sides in Python to the ``~*`` operator,
+    which folds case by the same ``LC_CTYPE``.
+
+    Raises :class:`InvalidSearchTerm` for a term with too many internal wildcards or no
+    visible character. Returns a pattern for anything else — including a term that will
+    match nothing, which is a result and not an error.
+    """
+    # Collapse runs of `*` before anything else, so `foo**bar` == `foo*bar` and the cap
+    # below counts effective internal wildcards rather than typed characters.
+    collapsed = re.sub(r"\*+", "*", term)
+    prefix_wildcard = collapsed.startswith("*")
+    suffix_wildcard = collapsed.endswith("*")
+    # Strip the anchoring wildcards, leaving only the literal pieces and the internal
+    # `*`s between them. A term of a single `*` leaves an empty core, which the
+    # visible-character check below rejects.
+    core = collapsed[int(prefix_wildcard) : len(collapsed) - int(suffix_wildcard)]
+    pieces = core.split("*")
+
+    if len(pieces) > MAX_TERM_PIECES:
+        raise InvalidSearchTerm(
+            f"Term may contain at most {MAX_TERM_PIECES - 1} internal `*` wildcards; "
+            f"received {len(pieces) - 1}.",
+            {
+                "field": "term",
+                "max_internal_wildcards": MAX_TERM_PIECES - 1,
+                "received_internal_wildcards": len(pieces) - 1,
+            },
+        )
+
+    # Count only visible characters: a term of nothing but a zero-width space or a BOM
+    # would otherwise pass the `min_length=1` bound and match every verse in the revision.
+    visible = sum(
+        1
+        for piece in pieces
+        for character in piece
+        if unicodedata.category(character) not in _INVISIBLE_CATEGORIES
+        and not character.isspace()
+    )
+    if visible == 0:
+        raise InvalidSearchTerm(
+            "Term must contain at least one visible character.",
+            {"field": "term"},
+        )
+
+    # NFC on the query side, matching `_nfc`'s NFC on the column side, so an accented
+    # character matches whether the query or the stored text spells it composed or
+    # decomposed. Both sides must be normalized: neither alone is enough.
+    normalized = [unicodedata.normalize("NFC", piece) for piece in pieces]
+    middle = r"\w*".join(
+        "".join(
+            "\\" + character if character in _ARE_METACHARACTERS else character
+            for character in piece
+        )
+        for piece in normalized
+    )
+    left = "" if prefix_wildcard else r"\y"
+    right = "" if suffix_wildcard else r"\y"
+    return left + middle + right
+
+
+#: Canonical Bible order for a search page: book number, then chapter, then verse. The
+#: same order the verses and results reads use, and total (one row per canonical verse),
+#: which is what makes ``offset`` stable across pages. v3 orders these rows by the book
+#: *abbreviation* instead, so its pages run GEN, ACT, AMO — alphabetical, not canonical.
+_CANONICAL_ORDER = (
+    BookReference.number,
+    ChapterReference.number,
+    VerseReference.number,
+)
+
+
+def _text_search_stmt(revision_id: int, pattern: str):
+    """The matching search query, **unordered** and without ``limit``/``offset``.
+
+    Returns a ``SELECT`` of ``(verse_text.id, verse_reference.full_verse_id,
+    verse_text.text)`` — deliberately the same three columns
+    :func:`_scoped_verses_query` returns, so a hit and a verse are shaped by the same
+    code path from here on.
+
+    **The match is a single SQL predicate, which is the one substantial change from v3**
+    (T1 on #893). v3 matches twice: a rough ``ILIKE '%term%'`` in SQL fetches up to
+    ``min(limit x 10 x pieces, 10_000)`` candidate rows, then Python applies the real
+    whole-word regex to those and keeps the first ``limit`` that pass. The rough pass
+    over-matches on purpose — ``ILIKE '%grace%'`` also finds "disgraceful" — so v3
+    over-fetches tenfold and discards the rest.
+
+    That architecture cannot support ``offset`` or ``total``, which is why it changed
+    rather than being ported. ``offset=10`` means "skip the first ten *real* matches", but
+    the candidate cap is sized from ``limit`` alone, so over-fetching ``limit + offset``
+    degrades as a caller pages and goes silently wrong past the 10,000 ceiling. v3 has no
+    ``offset`` at all, and its ``truncated`` flag exists precisely to admit that its count
+    is not a count. Matching once, here, makes ``COUNT(*)`` exact and ``offset`` mean what
+    it says — and it drops ``truncated``, the tenfold over-fetch, and the mis-sampling
+    that made v3's ``random`` a shuffle of substring candidates rather than of matches.
+
+    **There is no ``ILIKE`` prefilter, and this is a deliberate departure from T1**, which
+    ruled that the ``ILIKE`` "stays as a cheap prefilter". Measured, it is not cheap and
+    not a filter: ``normalize()`` dominates the per-row cost, and a second predicate over
+    the same expression makes Postgres evaluate it twice. Measured on one revision of an
+    838,000-row table (20 revisions x 41,899 canonical verses), best of three, warm:
+
+    ==================================  ============  ==================
+    case                                regex only    ILIKE + regex
+    ==================================  ============  ==================
+    selective term, index available         71 ms          119 ms
+    selective term, index unavailable      334 ms          384 ms
+    common term, index available           926 ms         1606 ms
+    common term, index unavailable         328 ms          610 ms
+    ==================================  ============  ==================
+
+    Isolating the terms confirms the mechanism rather than inferring it: one
+    ``normalize()`` over the revision costs ~639 ms, two cost ~1155 ms, and the regex over
+    raw text costs ~237 ms. The "prefilter" therefore doubles the expensive half to save
+    the cheap half, and regex-only wins every one of the four plan shapes.
+
+    **The trigram index is used, and needs no change.** ``EXPLAIN ANALYZE`` puts the
+    ``~*`` itself in the index condition of a ``BitmapAnd`` over
+    ``ix_verse_text_nfc_trgm`` and ``ix_verse_text_revision_id`` — GIN trigram accelerates
+    regular expressions, not only ``ILIKE``. Checked for all four pattern shapes this
+    builder emits, not just the plain one: whole-word, internal-wildcard,
+    leading-wildcard and trailing-wildcard patterns all use it. A one- or two-character
+    term extracts no trigram and falls back to ``ix_verse_text_revision_id`` alone,
+    exactly as the index's own migration says; that path reads one revision's ~41,899 rows
+    and measured 847 ms, which is bounded by T6's decision to scope a search to a single
+    revision.
+
+    v3's ``SET LOCAL enable_bitmapscan = off`` is **not** carried over, and this is a
+    judgement rather than a free win. Its comment says the plan it was avoiding was a
+    bitmap scan re-run once per revision under ``version_id`` mode's nested loop, which
+    T6 removes. With one revision the planner reaches for the trigram index on a selective
+    term and the plain revision scan on a common one — the right shapes — but the *worst*
+    case is still better with the GUC: a term matching 94% of a revision measured 328 ms
+    with bitmap scans off against 926 ms with them on. The selective case pays for it in
+    the other direction and by more, 334 ms against 71 ms, and a search for a word is the
+    case that actually happens. So the GUC stays out, on the common case rather than on
+    the worst one. Nor is ``work_mem`` raised: that was for ``version_id`` mode's
+    ``DISTINCT ON`` sort over a whole version, and there is no ``DISTINCT`` here.
+
+    ``<range>`` marker rows are excluded by the same :func:`_has_readable_text` the verses
+    read uses, which makes T11 true: without it, a search for ``range`` would return every
+    merged continuation in the revision as a hit, because ``<`` and ``>`` are not word
+    characters and ``\\yrange\\y`` matches inside the marker. It also means a hit is always
+    a span's anchor, so its ``vrefs`` is the span — the same rule as the verses read.
+
+    **Ordering is left to the caller**, unlike :func:`_scoped_verses_query`, which orders
+    itself. Two orderings are needed here — :data:`_CANONICAL_ORDER` and a shuffle — and
+    the count wraps this statement as a subquery, where an ``ORDER BY`` is work with no
+    output: Postgres does sort inside a counted subquery rather than dropping the clause.
+    Measured at 139 matched rows the sort is lost in the noise, but a term matching most of
+    a revision would sort ~41,899 rows to produce a single integer.
+    """
+    return (
+        select(
+            VerseText.id,
+            VerseReference.full_verse_id,
+            VerseText.text,
+        )
+        .select_from(VerseText)
+        # Inner joins throughout, and they are also the filter that drops a legacy
+        # `verse_text` row whose `verse_reference` is null or not canonical — such a row
+        # has no vref to report and could not be joined to anything. v3 states the same
+        # exclusion as an explicit `verse_reference IS NOT NULL`.
+        .join(
+            VerseReference,
+            VerseText.verse_reference == VerseReference.full_verse_id,
+        )
+        .join(
+            ChapterReference,
+            VerseReference.chapter == ChapterReference.full_chapter_id,
+        )
+        .join(
+            BookReference,
+            VerseReference.book_reference == BookReference.abbreviation,
+        )
+        .where(
+            VerseText.revision_id == revision_id,
+            *_has_readable_text(),
+            _nfc(VerseText.text).op("~*")(pattern),
+        )
+    )
+
+
+async def _comparison_texts(
+    db: AsyncSession, revision_id: int, vrefs: list[str]
+) -> dict[str, str | None]:
+    """``{vref: text}`` for the comparison revision, over one page's vrefs.
+
+    One statement for the whole page rather than one per hit, keyed on
+    ``ix_verse_text_verse_reference_revision``. A revision need not hold every vref, so a
+    missing entry is normal and the caller reports null.
+
+    **A marker row maps to null, not to the marker**, which is what distinguishes this
+    from ``assessment_service._verse_texts``, the same lookup for the alignment reads.
+    Where the comparison revision printed this verse as part of the one above it, the verse
+    has no text of its own there, and #892's rule is that the storage marker never reaches
+    a client. Reporting null says the true thing; reporting the anchor's text instead would
+    attribute one verse's words to another, and reporting ``<range>`` would publish a
+    storage detail as scripture.
+
+    ``verse_text`` has no uniqueness constraint on ``(revision_id, verse_reference)``, so
+    the **lowest id wins deterministically** — the convention the rest of the tree applies
+    to this hazard, and without it the same request could return different comparison text
+    on consecutive calls.
+
+    Note what this replaces. v3 fetches the comparison side through a per-row ``LATERAL``
+    joined with ``ON true``, which is an *inner* join to a subquery that can return no
+    rows — so a verse the comparison revision lacks is dropped from v3's results
+    entirely. Here the comparison revision cannot change which verses match or what
+    ``total`` counts; it only fills a field. Otherwise the same term would report a
+    different number of matches depending on which revision you asked to compare against,
+    which is not a property a count should have.
+    """
+    if not vrefs:
+        return {}
+    rows = (
+        await db.execute(
+            select(VerseText.id, VerseText.verse_reference, VerseText.text)
+            .where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(vrefs),
+            )
+            .order_by(VerseText.id)
+        )
+    ).all()
+    texts: dict[str, str | None] = {}
+    for _, verse_reference, text in rows:
+        # setdefault rather than assignment: ordered by id ascending, so the first row
+        # seen for a vref is the lowest-id one and later duplicates do not displace it.
+        texts.setdefault(
+            verse_reference,
+            None if text is None or text == VERSE_RANGE_MARKER else text,
+        )
+    return texts
+
+
+async def _resolve_alignment_assessment_id(
+    db: AsyncSession,
+    revision_id: int,
+    comparison_revision_id: int,
+    alignment_assessment_id: int | None,
+) -> int | None:
+    """Which word-alignment assessment the annotation reads from, or ``None`` for none.
+
+    An explicit ``alignment_assessment_id`` must be a finished, non-deleted
+    ``word-alignment`` assessment whose pair is exactly
+    ``(revision_id, comparison_revision_id)``; anything else raises
+    :class:`AlignmentAssessmentNotForPair`. Otherwise the most recently finished run for
+    the pair is picked, and ``None`` means there is none — not an error (T7), just a
+    response without the ``alignments`` field.
+
+    **The pair check always fires, and that is what removes an authorization surface.**
+    v3 applies it only "when both textsearch revision IDs are concrete", because its
+    ``version_id`` mode could span many revisions per verse, and it therefore also needs
+    ``is_user_authorized_for_assessment`` as a backstop — dropping the ``alignments`` field
+    when the caller cannot see the assessment it chose. Neither is needed here. T6 removed
+    version mode, so both sides are always concrete; and an assessment's visibility in v4
+    *is* access to its ``revision_id`` and ``reference_id``
+    (``security_routes.utilities.is_user_authorized_for_assessment`` checks exactly that,
+    and there is no separate permission on an assessment). This read has already authorized
+    both of those revisions through :func:`revision_service.get_revision` before reaching
+    here, so any assessment that survives the pair check is one the caller can already see.
+    That is why this function takes no user: there is nothing left for it to check.
+
+    ``use_eflomal`` is not a parameter (T6, zero callers), so no runner filter is applied
+    and the most recent finished run wins regardless of which runner produced it. That is
+    exactly v3's behaviour when ``use_eflomal`` is omitted, which is how the one live
+    caller calls it.
+
+    ``nullslast`` on ``end_time`` for v3's reason: Postgres sorts NULLs first on ``DESC``,
+    so a ``finished`` row with a NULL ``end_time`` — a data edge case, not a normal
+    write — would otherwise outrank every properly timestamped run. ``id`` breaks the
+    remaining ties so the pick is deterministic rather than plan-dependent.
+    """
+    pair_conditions = (
+        Assessment.type == AssessmentType.word_alignment.value,
+        Assessment.status == "finished",
+        Assessment.deleted.is_not(True),
+        Assessment.revision_id == revision_id,
+        Assessment.reference_id == comparison_revision_id,
+    )
+
+    if alignment_assessment_id is not None:
+        resolved = await db.scalar(
+            select(Assessment.id).where(
+                Assessment.id == alignment_assessment_id, *pair_conditions
+            )
+        )
+        if resolved is None:
+            raise AlignmentAssessmentNotForPair(
+                alignment_assessment_id, revision_id, comparison_revision_id
+            )
+        return resolved
+
+    return await db.scalar(
+        select(Assessment.id)
+        .where(*pair_conditions)
+        .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
+        .limit(1)
+    )
+
+
+def _score_bound(value: float) -> Decimal:
+    """A caller's ``min_alignment_score`` as the decimal they actually wrote.
+
+    ``alignment_top_source_scores.score`` is ``NUMERIC``, and binding a Python float
+    against one is not the no-op it looks like: asyncpg expands the float to its exact
+    binary value, so ``min_alignment_score=0.55`` arrives as ``0.55000000000000004...``
+    and a row stored as exactly ``0.55`` fails an inclusive ``>=``.
+    ``Decimal(str(value))`` restores the intent — ``str`` on a float gives the shortest
+    representation that round-trips — so the comparison happens in the decimal domain the
+    column is stored in.
+
+    **v3's ``min_alignment_score`` has this defect**, as a bare float on the same column,
+    so this is a fix rather than a port. It is only visible at a boundary and only for
+    thresholds that are not binary fractions, which is why it survived: ``0.5`` and
+    ``0.25`` are correct by accident, and ``0.3``, v3's default, rounds the safe way.
+
+    Deliberately a local twin of ``assessment_service._score_bound`` rather than an import
+    of it. That one is module-private, and reaching across for it would make this module
+    depend on the whole assessment service — which imports the v3 TF-IDF routes and the
+    encoder — for one expression. The two are cross-referenced instead, so a reader of
+    either finds the other. Should a third score threshold appear, the rule has earned a
+    shared home.
+    """
+    return Decimal(str(value))
+
+
+async def _alignments_by_vref(
+    db: AsyncSession,
+    assessment_id: int,
+    vrefs: list[str],
+    min_score: float | None,
+) -> dict[str, list[dict]]:
+    """``{vref: [{source, target, score}, ...]}`` for one page's hits, strongest first.
+
+    Reads ``alignment_top_source_scores`` — the single best-scoring target for each source
+    word in each verse, so ``(vref, source)`` is a natural key there. Not
+    ``alignment_threshold_scores``, which stores *every* target above the runner's cutoff
+    and so returns the same source word several times. This read has no ``score_type``
+    parameter because v3's ``/textsearch`` has none either: it is the ``top`` table, and
+    the annotation exists to answer "which word does this map to", which is what that table
+    holds. A caller who wants the alternatives wants
+    ``GET /v4/assessments/{id}/alignment-scores?score_type=threshold``.
+
+    ``source`` is the assessment's ``reference_id`` side — the comparison revision — and
+    ``target`` is the ``revision_id`` side, the one ``term`` matched against. That is v3's
+    labelling, kept because the one live caller aggregates on it.
+
+    ``min_score`` cuts inclusively (``>=``) through :func:`_score_bound`, without which a
+    row on the boundary is dropped, and ``None`` applies no floor. Rows the runner
+    marked ``hide`` are dropped; ``hide IS NOT TRUE`` rather than ``IS FALSE`` because NULL
+    rows exist from a pre-fix push bug (migration ``a4d18b5c2e91``), and a NULL must count
+    as not-hidden so only rows someone explicitly hid are lost.
+
+    One statement for the whole page. Alignment rows sit on span anchors only — verified
+    against production for the alignment reads, twelve assessments over revisions carrying
+    merged spans have no rows on any continuation vref — and every hit is an anchor, so
+    keying on ``vref`` alone finds a merged span's links without expanding ``vrefs``.
+    """
+    if not vrefs:
+        return {}
+
+    conditions = [
+        AlignmentTopSourceScores.assessment_id == assessment_id,
+        AlignmentTopSourceScores.vref.in_(vrefs),
+        AlignmentTopSourceScores.hide.is_not(True),
+    ]
+    if min_score is not None:
+        conditions.append(AlignmentTopSourceScores.score >= _score_bound(min_score))
+
+    rows = (
+        await db.execute(
+            select(
+                AlignmentTopSourceScores.vref,
+                AlignmentTopSourceScores.source,
+                AlignmentTopSourceScores.target,
+                AlignmentTopSourceScores.score,
+            ).where(*conditions)
+        )
+    ).all()
+
+    by_vref: dict[str, list[dict]] = {}
+    for vref, source, target, score in rows:
+        by_vref.setdefault(vref, []).append(
+            {
+                "source": source,
+                "target": target,
+                # Numeric comes back as Decimal; the wire contract is a float, and
+                # converting here keeps the shaping out of the router.
+                "score": None if score is None else float(score),
+            }
+        )
+    # Strongest link first within each verse, so a caller reading the top few needs no
+    # re-sort. `score or 0` keeps a legacy NULL-score row from breaking the sort; it
+    # sorts last, which is where an unscored link belongs.
+    for links in by_vref.values():
+        links.sort(key=lambda link: link["score"] or 0, reverse=True)
+    return by_vref
+
+
+async def search_text(
+    db: AsyncSession,
+    user: UserDB,
+    revision_id: int,
+    *,
+    query: TextSearchQuery,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int, int | None]:
+    """One page of a revision's verses matching ``term``: hits, the total, and the run used.
+
+    Replaces v3's ``GET /textsearch``. Returns fully shaped dicts rather than rows, because
+    every field beyond the three the query selects is derived — ``vrefs`` from the span
+    map, ``comparison_text`` from a second revision, ``alignments`` from an assessment —
+    and the router has nothing left to compute.
+
+    **Order of operations, and why it is this order.** The term is parsed first: it is the
+    caller's own input, it needs no database, and a client debugging a wildcard should not
+    need a readable revision to be told the wildcards are wrong. Then the path revision is
+    authorized, then the comparison revision — both through
+    :func:`revision_service.get_revision`, so each reports the same
+    :class:`revision_service.RevisionNotFound` for missing, soft-deleted, under-a-deleted-
+    version and unreachable alike. The comparison revision is a **second authorization
+    surface**, where the other three reads in this module have one; it is checked before
+    any text is read, so a caller cannot use a matching term to learn whether a revision
+    they cannot read exists. v3 answers 403 on both, and additionally returns 200 with an
+    empty list when an *admin* names a revision that does not exist; in v4 a missing
+    revision is missing regardless of who asks.
+
+    **``total`` is exact**, which is the claim T1's SQL matching exists to make true, and it
+    counts matches in the *path* revision only — naming a comparison revision cannot change
+    it. ``total`` and the page are two statements, so the usual rare offset-pagination
+    drift between them applies.
+
+    ``random=true`` replaces the canonical ordering with a shuffle and is refused with a
+    non-zero ``offset`` by the router, since a second page of a fresh shuffle would repeat
+    and skip rows. ``total`` is still exact under ``random``: it is the same count over the
+    same matched set, and only the ordering of the returned page differs. The shuffle is
+    over *matches*, where v3 shuffles its rough substring candidates and then filters — so
+    v3's sample is drawn from a set that includes verses which do not match.
+
+    There is no watermark: ``verse_text`` is write-once and carries no modification
+    timestamp, so this list has no delta feed.
+    """
+    pattern = search_pattern(query.term)
+
+    await revision_service.get_revision(db, user, revision_id)
+    if query.comparison_revision_id is not None:
+        await revision_service.get_revision(db, user, query.comparison_revision_id)
+
+    stmt = _text_search_stmt(revision_id, pattern)
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+
+    ordering = (func.random(),) if query.random else _CANONICAL_ORDER
+    rows = (
+        await db.execute(stmt.order_by(*ordering).limit(limit).offset(offset))
+    ).all()
+
+    continuations = await continuations_for_revision(db, revision_id)
+    vrefs = [vref for _, vref, _ in rows]
+
+    comparison_texts: dict[str, str | None] = {}
+    if query.comparison_revision_id is not None:
+        comparison_texts = await _comparison_texts(
+            db, query.comparison_revision_id, vrefs
+        )
+
+    alignment_assessment_id: int | None = None
+    alignments_by_vref: dict[str, list[dict]] = {}
+    if query.include_alignments:
+        # `comparison_revision_id` is not None here: the schema rejects
+        # `include_alignments` without it, so this cannot be reached with no pair.
+        alignment_assessment_id = await _resolve_alignment_assessment_id(
+            db,
+            revision_id,
+            query.comparison_revision_id,
+            query.alignment_assessment_id,
+        )
+        if alignment_assessment_id is not None:
+            alignments_by_vref = await _alignments_by_vref(
+                db, alignment_assessment_id, vrefs, query.min_alignment_score
+            )
+
+    hits = []
+    for verse_id, vref, text in rows:
+        hit = {
+            "id": verse_id,
+            "revision_id": revision_id,
+            "vref": vref,
+            "vrefs": covered_vrefs(vref, continuations),
+            "text": text,
+        }
+        # Set only when applicable: the route serializes with `exclude_unset=True`, so a
+        # key absent from this dict is absent from the response rather than null. That is
+        # what lets a client tell "you did not ask for a comparison" from "that revision
+        # has no text for this verse", and "there was no alignment run" from "this verse
+        # has no links".
+        if query.comparison_revision_id is not None:
+            hit["comparison_text"] = comparison_texts.get(vref)
+        if alignment_assessment_id is not None:
+            hit["alignments"] = alignments_by_vref.get(vref, [])
+        hits.append(hit)
+
+    return hits, total or 0, alignment_assessment_id
