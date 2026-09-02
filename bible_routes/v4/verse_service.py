@@ -188,6 +188,32 @@ def _has_readable_text():
     )
 
 
+def covered_vrefs(
+    vref: str, continuations: dict[tuple[str, int, int], list[str]]
+) -> list[str]:
+    """Every verse the row stored at ``vref`` covers, in canonical order, ``vref`` first.
+
+    One definition of the ``vref`` -> ``vrefs`` expansion, shared by the two reads that
+    need it: the verses read (through ``verse_routes._to_verse_out``) and the text search
+    (through :func:`search_text`). Both were doing this inline and identically, which put
+    the span map's **key convention** in two places — if the key shape or the vref format
+    ever changed, one site would be updated and the other would silently return
+    single-verse ``vrefs`` for merged spans.
+
+    The span map is keyed by the anchor's ``(book, chapter, verse)`` triple, the shape the
+    result tables carry, so the vref is split back into its parts to look it up. Parsing is
+    total over the values it is given: they come from ``verse_reference.full_verse_id``,
+    whose rows are ``fixtures/vref.txt``.
+
+    A verse that absorbed nothing has no entry, so the common case is a one-element list
+    built from a single failed dict lookup. ``{}`` — the ``include_verses=all`` case — makes
+    every row single-verse without a branch at the call site.
+    """
+    book, chapter_verse = vref.split(" ", 1)
+    chapter, verse = chapter_verse.split(":", 1)
+    return [vref, *continuations.get((book, int(chapter), int(verse)), ())]
+
+
 def _scoped_verses_query(revision_id: int, scope: VerseScope):
     """The scoped, canonically-ordered verse query, without ``limit``/``offset``.
 
@@ -1028,16 +1054,11 @@ async def search_text(
 
     hits = []
     for verse_id, vref, text in rows:
-        book, chapter_verse = vref.split(" ", 1)
-        chapter, verse = chapter_verse.split(":", 1)
         hit = {
             "id": verse_id,
             "revision_id": revision_id,
             "vref": vref,
-            "vrefs": [
-                vref,
-                *continuations.get((book, int(chapter), int(verse)), ()),
-            ],
+            "vrefs": covered_vrefs(vref, continuations),
             "text": text,
         }
         # Set only when applicable: the route serializes with `exclude_unset=True`, so a

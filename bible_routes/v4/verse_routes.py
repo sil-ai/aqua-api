@@ -195,15 +195,8 @@ def _to_verse_out(row, revision_id: int, continuations: dict) -> VerseOut:
     ``vref`` is the canonical reference the row was selected on — a literal line of
     ``fixtures/vref.txt``, never a range label — so it joins against a result set and
     against the fixture. ``vrefs`` is that reference followed by whatever the publisher
-    merged into it. ``continuations`` holds an entry only for verses that absorbed
-    something, so the overwhelmingly common case is a one-element list built with a single
-    failed dict lookup, and ``{}`` (the ``include_verses=all`` case) makes every row
-    single-verse without a branch here.
-
-    The span map is keyed by the anchor's ``(book, chapter, verse)`` triple — the shape the
-    result tables carry — so the vref is split back into its parts to look it up. Parsing
-    is total over the values it is given: they come from ``verse_reference``, whose rows
-    are ``fixtures/vref.txt``.
+    merged into it, expanded by :func:`verse_service.covered_vrefs`, which the text search
+    shares so the span map's key convention lives in one place.
 
     ``text`` is coerced so the stored ``<range>`` marker can never reach the wire. Under
     ``union`` no marker row is selected at all and this is a no-op; under ``all`` a merged
@@ -213,13 +206,11 @@ def _to_verse_out(row, revision_id: int, continuations: dict) -> VerseOut:
     nullable, and ``all`` left-joins, so a canonical verse with no row arrives as NULL.
     """
     verse_id, vref, text = row
-    book, chapter_verse = vref.split(" ", 1)
-    chapter, verse = chapter_verse.split(":", 1)
     return VerseOut(
         id=verse_id,
         revision_id=revision_id,
         vref=vref,
-        vrefs=[vref, *continuations.get((book, int(chapter), int(verse)), ())],
+        vrefs=verse_service.covered_vrefs(vref, continuations),
         text="" if text is None or text == VERSE_RANGE_MARKER else text,
     )
 
