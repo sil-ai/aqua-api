@@ -494,6 +494,17 @@ def test_an_oversized_dict_key_is_bounded_too(client):
     assert len(response.content) < _DETAILS_BUDGET, len(response.content)
 
 
+def test_a_marker_states_the_cap_not_that_the_value_exceeded_it():
+    """A value is replaced when it does not fit what is *left* of the budget, and that
+    is below the cap as soon as anything earlier in the payload has been charged. So the
+    marker names the cap and the size it dropped — it must not claim this value was over
+    the cap, which would be false for every medium-sized value cut at the tail."""
+    details = {"a": "x" * (_DETAILS_BUDGET - 100), "b": "y" * 300}
+    marker = _bounded_details(details)["b"]
+    assert "300 characters omitted" in marker, marker
+    assert f"capped at {_DETAILS_BUDGET:,}" in marker, marker
+
+
 def test_a_null_inside_details_survives_the_walk(client):
     """``exclude_none`` drops an absent details *field*; a ``None`` *inside* details is
     data. ``POST /v4/token`` is why it matters — FastAPI validates form fields

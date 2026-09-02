@@ -133,7 +133,7 @@ class V4ErrorResponse(V4BaseModel):
 #: within a factor is the point; the fault being fixed is four orders of magnitude.
 _DETAILS_BUDGET = 8192
 
-#: Shortest string worth replacing. The marker is itself ~76 characters, so swapping a
+#: Shortest string worth replacing. The marker is itself ~80 characters, so swapping a
 #: short string for one would *grow* the response. Only reachable at the tail of a
 #: payload, where the remaining budget can be smaller than the marker.
 _MIN_REPLACEABLE = 256
@@ -149,10 +149,15 @@ def _omitted_value(size: int) -> str:
     It states the size it replaced, because a marker that does not say *why* the value
     is missing reads to the next person debugging a large request as "the field arrived
     empty" — which is a different bug with a different fix.
+
+    It states the *cap* rather than claiming this value exceeded it. A value is replaced
+    when it does not fit the budget still unspent, which is below the cap as soon as
+    anything earlier in the payload has been charged — so "over the 8,192-character
+    limit" would be a lie on a 300-character value that arrived with 100 left.
     """
     return (
-        f"<{size:,} characters omitted: over the "
-        f"{_DETAILS_BUDGET:,}-character error-detail limit>"
+        f"<{size:,} characters omitted: error details are capped at "
+        f"{_DETAILS_BUDGET:,} characters>"
     )
 
 
@@ -163,8 +168,8 @@ def _omitted_tail(count: int, noun: str) -> str:
     "1 more items omitted" — both nouns are chosen to take a regular ``-s``.
     """
     return (
-        f"<{count:,} more {noun}{'' if count == 1 else 's'} omitted: over the "
-        f"{_DETAILS_BUDGET:,}-character error-detail limit>"
+        f"<{count:,} more {noun}{'' if count == 1 else 's'} omitted: error details "
+        f"are capped at {_DETAILS_BUDGET:,} characters>"
     )
 
 
@@ -172,10 +177,11 @@ def _content_size(value) -> int:
     """Cheap, allocation-free stand-in for a scalar's encoded length.
 
     ``len`` on a 70 MB string is O(1), and ``repr`` on an ``int``/``float`` is what
-    ``json`` itself emits, so it is both exact and cheap. Anything else — ``None``,
-    a bool, or an object ``jsonable_encoder`` somehow left behind — is charged a flat 4
-    rather than ``repr``-ed, because ``repr`` on an unknown object can materialise the
-    very second copy this function exists to avoid.
+    ``json`` itself emits, so it is both exact and cheap. A bool goes that way too —
+    ``bool`` is a subclass of ``int``, and ``repr`` gives it the 4 or 5 characters
+    ``json`` would. Anything else — ``None``, or an object ``jsonable_encoder`` somehow
+    left behind — is charged a flat 4 rather than ``repr``-ed, because ``repr`` on an
+    unknown object can materialise the very second copy this function exists to avoid.
     """
     if isinstance(value, (str, bytes)):
         return len(value)
