@@ -124,9 +124,9 @@ What each group of tests pins down:
   ``page``/``page_size``.
 """
 
+import asyncio
 import itertools
 import json
-import threading
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from typing import get_args
@@ -5466,12 +5466,24 @@ class TestSimilarVersesPostText:
         worker is serving — a stall, not a style question — so v3 sends it through
         ``asyncio.to_thread`` and v4 keeps that. Pinned by *where* it runs rather than by
         the call being present, because the call being present is exactly what a
-        well-meaning "simplify the await" change would leave behind."""
-        threads = []
+        well-meaning "simplify the await" change would leave behind.
+
+        Asserted on whether a loop is *running* in the calling thread rather than on that
+        thread's identity. Thread identity cannot decide this under ``TestClient``: the
+        portal runs the event loop on a worker thread, so an inline call and an offloaded
+        one are both off ``threading.main_thread()`` and the two are indistinguishable.
+        ``get_running_loop`` raises only off the loop, which is exactly the distinction.
+        """
+        on_loop = []
         real = assessment_service._encode_texts
 
         def _spy(encoder, texts):
-            threads.append(threading.current_thread())
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                on_loop.append(False)
+            else:
+                on_loop.append(True)
             return real(encoder, texts)
 
         with patch.object(assessment_service, "_encode_texts", _spy):
@@ -5483,9 +5495,7 @@ class TestSimilarVersesPostText:
                 limit=1,
             )
         assert resp.status_code == 200, resp.text
-        assert threads and all(
-            thread is not threading.main_thread() for thread in threads
-        ), threads
+        assert on_loop == [False], on_loop
 
     def test_every_text_in_a_batch_encodes_in_one_transform(
         self, client, regular_token1, encoded_assessment

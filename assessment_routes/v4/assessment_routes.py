@@ -1122,12 +1122,15 @@ async def post_assessment_similar_verses(
     """Find the verses most similar to each of several query points, in one request.
 
     **This POST is a read, and it creates nothing.** Every other POST on this surface that
-    addresses a domain resource creates something — enumerated rather than assumed: the v4
-    write surface is `POST /versions` and `POST /revisions` (201), `POST /assessments`
-    (202), `PUT /versions/{id}/groups/{group_id}` (204) and `POST /token` (200), and only
-    the last of those is not a create. So this is a query whose input is too big for a
-    query string, and it answers `200` rather than `201`. It is also why nothing here
-    needs an idempotency key: there is no second effect for a retry to duplicate.
+    addresses a domain resource creates something — enumerated rather than assumed: v4 had
+    four POSTs before this one, `POST /versions` and `POST /revisions` (201),
+    `POST /assessments` (202) and `POST /token` (200), and the only one of those that is
+    not a create addresses no resource at all. (The whole v4 *write* surface is larger than
+    its POSTs — eleven operations, adding two `PATCH`es, three `DELETE`s and the two
+    group-membership writes — but the question here is what a POST on this surface means.)
+    So this is a query whose input is too big for a query string, and it answers `200`
+    rather than `201`. It is also why nothing here needs an idempotency key: there is no
+    second effect for a retry to duplicate.
 
     **The reason it exists is `type: "text"`, and that is a capability the GET does not
     have.** `GET …/similar-verses?vref=X` ranks against a verse *already vectorized in
@@ -1170,7 +1173,7 @@ async def post_assessment_similar_verses(
     orthogonal to how the query point arrived — removing an asymmetry, not adding a
     feature.
 
-    **Four failures, kept distinct, and one bad query point fails the whole request.** No
+    **Five failures, kept distinct, and one bad query point fails the whole request.** No
     partial-success shape: v3's `by_vectors` already rejects the entire request on one
     wrong-length vector, and the alternative makes every client write two error paths for
     one call.
@@ -1185,6 +1188,13 @@ async def post_assessment_similar_verses(
       already uses, with the failing query point's index in `details`.
     * A vector of the wrong length, or one containing `inf`/`nan` → `422`, with `loc`
       naming the query point's index. Caught before pgvector can raise it.
+    * A `text` query point on an assessment whose **artifacts encode to a width its corpus
+      vectors are not** → `422 TFIDF_ARTIFACT_DIMENSION_MISMATCH`, naming both widths.
+      Distinct from the artifact 404 above: the artifacts are here and usable, they just
+      produce a vector pgvector cannot compare against this assessment's column. #893's Q4
+      ruling lists four failures and does not reach this one; the v3 artifact push
+      validates that the pushed `n_components` agrees with the SVD payload's but never that
+      either is 300, so an SVD of another width is storable today.
 
     **Three bounds, all 422s and none clamped**: `limit` 1–100 (the GET's, so one field
     means one thing on one path), `len(queries)` 1–500, and `len(queries) × limit` at most
