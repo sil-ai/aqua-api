@@ -33,6 +33,13 @@ plain error is just ``{"error": {"code": ..., "message": ...}}``.
   generic message; the exception's own text, args, and traceback are never put in
   the body.
 
+``details`` is size-bounded for all of them (#920). Every handler funnels through
+:func:`_error_response`, which caps the payload at :data:`_DETAILS_BUDGET` characters
+and replaces what it drops with a marker saying how much went. Small values — the ones
+worth echoing — are untouched; the case this exists for is a validation error on ``POST
+/v4/revisions``, where Pydantic attaches the rejected value to its error and the
+rejected value is a whole Bible as one base64 string.
+
 Re-raise-for-logging (do not "fix" this): the ``Exception`` handler only
 *returns* the clean 500 body. The sub-app's own ``ServerErrorMiddleware`` is what
 calls this handler, sends its response, and *then re-raises the exception* — which
@@ -102,33 +109,184 @@ class V4ErrorResponse(V4BaseModel):
     error: V4ErrorDetail
 
 
-def _json_safe_floats(value):
-    """Replace ``nan``/``inf``/``-inf`` with their names, recursively.
+#: Total budget, in characters of caller-supplied content, for one error's ``details``
+#: payload (#920).
+#:
+#: A validation error echoes the value it rejected back under ``input``, and ``POST
+#: /v4/revisions`` takes a whole Bible as one base64 string — so one character over its
+#: ~70 million cap answered with a 422 body of 69,905,069 characters. The budget bounds
+#: that without giving up what the echo is *for*: showing what the server actually
+#: parsed, which can differ from what the caller thinks it sent (a ``nan`` coming back
+#: as ``"nan"``, a ``"5"`` coerced to ``5``, a typo'd key arriving empty). All three are
+#: small values and all three pass through untouched.
+#:
+#: 8192 is set so the largest legitimately-sized value on the v4 surface still survives:
+#: a 300-float query vector for ``POST /v4/assessments/{id}/similar-verses`` encodes to
+#: roughly 6 KB. The next value up — that endpoint's 10,000-character query text — does
+#: not, and at up to 500 query points per request echoing those was the whole 5 MB the
+#: caller had just sent.
+#:
+#: Counted in *characters of content* (string lengths, number reprs, dict keys), not in
+#: JSON bytes: measuring the encoded size means encoding the value, which costs exactly
+#: what this exists to avoid. JSON punctuation and ``\uXXXX`` escapes are uncounted, so
+#: a bounded ``details`` can still serialize to a small multiple of this. Bounding it to
+#: within a factor is the point; the fault being fixed is four orders of magnitude.
+_DETAILS_BUDGET = 8192
 
-    The second half of the same landmine :func:`_error_response` describes.
-    ``jsonable_encoder`` makes unknown *types* safe but leaves non-finite floats as
-    floats, and Starlette's ``JSONResponse`` dumps with ``allow_nan=False`` — so a
-    ``details`` payload holding one raises inside the handler, and the catch-all
-    reshapes the intended 4xx into a generic 500 that does not even chain it.
+#: Shortest string worth replacing. The marker is itself ~80 characters, so swapping a
+#: short string for one would *grow* the response. Only reachable at the tail of a
+#: payload, where the remaining budget can be smaller than the marker.
+_MIN_REPLACEABLE = 256
 
-    Reachable rather than theoretical, and one endpoint is why. Strict JSON has no
-    literal for either value, but Python's own ``json`` module *emits* ``NaN`` and
-    ``Infinity`` and *accepts* them on the way in — so a Python client can send one
-    without noticing. ``POST /v4/assessments/{id}/similar-verses`` takes a list of 300
-    raw floats, rejects non-finite ones with a 422, and Pydantic's validation error
-    echoes the offending input straight back into ``details``. Without this the
-    rejection is a 500.
+#: Key under which a truncated dict records the entries it dropped. Deliberately not a
+#: plausible field name.
+_OMITTED_KEY = "..."
 
-    The names go out as strings (``"nan"``, ``"inf"``, ``"-inf"``) rather than being
-    dropped, so the error still shows the caller what it objected to.
+
+def _omitted_value(size: int) -> str:
+    """Marker replacing one value too large to echo.
+
+    It states the size it replaced, because a marker that does not say *why* the value
+    is missing reads to the next person debugging a large request as "the field arrived
+    empty" — which is a different bug with a different fix.
+
+    It states the *cap* rather than claiming this value exceeded it. A value is replaced
+    when it does not fit the budget still unspent, which is below the cap as soon as
+    anything earlier in the payload has been charged — so "over the 8,192-character
+    limit" would be a lie on a 300-character value that arrived with 100 left.
     """
-    if isinstance(value, float) and not math.isfinite(value):
-        return repr(value)
+    return (
+        f"<{size:,} characters omitted: error details are capped at "
+        f"{_DETAILS_BUDGET:,} characters>"
+    )
+
+
+def _omitted_tail(count: int, noun: str) -> str:
+    """Marker for the entries a container dropped once the budget ran out.
+
+    ``noun`` is pluralized by the count, so a one-entry tail does not read
+    "1 more items omitted" — both nouns are chosen to take a regular ``-s``.
+    """
+    return (
+        f"<{count:,} more {noun}{'' if count == 1 else 's'} omitted: error details "
+        f"are capped at {_DETAILS_BUDGET:,} characters>"
+    )
+
+
+def _content_size(value) -> int:
+    """Cheap, allocation-free stand-in for a scalar's encoded length.
+
+    ``len`` on a 70 MB string is O(1), and ``repr`` on an ``int``/``float`` is what
+    ``json`` itself emits, so it is both exact and cheap. A bool goes that way too —
+    ``bool`` is a subclass of ``int``, and ``repr`` gives it the 4 or 5 characters
+    ``json`` would. Anything else — ``None``, or an object ``jsonable_encoder`` somehow
+    left behind — is charged a flat 4 rather than ``repr``-ed, because ``repr`` on an
+    unknown object can materialise the very second copy this function exists to avoid.
+    """
+    if isinstance(value, (str, bytes)):
+        return len(value)
+    if isinstance(value, (int, float)):  # bool included; its repr is 4-5 chars
+        return len(repr(value))
+    return 4  # null
+
+
+def _bounded_json_safe(value, budget: int):
+    """Make ``value`` JSON-safe and bound its size, in one traversal.
+
+    Returns ``(safe_value, cost)``, where ``cost`` is what ``safe_value`` spent of
+    ``budget``. Three things happen on the way down:
+
+    * **A non-finite float becomes its name** (``nan``, ``inf``, ``-inf``). This is
+      #828's scrub. ``jsonable_encoder`` makes unknown *types* safe but leaves these as
+      floats, and Starlette's ``JSONResponse`` dumps with ``allow_nan=False`` — so an
+      unscrubbed one raises inside the handler and the catch-all reshapes the intended
+      4xx into a generic 500 that does not even chain it. Reachable rather than
+      theoretical: strict JSON has no literal for either, but Python's own ``json``
+      module emits ``NaN`` and accepts it back, so a Python client sends one without
+      noticing, and ``POST /v4/assessments/{id}/similar-verses`` rejects exactly that.
+      Named rather than dropped, so the error still shows what it objected to.
+    * **A string longer than the remaining budget becomes a marker** naming its length.
+      This is #920's reported case: one ``input`` holding 69,905,069 base64 characters.
+      Dict *keys* take the same path, because an oversized string can arrive as one.
+    * **A container that exhausts the budget keeps what fit** and gains one marker
+      naming how many entries it dropped. Truncating rather than replacing the whole
+      container is what keeps a request with sixty small validation errors readable;
+      replacing it wholesale would throw away every ``loc`` and ``msg`` to bound a
+      payload whose individual parts were all fine.
+
+    **The budget is spent in document order**, which is the right priority for free:
+    Pydantic emits ``type``, ``loc`` and ``msg`` before ``input``, so *where* and *what*
+    always survive, and it is the echo that gets cut. Earlier errors outlive later ones
+    for the same reason.
+
+    **The walk is bounded, not just its output.** Each container stops iterating the
+    moment the budget is spent, so this visits O(budget) nodes rather than O(payload) —
+    a 70 MB body is never fully traversed here. What it does *not* buy: Pydantic already
+    holds that 70 MB in memory by the time a handler runs, and ``jsonable_encoder`` has
+    already walked it (without copying string payloads — it returns ``str`` identically).
+    This stops transmission and the serialization that would precede it, not allocation.
+
+    **One walk, not two.** Bounding and float-scrubbing are separate problems, but a
+    separate scrub walk would rebuild the entire 70 MB structure before the cap ever saw
+    it — which is most of the cost the cap exists to avoid — and two functions recursing
+    over the same payload can disagree about which containers they descend into, so a
+    value reached by one and not the other would be silently unbounded or silently
+    unserializable. Folding them costs one paragraph of docstring and removes both.
+    """
     if isinstance(value, dict):
-        return {key: _json_safe_floats(item) for key, item in value.items()}
+        kept: dict = {}
+        spent = 0
+        for index, (key, item) in enumerate(value.items()):
+            if spent >= budget:
+                kept[_OMITTED_KEY] = _omitted_tail(len(value) - index, "key")
+                break
+            # The key goes through the same rule as everything else. It has to:
+            # Pydantic's ``union_tag_not_found`` puts the caller's raw dict in
+            # ``input``, so on ``POST /v4/assessments/{id}/similar-verses`` an
+            # untagged query point can carry an arbitrarily long *key*. Charging a
+            # key without bounding it emitted it in full.
+            key, key_cost = _bounded_json_safe(key, max(budget - spent, 0))
+            spent += key_cost
+            item, cost = _bounded_json_safe(item, max(budget - spent, 0))
+            kept[key] = item
+            spent += cost
+        return kept, spent
+
     if isinstance(value, list):
-        return [_json_safe_floats(item) for item in value]
-    return value
+        items: list = []
+        spent = 0
+        for index, item in enumerate(value):
+            if spent >= budget:
+                items.append(_omitted_tail(len(value) - index, "item"))
+                break
+            item, cost = _bounded_json_safe(item, max(budget - spent, 0))
+            items.append(item)
+            spent += cost
+        return items, spent
+
+    if isinstance(value, float) and not math.isfinite(value):
+        value = repr(value)
+
+    size = _content_size(value)
+    if size > budget and size > _MIN_REPLACEABLE:
+        marker = _omitted_value(size)
+        return marker, len(marker)
+    return value, size
+
+
+def _bounded_details(details: dict | None) -> dict | None:
+    """``details``, made JSON-safe and bounded to :data:`_DETAILS_BUDGET`.
+
+    ``jsonable_encoder`` runs first and the bound second, deliberately. The reverse
+    would bound a cheaper walk, but it would be bounding the wrong thing: the encoder
+    can turn one small object into a large one (it falls back to ``vars(obj)``), and a
+    value it has not normalized yet cannot be measured — ``repr``-ing it to find out how
+    big it is is the copy this is avoiding. Bounding what actually goes on the wire
+    means bounding what the encoder produced. ``jsonable_encoder(None)`` is ``None``, so
+    absent details still fall through to ``exclude_none``.
+    """
+    bounded, _ = _bounded_json_safe(jsonable_encoder(details), _DETAILS_BUDGET)
+    return bounded
 
 
 def _error_response(
@@ -156,14 +314,16 @@ def _error_response(
     that landmine into a normal serialization. ``jsonable_encoder(None)`` is
     ``None``, so absent details still drop out via ``exclude_none``.
 
-    :func:`_json_safe_floats` then covers the one thing ``jsonable_encoder`` does not:
-    ``nan`` and ``inf`` survive it as floats, and ``JSONResponse`` refuses them.
+    :func:`_bounded_details` then covers the two things ``jsonable_encoder`` does not:
+    ``nan`` and ``inf`` survive it as floats and ``JSONResponse`` refuses them (#828),
+    and nothing at all bounds how *big* the result is (#920). Both are fixed in the one
+    traversal that function documents.
     """
     payload = V4ErrorResponse(
         error=V4ErrorDetail(
             code=code,
             message=message,
-            details=_json_safe_floats(jsonable_encoder(details)),
+            details=_bounded_details(details),
         )
     )
     return JSONResponse(
