@@ -293,9 +293,14 @@ are genuinely new below the wire:
   :class:`TfidfArtifactsNotFound` and :class:`TfidfArtifactDimensionMismatch`. An
   assessment can hold corpus vectors and no artifacts, so the first is reachable rather
   than defensive.
-* **Query-count discipline.** At most N + 4 statements, not 3N: one parent, one lookup
-  covering *every* ``vref`` query point, N rankings, and two hydrations over the union of
-  all hits. The rankings are sequential because ``AsyncSession`` cannot run concurrent
+* **Query-count discipline.** N + 4 statements at the top, not 3N: one parent, one lookup
+  covering *every* ``vref`` query point, N rankings, and two hydrations over the union of all
+  hits. Fewer when there is nothing to do — no ``vref`` query point means no lookup, and
+  rankings that all come back empty mean no hydration, so the floor is N + 1. A ``text``
+  query point adds the encoder's own reads on top, once for the batch rather than once per
+  text: v3's ``_get_encoder`` reads the artifact run on every call to validate its memo, and
+  the two vectorizers and the SVD on a miss — so a batch carrying one runs to N + 5 warm and
+  N + 7 cold. The rankings are sequential because ``AsyncSession`` cannot run concurrent
   statements — ``asyncio.gather`` over the database here would corrupt the session rather
   than speed it up.
 
@@ -2279,6 +2284,12 @@ async def get_similar_verses_batch(
     nothing to fetch — a request of only ``text`` and ``vector`` query points issues no
     vref lookup, and rankings that all come back empty issue no text queries. v3 does the
     same and comments it in both of its batch handlers.
+
+    **A ``text`` query point costs more than N + 4**, and the accounting above does not
+    cover it: :func:`_tfidf_encoder` reads the artifact run on every call to validate v3's
+    memo, and the two vectorizers and the SVD on a miss, so a batch carrying one is N + 5
+    warm and N + 7 cold. Paid once for the batch however many texts it holds — the same
+    reason the encode itself is one transform.
 
     The union is **sorted** before it is looked up. A ``set`` iterates in hash order,
     which is stable within a process and not across them, so without this the two
