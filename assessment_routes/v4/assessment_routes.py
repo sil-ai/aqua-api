@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Eleven endpoints:
+happens somewhere else. Twelve endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -17,6 +17,9 @@ happens somewhere else. Eleven endpoints:
   each with the verses it occurs in. The one result read whose rows are not verses.
 * ``GET    /v4/assessments/{id}/similar-verses`` — the ``tfidf`` type's nearest-neighbour
   search. Not a listing and not paginated; see its own contract note below.
+* ``POST   /v4/assessments/{id}/similar-verses`` — the same search, several query points
+  at once, and the only one of the three kinds that the GET cannot express: text encoded
+  server-side. A **read** that returns ``200``; see its own contract note below.
 * ``GET    /v4/assessments/{id}/alignment-scores`` — the ``word-alignment`` type's
   word-level pairings, paginated. Absorbs v3's ``GET /alignmentmatches``.
 * ``GET    /v4/assessments/{id}/missing-words`` — the same type's poorly-aligned words,
@@ -28,8 +31,9 @@ happens somewhere else. Eleven endpoints:
   each score placed against a distribution built from the peer assessments named by
   ``against``. The only paginated read here that does not return a bare ``V4Page``.
 
-The one remaining typed result sub-resource (the ``POST`` form of ``/similar-verses``) is
-the rest of #893 and lands in a follow-up PR.
+That is every typed result sub-resource on #893. What remains on the issue is
+``GET /v4/revisions/{id}/text-search``, which hangs off a revision rather than an
+assessment and so lands in another module.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -98,6 +102,41 @@ own small envelope naming the query point. The path is ``/similar-verses`` rathe
 ``/tfidf`` because the question it answers is "which verses are most like this one";
 naming the resource after TF-IDF would describe how the answer is computed. A deliberate
 departure from guide §15.3, which plans ``/tfidf``.
+
+**The similarity POST is a read, and it is the first POST here that addresses a domain
+resource without creating one.** Enumerated against the live ``/v4/openapi.json`` rather
+than assumed, because the narrower claim is the true one. v4 had **four** POSTs before
+this: ``POST /v4/versions`` and ``POST /v4/revisions`` (``201``), ``POST /v4/assessments``
+(``202``) and ``POST /v4/token`` (``200``). So a ``200`` POST is not unprecedented — but
+the only other one is an OAuth2 grant, which addresses no resource at all. **Every POST
+that names a resource creates something**, and a reader arriving from the rest of the
+surface will assume this one does too. It does not: it is a query whose input — up to 500
+query points, each of which may be 10,000 characters of text or 300 floats — is too big
+for a query string. That is also why it does not touch #827: there is no second effect for
+a retried request to duplicate, so there is nothing to make idempotent.
+
+(The whole v4 *write* surface is larger than the POSTs: eleven operations before this one,
+adding two ``PATCH``es, three ``DELETE``s and the two group-membership writes. None of them
+bears on the question, which is what a POST on this surface means.)
+
+It shares a path with the GET rather than taking one of its own, and the two are exactly
+equivalent on the one query kind they both accept — a test asserts
+``?vref=X&limit=N`` against a one-element ``vref`` batch. v3 spread this over four paths
+(``by_vector``, ``by_vectors``, ``by_text``, ``by_texts``), a singular and a plural form of
+two query kinds; here the request always carries a list and the singular case is a
+one-element one. The kinds are **not equals**: ``text`` is why the endpoint exists,
+``vref`` is convenience, ``vector`` is advanced and today has exactly one caller — the
+Modal TF-IDF worker, the only non-test caller any of v3's four POSTs has.
+
+**The similarity POST's zero-caller sweep is not an argument against it.** ``by_text`` and
+``by_texts`` — the kinds a *client* would use, because a client has no artifacts and needs
+the server to encode — have no callers anywhere; ``by_vectors``, the kind a *runner* would
+use, has the one. That absence is evidence about who exists today, not about what is
+useful: v4 exists for clients who have not arrived, and ``aqua-django-app``, the only
+current client, is first-party. The caller sweep remains the right test for *internal*
+subsystems, which is why the tokenizer and pivot rulings stand and why
+``/textalignmentmatches`` and ``/compare_text_lengths`` were dropped — but it is the wrong
+test for a client-facing capability that nothing else on the surface can answer.
 
 **The two alignment reads are one handler pair, not four endpoints.** v3 spreads this
 table across ``GET /alignmentscores``, ``GET /alignmentmatches`` and
@@ -205,6 +244,8 @@ from api_v4.jobs import (
 from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
 from api_v4.schemas.assessment import (
     BOOK_ABBREVIATION_LENGTH,
+    SIMILAR_VERSES_DEFAULT_LIMIT,
+    SIMILAR_VERSES_MAX_LIMIT,
     VREF_MAX_LENGTH,
     AlignmentScoreOut,
     AlignmentScoreType,
@@ -222,7 +263,16 @@ from api_v4.schemas.assessment import (
     ScoreComparisonOut,
     ScoreComparisonPage,
     SimilarVerseOut,
+    SimilarVersesBatchOut,
     SimilarVersesOut,
+    SimilarVersesRequest,
+    SimilarVersesResultOut,
+    SimilarVersesTextQuery,
+    SimilarVersesTextQueryOut,
+    SimilarVersesVectorQuery,
+    SimilarVersesVectorQueryOut,
+    SimilarVersesVrefQuery,
+    SimilarVersesVrefQueryOut,
     TextLengthsAggregateOut,
     TextLengthsOut,
     TextLengthsRow,
@@ -237,18 +287,6 @@ from schemas.assessment import AssessmentType
 from security_routes.auth_routes import get_current_user
 
 router = fastapi.APIRouter(prefix="/assessments", tags=["Assessments"])
-
-#: Default and maximum neighbours for ``GET /v4/assessments/{id}/similar-verses``.
-#: 10 is v3's default, kept because nothing suggests it is wrong. The ceiling is new: v3
-#: declares ``limit: int = 10`` with no bounds at all, so a caller can ask one request to
-#: rank and serialize an entire assessment's 41,899 verses *with their text*. 100 is a
-#: ranking; past that a caller is listing, and this endpoint does not list.
-#:
-#: Not :data:`~api_v4.pagination.MAX_LIMIT`, despite sharing its value: that constant is
-#: the catalog *page* ceiling and moving it should not move this, since the two bound
-#: different things — a page of a list versus the depth of a ranking.
-SIMILAR_VERSES_DEFAULT_LIMIT = 10
-SIMILAR_VERSES_MAX_LIMIT = 100
 
 #: Bound on the ``source`` filter of ``GET /v4/assessments/{id}/alignment-scores``. The
 #: column is unbounded ``Text``, but the values are single tokenized words, so a value
@@ -1054,6 +1092,165 @@ async def get_assessment_similar_verses(
         query_vref=vref,
         limit=limit,
         items=[SimilarVerseOut(**hit) for hit in hits],
+    )
+
+
+#: Build the echoed query point from the validated request one. A mapping rather than a
+#: method on the models because the echo deliberately drops what the request carries: a
+#: ``.to_echo()`` living on the request model would make the two shapes look like one
+#: thing with a serialization option, and the whole decision here is that they are not.
+_SIMILAR_VERSES_QUERY_ECHOES = {
+    SimilarVersesTextQuery: lambda query: SimilarVersesTextQueryOut(type="text"),
+    SimilarVersesVrefQuery: lambda query: SimilarVersesVrefQueryOut(
+        type="vref", vref=query.vref
+    ),
+    SimilarVersesVectorQuery: lambda query: SimilarVersesVectorQueryOut(type="vector"),
+}
+
+
+@router.post(
+    "/{assessment_id}/similar-verses",
+    response_model=SimilarVersesBatchOut,
+    status_code=status.HTTP_200_OK,
+)
+async def post_assessment_similar_verses(
+    assessment_id: int,
+    body: SimilarVersesRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> SimilarVersesBatchOut:
+    """Find the verses most similar to each of several query points, in one request.
+
+    **This POST is a read, and it creates nothing.** Every other POST on this surface that
+    addresses a domain resource creates something — enumerated rather than assumed: the v4
+    write surface is `POST /versions` and `POST /revisions` (201), `POST /assessments`
+    (202), `PUT /versions/{id}/groups/{group_id}` (204) and `POST /token` (200), and only
+    the last of those is not a create. So this is a query whose input is too big for a
+    query string, and it answers `200` rather than `201`. It is also why nothing here
+    needs an idempotency key: there is no second effect for a retry to duplicate.
+
+    **The reason it exists is `type: "text"`, and that is a capability the GET does not
+    have.** `GET …/similar-verses?vref=X` ranks against a verse *already vectorized in
+    this assessment* — it looks up X's stored vector, and no stored vector means
+    `404 VREF_NOT_FOUND`. A caller holding text that is not in the corpus (a draft verse, a
+    back-translation, a search phrase) cannot use it at all. A `text` query point is
+    encoded server-side with this assessment's own vectorizers and SVD, which is the only
+    way to put arbitrary text into the same space as its corpus vectors.
+
+    **Three kinds of query point, and they are not equals.** `text` is the client kind
+    above. `vref` is convenience: it does exactly what the GET does, batched, so a caller
+    with fifty verses makes one request rather than fifty. `vector` is advanced and
+    runner-oriented — you only hold one if you pulled this assessment's artifacts and ran
+    the transform yourself — and its expected length follows that artifact run rather than
+    being a fixed promise of this API.
+
+    **`results[i]` answers `queries[i]`.** Array position is the correspondence and there
+    is no `index` field, because a redundant index is a second thing that can disagree with
+    the first. Nothing is deduplicated, reordered or dropped: two identical query points
+    produce two identical entries. The echoed `query` carries the discriminator, plus
+    `vref` where there is one — never the text or the vector you sent, which would let one
+    request double its own response size.
+
+    **The singular case is a one-element list**, not a second request shape. That is what
+    collapses v3's four paths (`by_vector`, `by_vectors`, `by_text`, `by_texts`) into one,
+    and it makes the two methods exactly equivalent rather than approximately so:
+
+        GET  …/similar-verses?vref=X&limit=N
+        POST …/similar-verses {"queries": [{"type": "vref", "vref": "X"}], "limit": N}
+
+    return the same neighbours in the same order. A test pins it.
+
+    **Self-exclusion is per query point.** A `vref` query point excludes itself
+    automatically, exactly as on the GET — it would otherwise be its own top hit at maximum
+    similarity. `text` and `vector` have no verse to exclude, so the caller names one with
+    `exclude_vref`, optionally widened to its book with `exclude_book`. That guard matters
+    most on the primary kind: encoding a verse's own text and getting that verse back is
+    precisely the leakage it exists to prevent. v3 offers these on its text variants only;
+    v4 offers them on `vector` too, because the exclusion filters *results* and so is
+    orthogonal to how the query point arrived — removing an asymmetry, not adding a
+    feature.
+
+    **Four failures, kept distinct, and one bad query point fails the whole request.** No
+    partial-success shape: v3's `by_vectors` already rejects the entire request on one
+    wrong-length vector, and the alternative makes every client write two error paths for
+    one call.
+
+    * An assessment you cannot reach, or one that is not `type = tfidf` →
+      `404 ASSESSMENT_NOT_FOUND`, the same answer the rest of this family gives.
+    * A `text` query point on an assessment with **no TF-IDF artifacts** →
+      `404 TFIDF_ARTIFACTS_NOT_FOUND`. Distinct from the two above and from the one below:
+      text needs the vectorizers and SVD to encode with, `vref` and `vector` do not, and an
+      assessment can have corpus vectors without artifacts.
+    * A `vref` query point with no vector here → `404 VREF_NOT_FOUND`, the code the GET
+      already uses, with the failing query point's index in `details`.
+    * A vector of the wrong length, or one containing `inf`/`nan` → `422`, with `loc`
+      naming the query point's index. Caught before pgvector can raise it.
+
+    **Three bounds, all 422s and none clamped**: `limit` 1–100 (the GET's, so one field
+    means one thing on one path), `len(queries)` 1–500, and `len(queries) × limit` at most
+    25,000 — the combined cap is the one neither of the others catches, since 500 queries
+    at limit 100 satisfies both and asks for 50,000 rows with their text.
+
+    **No `total` and no `offset`, at either level**, for the reason the GET records: these
+    rows are computed pairings, so there is no population to count and paging a ranking is
+    not a thing. Ask for more neighbours with a larger `limit`.
+
+    `reference_text` comes from the assessment's own reference and is null throughout when
+    it has none — the normal case for this type. v3's `reference_id` is not accepted here,
+    and neither is a body `assessment_id`: it is the path parameter.
+    """
+    try:
+        rankings = await assessment_service.get_similar_verses_batch(
+            db,
+            current_user,
+            assessment_id,
+            queries=body.queries,
+            limit=body.limit,
+        )
+    except assessment_service.SimilarityVrefNotFound as exc:
+        raise V4APIError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="VREF_NOT_FOUND",
+            message=str(exc),
+            # ``index`` locates the failing query point the way ``loc`` does for a
+            # validation error. Same code and same two keys as the GET's, plus the one
+            # thing a batch adds — a caller who sent 500 query points needs to know which.
+            details={
+                "assessment_id": assessment_id,
+                "vref": exc.vref,
+                "index": exc.index,
+            },
+        ) from exc
+    except assessment_service.TfidfArtifactsNotFound as exc:
+        raise V4APIError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="TFIDF_ARTIFACTS_NOT_FOUND",
+            message=str(exc),
+            details={"assessment_id": assessment_id},
+        ) from exc
+    except assessment_service.TfidfArtifactDimensionMismatch as exc:
+        raise V4APIError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="TFIDF_ARTIFACT_DIMENSION_MISMATCH",
+            message=str(exc),
+            details={
+                "assessment_id": assessment_id,
+                "artifact_dimensions": exc.produced,
+                "corpus_dimensions": exc.expected,
+            },
+        ) from exc
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+
+    return SimilarVersesBatchOut(
+        limit=body.limit,
+        results=[
+            SimilarVersesResultOut(
+                query=_SIMILAR_VERSES_QUERY_ECHOES[type(query)](query),
+                items=[SimilarVerseOut(**hit) for hit in hits],
+            )
+            for query, hits in zip(body.queries, rankings)
+        ],
     )
 
 

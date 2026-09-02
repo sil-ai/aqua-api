@@ -13,9 +13,13 @@ abort the test — see api_v4/errors.py. test_v4_subapp.py covers the same 500 p
 end to end through the parent mount.
 """
 
+import json
+import math
+
 import fastapi
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import field_validator
 
 import app as app_module
 from api_v4.app import create_v4_app
@@ -27,6 +31,24 @@ ENVELOPE_KEYS = {"code", "message", "details"}
 
 class _ProbeBody(V4BaseModel):
     value: int
+
+
+class _ProbeFloats(V4BaseModel):
+    """A body whose rejection echoes the caller's floats back into ``details``.
+
+    The shape ``POST /v4/assessments/{id}/similar-verses`` has: a list of raw floats
+    with a validator that refuses non-finite ones. Pydantic puts the offending input
+    into the error, so the envelope has to survive carrying it.
+    """
+
+    values: list[float]
+
+    @field_validator("values")
+    @classmethod
+    def _finite(cls, value):
+        if any(not math.isfinite(number) for number in value):
+            raise ValueError("values must not contain inf or nan")
+        return value
 
 
 @pytest.fixture
@@ -79,8 +101,24 @@ def error_app():
             details={"ids": {3, 1, 2}},
         )
 
+    @v4_app.get("/_raise_v4_api_error_non_finite")
+    async def _raise_v4_api_error_non_finite():
+        # details holds a nan. jsonable_encoder leaves it a float and
+        # JSONResponse dumps with allow_nan=False, so an unscrubbed envelope
+        # raises inside the handler and downgrades this 422 into a 500.
+        raise V4APIError(
+            status_code=422,
+            code="BAD_NUMBER",
+            message="Not a number.",
+            details={"values": [float("nan"), float("inf"), 1.5]},
+        )
+
     @v4_app.post("/_validate")
     async def _validate(body: _ProbeBody):
+        return {"ok": True}
+
+    @v4_app.post("/_validate_floats")
+    async def _validate_floats(body: _ProbeFloats):
         return {"ok": True}
 
     @v4_app.get("/_raise_bare_exception")
@@ -166,6 +204,37 @@ def test_v4_api_error_with_unserializable_details_does_not_downgrade(client):
     _assert_envelope(body)
     assert body["error"]["code"] == "CONFLICT_STATE"
     assert sorted(body["error"]["details"]["ids"]) == [1, 2, 3]
+
+
+def test_non_finite_details_do_not_downgrade_the_status(client):
+    """The sibling of the unserializable-``details`` test above, for the other half of
+    the same landmine. ``jsonable_encoder`` makes unknown *types* safe and leaves
+    ``nan``/``inf`` as floats, which ``JSONResponse`` then refuses — so without the
+    scrub this 422 arrives as a generic 500 with its code and message gone."""
+    resp = client.get("/_raise_v4_api_error_non_finite")
+    assert resp.status_code == 422, resp.text
+    _assert_envelope(resp.json())
+    error = resp.json()["error"]
+    assert error["code"] == "BAD_NUMBER"
+    # Named rather than dropped, so the error still shows what it objected to.
+    assert error["details"] == {"values": ["nan", "inf", 1.5]}
+
+
+def test_a_validation_error_echoing_a_nan_is_still_a_422(client):
+    """The reachable case, and the one that put the scrub here. Strict JSON has no
+    literal for ``nan``, but Python's own encoder emits one and its parser accepts one,
+    so a Python client can send it without noticing — and the validation error echoes
+    the input straight back into ``details``."""
+    resp = client.post(
+        "/_validate_floats",
+        content=json.dumps({"values": [float("nan"), 1.0]}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    _assert_envelope(resp.json())
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+    (error,) = resp.json()["error"]["details"]["errors"]
+    assert error["input"] == ["nan", 1.0]
 
 
 def test_validation_error_returns_422_envelope(client):

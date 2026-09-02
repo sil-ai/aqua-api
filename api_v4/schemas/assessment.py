@@ -212,6 +212,32 @@ assessment. v4 uses the assessment's own reference where it has one and returns
 ``reference_text: null`` where it does not. A caller who wants arbitrary verse text
 already has the verses read (#892).
 
+The POST form (``SimilarVersesRequest`` → :class:`SimilarVersesBatchOut`) is the same
+ranking with several query points at once, and it is the one place in this module where a
+*request* body is a discriminated union. Three things about it are decisions rather than
+mechanics:
+
+**It does not reuse the GET's envelope.** :class:`SimilarVersesOut` names *the* query point
+and holds *the* items; a batch has several of each, so there is no ``query_vref`` and no
+``items`` for it to fill. Reusing it could only ever answer one query point, which is the
+whole thing the POST adds — so :class:`SimilarVersesBatchOut` is a second envelope, and
+``results[i]`` answers ``queries[i]`` by position with no ``index`` field to disagree with
+it.
+
+**The request and the echo are two different unions, on purpose.**
+:data:`SimilarVersesQuery` carries what you send; :data:`SimilarVersesQueryOut` carries the
+discriminator and, on the one kind where it is short and useful, ``vref``. A 10,000-
+character ``text`` and a 300-float ``vector`` do not come back, at up to 500 query points
+apiece — echoing input verbatim would let one request double its own response size, and
+the caller already holds it.
+
+**Both are unions of real models rather than one model with optional fields**, the same
+call :data:`AssessmentResultRow` and :data:`ScoreComparisonRow` make. On the request side
+that is what makes an impossible query point — a ``vector`` carrying a ``text``, an
+exclusion on a ``vref`` — unconstructible instead of checked in the handler; on the echo
+side it is what keeps ``vref`` *absent* on the two kinds that have none, rather than
+conventionally null.
+
 
 The alignment reads: word rows, and the endpoint that stopped existing
 -----------------------------------------------------------------------
@@ -307,6 +333,7 @@ the path names the subject and something has to name the peers. The subclass rat
 standalone model, and the shared envelope left untouched, are argued on the class itself.
 """
 
+import math
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Union
@@ -324,6 +351,21 @@ from api_v4.schemas.base import V4BaseModel
 from api_v4.schemas.bible import BOOK_ABBREVIATION_LENGTH
 from schemas.assessment import AssessmentType
 
+# The similarity POST's three bounds, imported rather than restated. ``limit`` is v4's
+# own (below); these three are v3's, and the one v3 caller — the Modal TF-IDF worker —
+# already chunks its batches to honour both ceilings *by value*, so keeping them
+# identical is what lets it migrate off ``/v3/tfidf_result/by_vectors`` without a
+# rewrite. ``TFIDF_CORPUS_VECTOR_DIM`` and ``TFIDF_MAX_TEXT_CHARS`` come along for the
+# same reason: they describe the stored corpus and the encoder's input, neither of which
+# changes between surfaces. Importing from the frozen v3 schemas is the established
+# direction — ``AssessmentType`` above does it too.
+from schemas.tfidf import (
+    TFIDF_CORPUS_VECTOR_DIM,
+    TFIDF_MAX_BATCH_RESULTS,
+    TFIDF_MAX_BATCH_VECTORS,
+    TFIDF_MAX_TEXT_CHARS,
+)
+
 #: Generous bound for a verse reference. The longest entry in ``fixtures/vref.txt``
 #: is 11 characters (``PSA 119:100``). Bounded rather than free-form because these
 #: values land in ``Assessment.kwargs``, which the shared v3 validator caps at 1000
@@ -334,6 +376,28 @@ VREF_MAX_LENGTH = 32
 #: Bound for the agent's requested response language ("English", "Português do
 #: Brasil", an ISO code, ...). Same reasoning as :data:`VREF_MAX_LENGTH`.
 RESPONSE_LANGUAGE_MAX_LENGTH = 64
+
+#: Default and maximum neighbours for both forms of the similarity read — the GET's
+#: ``limit`` query parameter and :class:`SimilarVersesRequest`'s ``limit`` field.
+#: 10 is v3's default, kept because nothing suggests it is wrong. The ceiling is new: v3
+#: declares ``limit: int = 10`` with no bounds at all on the GET, so a caller can ask one
+#: request to rank and serialize an entire assessment's 41,899 verses *with their text*.
+#: 100 is a ranking; past that a caller is listing, and this endpoint does not list.
+#:
+#: **One number for one concept across both methods.** v3's four POSTs allow ``limit`` up
+#: to 500 while the shipped GET allows 100; two bounds for the same field on the same path
+#: is indefensible, so the POST takes the GET's. What the 500 ceiling was really guarding
+#: — total rows in one response — is guarded instead by ``TFIDF_MAX_BATCH_RESULTS``, which
+#: bounds ``len(queries) × limit``. Defined here rather than in the router, where the GET
+#: originally put it, because the POST's request *schema* needs it and schemas cannot
+#: import from routes; the router imports these names from here and re-exports them, so
+#: importers of either module are unaffected.
+#:
+#: Not :data:`~api_v4.pagination.MAX_LIMIT`, despite sharing its value: that constant is
+#: the catalog *page* ceiling and moving it should not move this, since the two bound
+#: different things — a page of a list versus the depth of a ranking.
+SIMILAR_VERSES_DEFAULT_LIMIT = 10
+SIMILAR_VERSES_MAX_LIMIT = 100
 
 
 class AssessmentOptionsBase(V4BaseModel):
@@ -1149,6 +1213,412 @@ class SimilarVersesOut(V4BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# POST /v4/assessments/{id}/similar-verses — the same ranking, N query points,
+# and the one of them that the GET cannot express at all.
+# ---------------------------------------------------------------------------
+
+
+class SimilarVersesQueryBase(V4BaseModel):
+    """Base for every member of the query-point union.
+
+    Supplies the closed allowlist and nothing else — it declares no ``type``, so it is
+    not itself a union member. ``extra="forbid"`` is what makes v3's two dropped inputs
+    loud: a query point carrying ``reference_id`` or ``assessment_id`` is a 422 naming
+    the key rather than a silently ignored one, which is the same rule
+    :class:`AssessmentOptionsBase` applies to the options union.
+    """
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "extra": "forbid",
+    }
+
+
+class SimilarVersesExcludableQuery(SimilarVersesQueryBase):
+    """Base for the two kinds that carry no verse of their own.
+
+    A ``vref`` query point excludes itself automatically, exactly as the GET does — there
+    is a verse to exclude and the server knows which. A ``text`` or ``vector`` query point
+    has no verse, so the caller names one. That is v3's leakage guard, and the case it
+    exists for is the primary one: encode a verse's own text, and without this the verse
+    comes back as its own nearest neighbour at similarity ≈ 1.
+
+    **The exclusions sit on the query point rather than on the request**, which the Q4
+    ruling states in the context of a single query point rather than as a placement
+    decision — so it is an interpretation. It is the one that works: a batch of fifty
+    encoded verses needs fifty different exclusions, and a request-level ``exclude_vref``
+    could only ever express one of them. v3 reached the same place from the other
+    direction, adding a parallel ``exclude_vrefs`` list to ``by_texts`` that has to be
+    validated for equal length against ``texts``; putting the field where it applies
+    makes that class of mismatch unconstructible instead of checked.
+
+    **v4 offers these on ``vector`` as well as ``text``; v3 offers them on the text
+    variants only.** Removing an asymmetry rather than adding a feature: the exclusion
+    filters *results*, so it is orthogonal to how the query point arrived, and a caller
+    who encoded a verse out-of-band has exactly the leakage problem the guard exists for.
+    """
+
+    exclude_vref: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=VREF_MAX_LENGTH,
+        description=(
+            "Drop this verse from *this* query point's neighbours, as a canonical vref "
+            "(`MAT 9:20`). The leakage guard: encode a verse's own text without it and "
+            "that verse is the top hit, which tells you only what you sent. Applies to "
+            "this query point alone, so a batch can exclude a different verse per entry. "
+            "Omitted means exclude nothing. A vref that names no verse in the assessment "
+            "excludes nothing and is **not** an error — unlike a `vref` query point, this "
+            "is a filter over results rather than the query itself."
+        ),
+    )
+    exclude_book: bool = Field(
+        default=False,
+        description=(
+            "Widen `exclude_vref` to its whole book — `MAT 9:20` drops every `MAT` "
+            "verse. For a draft whose surrounding chapters are already in the corpus and "
+            "would otherwise fill the ranking with near-copies of itself. **Requires "
+            "`exclude_vref`**: true without it is a 422, as in v3, because there would "
+            "be no book to name."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _exclude_book_needs_a_vref(self) -> "SimilarVersesExcludableQuery":
+        if self.exclude_book and self.exclude_vref is None:
+            raise ValueError("exclude_book requires exclude_vref")
+        return self
+
+
+class SimilarVersesTextQuery(SimilarVersesExcludableQuery):
+    """Rank against arbitrary text, encoded server-side. **The primary kind.**
+
+    This is the capability the GET does not have and cannot be given. The GET ranks
+    against a verse *already vectorized in the assessment*; text that is not in the
+    corpus — a draft verse, a back-translation, a search phrase — has no stored vector to
+    look up, so there is nothing for it to rank against. Here the server encodes the text
+    with the assessment's own fitted vectorizers and SVD, which puts it in the same space
+    as the corpus vectors and makes the comparison meaningful.
+
+    It is also the kind with a failure of its own: encoding needs those artifacts, and an
+    assessment can hold corpus vectors without them. See the endpoint's
+    ``TFIDF_ARTIFACTS_NOT_FOUND``.
+    """
+
+    type: Literal["text"]
+    text: str = Field(
+        min_length=1,
+        max_length=TFIDF_MAX_TEXT_CHARS,
+        description=(
+            f"The text to find neighbours for. Encoded server-side against this "
+            f"assessment's own vectorizers and SVD, so it does not have to be a verse "
+            f"the assessment covers — that is the whole point of this kind. At most "
+            f"{TFIDF_MAX_TEXT_CHARS:,} characters (v3's bound, unchanged): a verse is "
+            f"far under it, and the cap only stops a pathological multi-megabyte string "
+            f"from driving a huge transform on a worker thread."
+        ),
+    )
+
+
+class SimilarVersesVrefQuery(SimilarVersesQueryBase):
+    """Rank against a verse already vectorized in this assessment. **Convenience.**
+
+    Exactly what the GET does, and accepted here so a caller with fifty verses makes one
+    request rather than fifty. That is the only reason it exists: excluding it would mean
+    a caller holding fifty raw strings can batch and a caller holding fifty verse
+    references cannot, which is a difference with no reason behind it.
+
+    It also makes the relationship between the two methods exact rather than approximate,
+    and a test pins the equivalence::
+
+        GET  …/similar-verses?vref=X&limit=N
+        POST …/similar-verses {"queries": [{"type": "vref", "vref": "X"}], "limit": N}
+
+    No exclusion fields, because there is nothing for a caller to decide: the queried
+    verse is excluded from its own ranking automatically, exactly as on the GET. They are
+    *absent* rather than accepted-and-ignored, so this is not expressible at all.
+    """
+
+    type: Literal["vref"]
+    vref: str = Field(
+        min_length=1,
+        max_length=VREF_MAX_LENGTH,
+        description=(
+            "The verse to find neighbours for, as a canonical vref (`MAT 9:20`). Its "
+            "stored vector is the query point, so a verse this assessment holds no "
+            "vector for is a `404 VREF_NOT_FOUND` naming this query point's index — not "
+            "an empty result, which would be indistinguishable from a verse with no "
+            "neighbours. This verse is excluded from its own ranking."
+        ),
+    )
+
+
+class SimilarVersesVectorQuery(SimilarVersesExcludableQuery):
+    """Rank against a vector the caller encoded themselves. **Advanced; runner-oriented.**
+
+    A caller only holds one of these if they pulled the assessment's artifacts and ran the
+    transform locally, which today means the Modal TF-IDF worker — the one non-test caller
+    any of v3's four POSTs has. It is on the public contract so that worker has somewhere
+    to go when v3 retires, rather than needing a second ranking path built for it later.
+
+    **The expected length follows the assessment's own artifact run; it is not a stable
+    API constant.** It is 300 today because that is what the current SVD configuration
+    produces and what ``tfidf_pca_vector.vector`` stores. If the maths changes, this
+    changes with it — the number is a property of how the assessment was vectorized, not a
+    promise of the endpoint. A caller who cannot state which artifact run produced their
+    vector wants :class:`SimilarVersesTextQuery`, which has no such coupling because the
+    server does the encoding.
+    """
+
+    type: Literal["vector"]
+    vector: list[float] = Field(
+        min_length=TFIDF_CORPUS_VECTOR_DIM,
+        max_length=TFIDF_CORPUS_VECTOR_DIM,
+        description=(
+            f"The query point itself, as the raw SVD output the corpus vectors are — not "
+            f"re-normalized. Exactly {TFIDF_CORPUS_VECTOR_DIM} numbers, all finite; "
+            f"anything else is a 422 naming this query point's index, caught here rather "
+            f"than left for pgvector to raise against a `Vector"
+            f"({TFIDF_CORPUS_VECTOR_DIM})` column. **The length is this assessment's, not "
+            f"the API's** — see the model description."
+        ),
+    )
+
+    @field_validator("vector")
+    @classmethod
+    def _reject_non_finite(cls, value: list[float]) -> list[float]:
+        """Reject ``inf``/``nan``, which JSON does not have and Python's parser accepts.
+
+        Strict JSON has no literal for either, but ``json.loads`` accepts ``Infinity`` and
+        ``NaN``, so a client using Python's own encoder can send them without noticing.
+        pgvector rejects them at insert but not in a query expression, so an unguarded
+        ``nan`` would make every similarity ``nan`` and return an arbitrary ranking with a
+        200 rather than an error. v3 guards the same thing the same way.
+        """
+        if any(not math.isfinite(number) for number in value):
+            raise ValueError("vector must not contain inf or nan")
+        return value
+
+
+#: One query point, discriminated on ``type``. A union of three real models rather than
+#: one model with six optional fields and a validator, for the reason
+#: :data:`AssessmentOptions` gives: Pydantic dispatches on the tag, so an unknown ``type``
+#: reports *that* instead of three unrelated per-member failures, and an impossible
+#: combination — ``vector`` with a ``text``, exclusions on a ``vref`` — cannot be
+#: constructed rather than being caught in the handler. Fourth application of #486's
+#: "satisfied by construction" principle, after Versions, :class:`ResultScope` and the
+#: verses filters.
+#:
+#: The three kinds are **not equals**, and the ordering here is deliberate: ``text`` is
+#: the client kind and the justification for the endpoint, ``vref`` is convenience, and
+#: ``vector`` is advanced. Each model's own docstring says which it is.
+SimilarVersesQuery = Annotated[
+    Union[
+        SimilarVersesTextQuery,
+        SimilarVersesVrefQuery,
+        SimilarVersesVectorQuery,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class SimilarVersesRequest(V4BaseModel):
+    """Request body for ``POST /v4/assessments/{id}/similar-verses``.
+
+    **The request always carries a list, and the singular case is a one-element list.**
+    v3's split into singular and plural endpoints is what produced four paths for one
+    operation; reproducing it as two request shapes on one path would keep the cost and
+    lose the point.
+
+    Closed allowlist (``extra="forbid"``), which is what makes the two not-ported inputs
+    loud rather than silent. ``assessment_id`` is the path parameter — two places to say
+    one thing, one of which can disagree — and ``reference_id`` is gone for the reason the
+    GET already records: it let a caller name any revision, making the response depend on
+    a display preference rather than on the assessment.
+
+    **Three bounds, all 422s and none clamped**, matching the GET's stated behaviour:
+
+    ======================  ==================================  ============================
+    Bound                   Value                               Source
+    ======================  ==================================  ============================
+    ``limit``               1–:data:`SIMILAR_VERSES_MAX_LIMIT`  the GET's, already shipped
+    ``len(queries)``        1–``TFIDF_MAX_BATCH_VECTORS``       v3's batch ceiling
+    ``len(queries) × limit``  ≤ ``TFIDF_MAX_BATCH_RESULTS``     v3's combined ceiling
+    ======================  ==================================  ============================
+
+    v3's POSTs allow ``limit`` up to 500 and the shipped GET allows 100. **The GET's 100
+    wins**: two bounds for one concept on one path is indefensible, and the combined cap
+    does the work the 500 ceiling was doing. The two batch constants are imported from
+    ``schemas.tfidf`` rather than restated, because the existing v3 caller chunks to
+    honour both by value — keeping them identical is what lets it migrate without a
+    rewrite.
+
+    The combined cap is the one that has to be checked rather than declared: 500 queries
+    at limit 100 satisfies both individual bounds and asks for 50,000 ranked rows with
+    their verse text, twice the ceiling.
+    """
+
+    queries: list[SimilarVersesQuery] = Field(
+        min_length=1,
+        max_length=TFIDF_MAX_BATCH_VECTORS,
+        description=(
+            f"The query points, each naming what to rank against and how. `results[i]` "
+            f"corresponds to `queries[i]`. At least one and at most "
+            f"{TFIDF_MAX_BATCH_VECTORS}, and `len(queries) × limit` must not exceed "
+            f"{TFIDF_MAX_BATCH_RESULTS:,}. Duplicates are allowed and are answered "
+            f"independently — nothing is deduplicated, because that would break the "
+            f"index alignment the response depends on."
+        ),
+    )
+    limit: int = Field(
+        default=SIMILAR_VERSES_DEFAULT_LIMIT,
+        ge=1,
+        le=SIMILAR_VERSES_MAX_LIMIT,
+        description=(
+            f"How many neighbours to return **per query point**. Defaults to "
+            f"{SIMILAR_VERSES_DEFAULT_LIMIT}; must be between 1 and "
+            f"{SIMILAR_VERSES_MAX_LIMIT}, the same bound the GET publishes, and "
+            f"out-of-range values are rejected with 422 rather than clamped. One value "
+            f"for the whole request: a per-query-point limit would let one entry starve "
+            f"the others of the combined budget."
+        ),
+    )
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "queries": [
+                    {
+                        "type": "text",
+                        "text": "In the beginning God created the heavens",
+                    },
+                    {"type": "vref", "vref": "MAT 9:20"},
+                ],
+                "limit": 10,
+            }
+        },
+    }
+
+    @model_validator(mode="after")
+    def _within_the_combined_budget(self) -> "SimilarVersesRequest":
+        requested = len(self.queries) * self.limit
+        if requested > TFIDF_MAX_BATCH_RESULTS:
+            raise ValueError(
+                f"len(queries) * limit must not exceed {TFIDF_MAX_BATCH_RESULTS}; "
+                f"got {len(self.queries)} * {self.limit} = {requested}"
+            )
+        return self
+
+
+class SimilarVersesTextQueryOut(V4BaseModel):
+    """The echo of a ``text`` query point: the discriminator, and nothing else.
+
+    The text itself does not come back. Echoing a 10,000-character string per query point
+    would let one request double its own response size, and the caller already has it —
+    array position is what identifies the query, not its content.
+    """
+
+    type: Literal["text"]
+
+
+class SimilarVersesVrefQueryOut(V4BaseModel):
+    """The echo of a ``vref`` query point. The one kind whose input comes back.
+
+    ``vref`` is short and it is the only part of a query point that is useful to read back
+    off a response: it names a verse, so a client rendering "verses like MAT 9:20" has the
+    label without holding the request.
+    """
+
+    type: Literal["vref"]
+    vref: str = Field(
+        description="The verse this ranking was computed against, echoed verbatim.",
+    )
+
+
+class SimilarVersesVectorQueryOut(V4BaseModel):
+    """The echo of a ``vector`` query point: the discriminator, and nothing else.
+
+    Same reasoning as the text echo, more so — 300 floats per query point, at up to 500
+    query points, is a response inflated by the size of its own request.
+    """
+
+    type: Literal["vector"]
+
+
+#: The echoed query point, discriminated on ``type`` like the request's. A union rather
+#: than one model with a nullable ``vref`` for the reason :data:`AssessmentResultRow` is
+#: one: ``vref`` must be *absent* on the two kinds that have none, not conventionally
+#: null, so a client cannot read a null as "the query named no verse".
+SimilarVersesQueryOut = Annotated[
+    Union[
+        SimilarVersesTextQueryOut,
+        SimilarVersesVrefQueryOut,
+        SimilarVersesVectorQueryOut,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class SimilarVersesResultOut(V4BaseModel):
+    """One query point's answer: which query it was, and its ranked neighbours."""
+
+    query: SimilarVersesQueryOut = Field(
+        description=(
+            "Which query point this is the answer to — the discriminator, plus `vref` on "
+            "the one kind where it is short and useful. **Not the correspondence "
+            "mechanism**: `results[i]` answers `queries[i]`, and this echo is a label. It "
+            "deliberately does not carry the text or the vector you sent."
+        ),
+    )
+    items: list[SimilarVerseOut] = Field(
+        description=(
+            "The neighbours for this query point, most similar first. Ties break on "
+            "`vref`, so the same request twice returns the same ordering. May be shorter "
+            "than `limit`, and empty is a valid answer — an assessment with one vector "
+            "has no neighbours to offer."
+        ),
+    )
+
+
+class SimilarVersesBatchOut(V4BaseModel):
+    """The body of ``POST /v4/assessments/{id}/similar-verses``: N rankings, in order.
+
+    **Not** :class:`SimilarVersesOut`, and that is the shape decision rather than an
+    oversight. The GET's envelope names *the* query point and holds *the* items; this
+    carries several of each, so there is no single ``query_vref`` and no single ``items``
+    for it to reuse. A response that reused the GET's envelope could only answer one query
+    point, which is the whole thing this endpoint adds.
+
+    **``results[i]`` corresponds to ``queries[i]``, and there is no ``index`` field.**
+    Array position *is* the correspondence; a redundant index is a second thing that can
+    disagree with the first. Nothing is deduplicated, reordered or dropped — two identical
+    query points produce two identical entries, and a query point that fails takes the
+    whole request with it rather than leaving a gap.
+
+    **No ``total`` and no ``offset``, at either level**, for the reason
+    :class:`SimilarVersesOut` records: the rows are computed pairings, so there is no
+    population to count and paging a ranking is not a thing. This is not a
+    :class:`~api_v4.pagination.V4Page` for the same reason the GET's envelope is not one.
+    """
+
+    limit: int = Field(
+        ge=1,
+        description=(
+            "The maximum number of neighbours requested per query point, echoed from the "
+            "request. Each entry's `items` may be shorter."
+        ),
+    )
+    results: list[SimilarVersesResultOut] = Field(
+        description=(
+            "One entry per query point, in the order they were sent. Always the same "
+            "length as the request's `queries`: `results[i]` answers `queries[i]`."
+        ),
+    )
+
+
 class AlignmentScoreType(str, Enum):
     """Which of the two word-alignment score tables ``/alignment-scores`` reads.
 
@@ -1811,6 +2281,12 @@ class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
 __all__ = [
     "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
+    "SIMILAR_VERSES_DEFAULT_LIMIT",
+    "SIMILAR_VERSES_MAX_LIMIT",
+    "TFIDF_CORPUS_VECTOR_DIM",
+    "TFIDF_MAX_BATCH_RESULTS",
+    "TFIDF_MAX_BATCH_VECTORS",
+    "TFIDF_MAX_TEXT_CHARS",
     "VREF_MAX_LENGTH",
     "AgentCritiqueOptions",
     "AlignmentScoreOut",
@@ -1837,7 +2313,20 @@ __all__ = [
     "SemanticSimilarityOptions",
     "SentenceLengthOptions",
     "SimilarVerseOut",
+    "SimilarVersesBatchOut",
+    "SimilarVersesExcludableQuery",
     "SimilarVersesOut",
+    "SimilarVersesQuery",
+    "SimilarVersesQueryBase",
+    "SimilarVersesQueryOut",
+    "SimilarVersesRequest",
+    "SimilarVersesResultOut",
+    "SimilarVersesTextQuery",
+    "SimilarVersesTextQueryOut",
+    "SimilarVersesVectorQuery",
+    "SimilarVersesVectorQueryOut",
+    "SimilarVersesVrefQuery",
+    "SimilarVersesVrefQueryOut",
     "TextLengthsAggregateOut",
     "TextLengthsOptions",
     "TextLengthsOut",
