@@ -42,7 +42,7 @@ path names a revision:
 * ``TestTextSearchWildcards`` — v3's wildcard grid, case for case, over v3's own non-ASCII
   fixture. This is the behaviour most likely to drift now the match is a Postgres regex
   rather than a Python one.
-* ``TestTextSearchWordBoundaries`` — each ``\y`` on its own, over a fixture built so that
+* ``TestTextSearchWordBoundaries`` — each ``\\y`` on its own, over a fixture built so that
   deleting either one changes an answer. Added because the mutation pass showed the ported
   grid above cannot see them: v3's fixture has no word carrying the search token as a
   strict prefix, so the right-hand boundary could be deleted with every case still green.
