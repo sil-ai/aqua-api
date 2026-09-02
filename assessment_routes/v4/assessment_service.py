@@ -293,14 +293,16 @@ are genuinely new below the wire:
   :class:`TfidfArtifactsNotFound` and :class:`TfidfArtifactDimensionMismatch`. An
   assessment can hold corpus vectors and no artifacts, so the first is reachable rather
   than defensive.
-* **Query-count discipline.** N + 4 statements, not 3N: one parent, one lookup covering
-  *every* ``vref`` query point, N rankings, and two hydrations over the union of all hits.
-  A ``text`` query point adds the encoder's own reads on top of that, once for the batch
-  rather than once per text: v3's ``_get_encoder`` reads the artifact run on every call to
-  validate its memo, and the two vectorizers and the SVD on a miss — so a batch carrying
-  one is N + 5 warm and N + 7 cold. The rankings are sequential because ``AsyncSession``
-  cannot run concurrent statements — ``asyncio.gather`` over the database here would
-  corrupt the session rather than speed it up.
+* **Query-count discipline.** N + 4 statements at the top, not 3N: one parent, one lookup
+  covering *every* ``vref`` query point, N rankings, and two hydrations over the union of all
+  hits. Fewer when there is nothing to do — no ``vref`` query point means no lookup, and
+  rankings that all come back empty mean no hydration, so the floor is N + 1. A ``text``
+  query point adds the encoder's own reads on top, once for the batch rather than once per
+  text: v3's ``_get_encoder`` reads the artifact run on every call to validate its memo, and
+  the two vectorizers and the SVD on a miss — so a batch carrying one runs to N + 5 warm and
+  N + 7 cold. The rankings are sequential because ``AsyncSession`` cannot run concurrent
+  statements — ``asyncio.gather`` over the database here would corrupt the session rather
+  than speed it up.
 
 
 How the alignment reads are shaped (:func:`get_alignment_scores`, :func:`get_missing_words`)
