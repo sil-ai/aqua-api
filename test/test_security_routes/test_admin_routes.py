@@ -200,12 +200,16 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["detail"] == "Group is linked to users and cannot be deleted"
 
     # send a post request to unlink the user from the group as an admin
+    assert link_exists(test_db_session, "testuser1", "Group1")
     response = client.post(
         f"{prefix}/unlink-user-group",
         headers={"Authorization": f"Bearer {admin_token}"},
         params={"username": "testuser1", "groupname": "Group1"},
     )
     assert response.status_code == 204
+    # Verify the link was actually removed (guards against silent no-op bugs)
+    test_db_session.expire_all()
+    assert not link_exists(test_db_session, "testuser1", "Group1")
 
     # send a post request to delete the user as a regular user
     response = client.delete(
@@ -246,3 +250,119 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Group not found"
+
+
+def test_link_user_group_requires_params(client, admin_token):
+    """Regression test for issue #715: link/unlink endpoints used `username=str`
+    instead of `username: str`, which made the parameters effectively optional
+    and caused silent no-ops (route ran with `username` bound to the `str`
+    class, leading to a misleading 404 rather than a clear 422).
+    """
+    # Missing both params should now produce a 422 validation error,
+    # not a 404 or 200 silent-pass.
+    response = client.post(
+        f"{prefix}/link-user-group",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    # Same expectation for unlink-user-group.
+    response = client.post(
+        f"{prefix}/unlink-user-group",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    # Missing one of the two params should also be rejected.
+    response = client.post(
+        f"{prefix}/link-user-group",
+        params={"username": "testuser1"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    # Empty-string params should also be rejected (Query min_length=1)
+    # rather than falling through to a misleading 404.
+    response = client.post(
+        f"{prefix}/link-user-group",
+        params={"username": "", "groupname": ""},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    response = client.post(
+        f"{prefix}/unlink-user-group",
+        params={"username": "", "groupname": ""},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_link_user_group_actually_creates_link(client, admin_token, test_db_session):
+    """Regression test for issue #715: verify the link endpoint actually
+    persists a UserGroup row and the unlink endpoint actually removes it.
+    The original `username=str` bug let admins believe access was granted
+    when no DB change happened.
+    """
+    # Create a fresh user and group to avoid cross-test pollution.
+    user_data = {
+        "username": "link_check_user",
+        "email": "link_check_user@example.com",
+        "is_admin": False,
+    }
+    auth_data = {"username": "link_check_user", "password": "linkcheck123"}
+    response = client.post(
+        f"{prefix}/users",
+        params=user_data,
+        data=auth_data,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    group_data = {"name": "link_check_group", "description": "Issue 715 group"}
+    response = client.post(
+        f"{prefix}/groups",
+        params=group_data,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    # Link
+    link_data = {"username": "link_check_user", "groupname": "link_check_group"}
+    response = client.post(
+        f"{prefix}/link-user-group",
+        params=link_data,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_201_CREATED
+    test_db_session.expire_all()
+    assert link_exists(test_db_session, link_data["username"], link_data["groupname"])
+
+    # Unlink
+    response = client.post(
+        f"{prefix}/unlink-user-group",
+        params=link_data,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    # 204 responses must not include a body.
+    assert response.content == b""
+    test_db_session.expire_all()
+    assert not link_exists(
+        test_db_session, link_data["username"], link_data["groupname"]
+    )
+
+    # Cleanup - assert deletions succeed so failures here don't silently
+    # pollute downstream tests sharing the module-scoped DB session.
+    cleanup_group = client.delete(
+        f"{prefix}/groups",
+        params={"groupname": "link_check_group"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert cleanup_group.status_code == status.HTTP_204_NO_CONTENT
+    cleanup_user = client.delete(
+        f"{prefix}/users",
+        params={"username": "link_check_user"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert cleanup_user.status_code == status.HTTP_204_NO_CONTENT
