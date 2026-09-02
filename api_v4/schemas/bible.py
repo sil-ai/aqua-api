@@ -33,6 +33,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 
+from api_v4.pagination import V4Page
 from api_v4.schemas.base import V4BaseModel
 
 #: Shared by ``VersionCreate`` and ``VersionPatch``. ``back_translation_id`` is a
@@ -695,3 +696,319 @@ class RevisionChaptersOut(V4BaseModel):
             "example": {"chapters": {"GEN": [1, 2, 3], "MAT": [1, 2]}}
         },
     }
+
+
+#: Maximum length of a ``term``. v3's ``max_length=200``, unchanged — a search term is a
+#: word or a short phrase, and the bound also caps the size of the regex the term is
+#: translated into.
+TEXT_SEARCH_TERM_MAX_LENGTH = 200
+
+
+class TextSearchQuery(V4BaseModel):
+    """The non-paging query parameters of ``GET /v4/revisions/{id}/text-search``.
+
+    Declared as a model rather than as bare ``Query`` parameters for the reason
+    :class:`VerseScope` is: the *combinations* that make no sense have to be rejected in
+    one place, and a model validator is the only place that can see more than one
+    parameter at once.
+    :class:`bible_routes.v4.verse_routes.TextSearchParams` is the adapter that keeps the
+    documented parameters flat while these invariants live here.
+
+    Three of the four invariants are the alignment annotation's, and they are all the same
+    rule (T8/T9 on #893): **v4 does not accept an input it will then ignore.** The
+    annotation is sourced from a word-alignment assessment over the
+    ``(revision, comparison_revision)`` pair, so without a comparison revision there is no
+    pair to look in and the flag could never do anything; and the two parameters that only
+    tune the annotation mean nothing with the annotation switched off. v3 accepts all three
+    of those combinations and silently drops the field.
+
+    The fourth is the term's own syntax, and it is **not** here: it lives in
+    :func:`bible_routes.v4.verse_service.search_pattern`, which is also the only thing that
+    needs the parse. Splitting it would mean two implementations of the same wildcard rules
+    on either side of a layer boundary, and the query-language rules belong with the query
+    builder. So a term that is too long or empty is a ``VALIDATION_ERROR`` from the
+    ``Query`` bounds, and a term whose *wildcards* are unusable is an
+    ``INVALID_SEARCH_TERM``, which can name the cap and the number received.
+
+    ``random`` sits here because it is this endpoint's own flag, but the rule that pairs it
+    with ``offset`` (T3) does not: ``offset`` belongs to
+    :class:`~api_v4.pagination.TextSearchPaginationParams`, a different dependency, and a
+    model cannot validate a field it does not have. That one check is made where the two
+    dependencies meet — see
+    :func:`bible_routes.v4.verse_routes._reject_random_with_offset`.
+    """
+
+    term: str = Field(
+        description=(
+            "The word or phrase to search for, case-insensitively. Matches **whole words "
+            "only** unless wildcarded with `*`. See the endpoint description for the full "
+            "wildcard grammar."
+        ),
+    )
+    comparison_revision_id: int | None = Field(
+        default=None,
+        description=(
+            "A second revision to return parallel text from. Each hit gains a "
+            "`comparison_text` holding that revision's text for the same verse, or null "
+            "where it has none — the comparison revision never changes *which* verses "
+            "match, or `total`. Must be a revision you can read, or the response is the "
+            "same 404 as an unreadable path revision. Required for "
+            "`include_alignments`."
+        ),
+    )
+    include_alignments: bool = Field(
+        default=False,
+        description=(
+            "Annotate each hit with the word-alignment links for that verse, so a caller "
+            "can see which words in the comparison revision the matched word maps to. "
+            "**Requires `comparison_revision_id`**: true without it is a 422, because "
+            "alignments only exist for a revision *pair*. When no usable alignment run "
+            "exists for the pair the hits come back without the field and this is not an "
+            "error."
+        ),
+    )
+    min_alignment_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Drop alignment links scoring below this, inclusively (`score >= value`). "
+            "Omitted applies **no floor**, which is a deliberate change from v3's "
+            "silent default of 0.3 — a threshold that quietly removes links is policy "
+            "the caller cannot see, and `min_score` on "
+            "`GET /v4/assessments/{id}/alignment-scores` has no default either. "
+            "**Requires `include_alignments`**: there is nothing to filter otherwise, and "
+            "sending it alone is a 422."
+        ),
+    )
+    alignment_assessment_id: int | None = Field(
+        default=None,
+        description=(
+            "Source the alignments from this specific word-alignment assessment instead "
+            "of letting the server pick. It must be a finished, non-deleted "
+            "`word-alignment` assessment whose revision pair is exactly "
+            "`({revision_id}, comparison_revision_id)`; anything else is a 422 naming it, "
+            "where v3 quietly returns no alignments. **Requires `include_alignments`**, "
+            "for the same reason `min_alignment_score` does. Omit it and the most "
+            "recently finished run for the pair is used — the envelope's "
+            "`alignment_assessment_id` reports which."
+        ),
+    )
+    random: bool = Field(
+        default=False,
+        description=(
+            "Return a random sample of the matches rather than the first page in "
+            "canonical Bible order. `total` is still the exact number of matches. "
+            "**Cannot be combined with a non-zero `offset`** (422): a second page of a "
+            "fresh shuffle would repeat some rows and miss others, so the combination is "
+            "refused rather than silently reinterpreted."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _alignment_parameters_need_something_to_act_on(self) -> "TextSearchQuery":
+        if self.include_alignments and self.comparison_revision_id is None:
+            raise ValueError("include_alignments requires comparison_revision_id")
+        if not self.include_alignments:
+            # Both of these only tune an annotation that is switched off. Rejected rather
+            # than ignored, so a caller who sent one and got no `alignments` learns why.
+            if self.min_alignment_score is not None:
+                raise ValueError("min_alignment_score requires include_alignments")
+            if self.alignment_assessment_id is not None:
+                raise ValueError("alignment_assessment_id requires include_alignments")
+        return self
+
+
+class TextSearchAlignmentOut(V4BaseModel):
+    """One word-alignment link attached to a text-search hit.
+
+    Deliberately **not** :class:`api_v4.schemas.assessment.AlignmentScoreOut`, which is the
+    row shape of ``GET /v4/assessments/{id}/alignment-scores``. That model carries twelve
+    fields, nine of which are either already known here or meaningless here: ``vref`` and
+    ``vrefs`` duplicate the hit they hang off, ``text`` and ``reference_text`` duplicate the
+    hit's own two text fields, ``assessment_id`` is the same for every link on the page and
+    is reported once in the envelope, and ``id``/``flag``/``hide``/``note`` are handles and
+    annotations for a read that addresses these rows directly. This is the three fields v3
+    returns, unchanged, and it is what the aggregation the annotation exists for needs.
+
+    Rows the runner marked ``hide`` are **not** returned, following v3. That is the
+    opposite call from ``/alignment-scores``, where ``hide`` is advisory and the row comes
+    back with the flag set — and the difference is forced rather than chosen: this shape
+    has no ``hide`` field, so a hidden link returned here would be indistinguishable from
+    a visible one. A caller that wants to see hidden links wants ``/alignment-scores``.
+    """
+
+    source: str | None = Field(
+        default=None,
+        description=(
+            "The word on the **comparison** revision's side of the pair, as the runner "
+            "stored it — lower-cased. Note the direction: the alignment assessment's "
+            "`reference_id` side is the comparison revision, and v3 labels that side "
+            "`source`."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description=(
+            "The word on the **searched** revision's side — the side `term` matched "
+            "against."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "The alignment score for this pair, higher being a stronger alignment. Links "
+            "arrive strongest-first within a hit, so a caller reading the top few needs "
+            "no re-sort."
+        ),
+    )
+
+
+class TextSearchOut(V4BaseModel):
+    """One hit of ``GET /v4/revisions/{id}/text-search``.
+
+    ``vref``, ``vrefs`` and ``text`` are :class:`VerseOut`'s three, with the same meanings,
+    because a hit *is* a verse of this revision — so a hit joins to
+    ``GET /v4/revisions/{id}/verses``, to ``GET /v4/assessments/{id}/results`` and to the
+    alignment reads on ``vref`` alone. v3 returns ``book``, ``chapter`` and ``verse`` as
+    three separate fields instead (T10), which no other v4 surface can be joined to
+    without the client reassembling the reference itself.
+
+    Not :class:`VerseOut` itself, for two reasons that are both about not lying in
+    OpenAPI. This row adds two fields; and ``VerseOut.id`` is nullable there because
+    ``include_verses=all`` can return a canonical verse with no stored row, which cannot
+    happen here — a hit matched stored text, so it has a row.
+
+    **The last two fields are absent, not null, when they do not apply**, which is why the
+    route sets ``response_model_exclude_unset=True``:
+
+    * ``comparison_text`` appears only when ``comparison_revision_id`` was sent. It is then
+      present on *every* hit, and null on a hit the comparison revision has no text for —
+      so null means "that revision does not have this verse", and absent means "you did not
+      ask for a comparison".
+    * ``alignments`` appears only when ``include_alignments`` was sent **and** a usable
+      alignment run was found for the pair (T7). It is then present on every hit, and an
+      empty list on a hit the run has no links for above ``min_alignment_score`` — so
+      ``[]`` means "that verse has no links", and absent means "there was no run to ask".
+
+    Both distinctions are lost if the fields are merely nullable, and both are ones a
+    client acts on: an empty ``alignments`` on every hit is a normal answer, while a
+    missing one means the alignment assessment the caller expected does not exist.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored `verse_text` row's id — the anchor's row on a merged span. Stable, "
+            "but not a handle: no v4 endpoint addresses a single verse by id."
+        ),
+    )
+    revision_id: int = Field(
+        description="The revision that was searched (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse the match was found in — the **first** verse of the span where the "
+            "publisher merged several. Always a literal canonical verse reference, so it "
+            "joins against `vref.txt` and against every other v4 verse-level read."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this hit's text covers, in canonical order and beginning with "
+            "`vref`. A single entry unless the revision merged verses into this one, in "
+            "which case the continuations follow — the same field, derived the same way, "
+            "as on the verses and results reads."
+        ),
+    )
+    text: str = Field(
+        description=(
+            "The matched verse text, or the whole merged span's text where `vrefs` names "
+            "several. Never the `<range>` marker: a marker row holds no text of its own, "
+            "so it is not searchable and cannot be a hit."
+        ),
+    )
+    comparison_text: str | None = Field(
+        default=None,
+        description=(
+            "The same verse in `comparison_revision_id`, for side-by-side display. Null "
+            "where that revision has no text for the verse — including where it merged "
+            "the verse into the one above, since the marker is never emitted. **Absent "
+            "entirely** when no comparison revision was requested."
+        ),
+    )
+    alignments: list[TextSearchAlignmentOut] | None = Field(
+        default=None,
+        description=(
+            "The word-alignment links for this verse, strongest first, filtered by "
+            "`min_alignment_score`. Empty where the run has no links for the verse. "
+            "**Absent entirely** when `include_alignments` was not requested, or when no "
+            "usable alignment run exists for the revision pair."
+        ),
+    )
+
+
+class TextSearchPage(V4Page[TextSearchOut]):
+    """``V4Page`` plus the one thing an alignment-annotated response cannot leave out.
+
+    ``alignment_assessment_id`` names the run the ``alignments`` came from. v3 *logs* this
+    (``alignment_assessment_used``) and never returns it, so a caller that lets the server
+    auto-pick receives scores with no way to know what produced them — it cannot cache
+    against the run, cannot tell two responses apart when a newer assessment lands
+    mid-session, and cannot report which run a suspicious number came from. This is the
+    same gap ``against_assessment_ids`` closes on
+    :class:`api_v4.schemas.assessment.ScoreComparisonPage`, which is also the precedent for
+    the shape: a response carrying derived numbers says what they are derived from.
+
+    **A subclass rather than a purpose-built model**, on the same test
+    ``ScoreComparisonPage`` records: this read pages a real population, so all four
+    inherited fields mean exactly what they mean on every other v4 list — ``total`` is the
+    number of matching verses and ``offset`` walks them. :class:`~api_v4.pagination.V4Page`
+    itself is untouched, because an alignment run has no meaning on the other lists that
+    share it.
+
+    ``next_updated_since`` is inherited and stays null: ``verse_text`` is write-once and
+    carries no modification timestamp, so this list has no delta feed — the same reason the
+    verses read gives.
+    """
+
+    alignment_assessment_id: int | None = Field(
+        default=None,
+        description=(
+            "The word-alignment assessment the `alignments` on this page came from, "
+            "whether you named it or the server picked it. Null when "
+            "`include_alignments` was not requested, and null when it was but no usable "
+            "run exists for the revision pair — in which case the hits carry no "
+            "`alignments` field at all, and this says why."
+        ),
+    )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        items: list,
+        total: int,
+        pagination,
+        alignment_assessment_id: int | None = None,
+        next_updated_since=None,
+    ) -> "TextSearchPage":
+        """As :meth:`V4Page.create`, with the alignment run the page's links came from.
+
+        Overridden so the four shared values still come off the ``pagination`` dependency
+        rather than being copied at the call site — the drift the parent's ``create``
+        exists to prevent. Unlike ``ScoreComparisonPage.create`` the extra argument has a
+        default, because null is a real and common answer here (no alignments were asked
+        for) rather than a page that forgot to say something.
+
+        Passed explicitly even when null: the route serializes with
+        ``exclude_unset=True``, and a field left to its default would be dropped from the
+        body rather than reported as null.
+        """
+        return cls(
+            items=items,
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            next_updated_since=next_updated_since,
+            alignment_assessment_id=alignment_assessment_id,
+        )

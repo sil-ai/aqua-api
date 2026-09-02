@@ -1,4 +1,4 @@
-"""v4 Verses & text router (issue #892, epic #842).
+"""v4 Verses & text router (issues #892/#893, epic #842).
 
 The third Bible-domain slice, and the one that shrinks the v3 surface most. Six v3
 endpoints become three, of which two are cut outright:
@@ -10,6 +10,16 @@ endpoints become three, of which two are cut outright:
 * ``GET /v4/revisions/{id}/chapters`` — replaces ``/chapters``. Typed book to
   chapter-numbers map.
 
+A fourth route landed later, from a different v3 module and a different issue:
+
+* ``GET /v4/revisions/{id}/text-search`` — replaces ``/textsearch``
+  (``assessment_routes/v3/search_routes.py``), the last read of the typed-results slice
+  (#893). It is here rather than there because the path names a revision, the rows are
+  that revision's verses, and its primary authorization is the same predicate the other
+  three start with. See :mod:`bible_routes.v4.verse_service` for the full argument, and
+  for the one substantial change from v3: the whole-word match moves into SQL, which is
+  what makes ``total`` and ``offset`` possible at all.
+
 ``GET /texts`` and ``GET /words`` are **cut from v4, not deferred**, on evidence:
 ``aqua-django-app`` is the only client aqua-api has ever had, and it calls neither, ever.
 ``/texts`` is not a thin multi-fetch — it runs the range merge across every requested
@@ -18,15 +28,16 @@ revision at once, so a marker in one collapses that verse for all of them — bu
 ``GET /v4/assessments/{id}/results``, which carries the same ``vref`` + ``vrefs`` pair
 this read does.
 
-Its own router rather than three more routes on ``revision_routes``: these are a
+Its own router rather than four more routes on ``revision_routes``: these are a
 different resource with their own tag in ``/v4/openapi.json``, and the Revisions slice
 does not grow a verse dependency. The ``/revisions`` prefix is shared, which is fine —
 ``/revisions/{id}`` and ``/revisions/{id}/verses`` are distinct path patterns and neither
 can shadow the other.
 
 Auth is applied at the router level in :func:`api_v4.app.create_v4_app` (#831,
-protected-by-default). Beyond that, all three reads authorize through the *one* shared
-revision-visibility predicate rather than a local check — see
+protected-by-default). Beyond that, all four reads authorize through the *one* shared
+revision-visibility predicate rather than a local check — the text search simply calls it
+twice, for the path revision and for its comparison revision — see
 :mod:`bible_routes.v4.verse_service`, which also holds the range-merge and query
 decisions. This module owns HTTP concerns only.
 
@@ -47,11 +58,20 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.errors import V4APIError
-from api_v4.pagination import V4Page, VersePaginationParams
+from api_v4.pagination import (
+    PaginationParams,
+    TextSearchPaginationParams,
+    V4Page,
+    VersePaginationParams,
+)
 from api_v4.schemas.bible import (
     BOOK_ABBREVIATION_LENGTH,
+    TEXT_SEARCH_TERM_MAX_LENGTH,
     IncludeVerses,
     RevisionChaptersOut,
+    TextSearchOut,
+    TextSearchPage,
+    TextSearchQuery,
     VerseOut,
     VerseScope,
 )
@@ -67,11 +87,16 @@ router = fastapi.APIRouter(prefix="/revisions", tags=["Verses"])
 def _revision_not_found_error(exc: Exception, revision_id: int) -> V4APIError:
     """Map :class:`revision_service.RevisionNotFound` onto its V4APIError.
 
-    Shared by all three reads, because all three resolve the revision through the same
+    Shared by all four reads, because all four resolve the revision through the same
     predicate and must report an unusable one identically. The code is
     ``REVISION_NOT_FOUND`` — the same code ``/v4/revisions`` uses, since it is the same
     fact about the same resource — and it covers unknown, inaccessible, soft-deleted, and
     "under a soft-deleted version" alike. Never a 403: a 403 would confirm the id exists.
+
+    The revision id comes from the exception rather than from the path, which is what lets
+    the text search reuse this for its ``comparison_revision_id``: that read authorizes two
+    revisions, and a 404 has to name the one that was actually unusable. ``RevisionNotFound``
+    carries the id it was raised for, so the two call sites need no second helper.
     """
     return V4APIError(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -351,3 +376,236 @@ async def list_chapters(
     except revision_service.RevisionNotFound as exc:
         raise _revision_not_found_error(exc, revision_id) from exc
     return RevisionChaptersOut(chapters=chapters)
+
+
+def _text_search_description(field: str) -> str:
+    """The ``Query`` description for one text-search parameter, read off the schema.
+
+    Same idiom, and for the same reason, as :func:`_scope_description`: the parameter
+    documented in ``/v4/openapi.json`` and the field that actually validates it are the
+    same string, so they cannot drift apart.
+    """
+    return TextSearchQuery.model_fields[field].description
+
+
+class TextSearchParams:
+    """Adapter turning the six text-search query parameters into one validated model.
+
+    Consumed as ``query: TextSearchParams = Depends()``; the handler passes
+    ``query.query`` to the service. Deliberately the same shape as
+    :class:`VerseScopeParams`, and for the same two reasons — FastAPI 0.115 would render a
+    Pydantic model used directly as a query container as a *single* ``$ref`` parameter, so
+    a generated client would send one object instead of six parameters; and a
+    ``ValidationError`` escaping a dependency would reach the #828 catch-all as a **500**,
+    turning a malformed request into a server fault. Re-raised as a
+    ``RequestValidationError`` it lands on the handler that already shapes FastAPI's own
+    validation failures, so an impossible parameter combination is the same
+    ``422 VALIDATION_ERROR`` envelope as a misspelled parameter name.
+
+    **This class is also the contract.** The six parameters declared here plus ``limit``
+    and ``offset`` from :class:`~api_v4.pagination.TextSearchPaginationParams` are the
+    endpoint's whole query surface: eight, where v3's ``/textsearch`` has eleven. Three of
+    v3's are gone (T6) — ``version_id``, ``comparison_version_id`` and ``use_eflomal``, the
+    only three with no caller anywhere — and ``revision_id`` became the path. ``offset`` is
+    new.
+
+    The ``term`` bounds are v3's ``min_length=1, max_length=200``, restated here as
+    ``Query`` bounds so OpenAPI advertises them. The term's *wildcard* rules are not
+    checked here: they live with the pattern builder
+    (:func:`bible_routes.v4.verse_service.search_pattern`), which is the only other thing
+    that needs the parse — see :class:`~api_v4.schemas.bible.TextSearchQuery`.
+    """
+
+    def __init__(
+        self,
+        term: str = Query(
+            ...,
+            min_length=1,
+            max_length=TEXT_SEARCH_TERM_MAX_LENGTH,
+            description=_text_search_description("term"),
+        ),
+        comparison_revision_id: Optional[int] = Query(
+            None, description=_text_search_description("comparison_revision_id")
+        ),
+        include_alignments: bool = Query(
+            False, description=_text_search_description("include_alignments")
+        ),
+        min_alignment_score: Optional[float] = Query(
+            None,
+            ge=0.0,
+            le=1.0,
+            description=_text_search_description("min_alignment_score"),
+        ),
+        alignment_assessment_id: Optional[int] = Query(
+            None, description=_text_search_description("alignment_assessment_id")
+        ),
+        random: bool = Query(False, description=_text_search_description("random")),
+    ) -> None:
+        try:
+            self.query: TextSearchQuery = TextSearchQuery(
+                term=term,
+                comparison_revision_id=comparison_revision_id,
+                include_alignments=include_alignments,
+                min_alignment_score=min_alignment_score,
+                alignment_assessment_id=alignment_assessment_id,
+                random=random,
+            )
+        except ValidationError as exc:
+            raise fastapi.exceptions.RequestValidationError(
+                [{**error, "loc": ("query", *error["loc"])} for error in exc.errors()]
+            ) from exc
+
+
+def _reject_random_with_offset(query: TextSearchQuery, page: PaginationParams) -> None:
+    """Refuse ``random=true`` with a non-zero ``offset`` (T3 on #893).
+
+    A shuffled ordering and offset paging are incompatible: page 2 of a *fresh* shuffle
+    repeats some rows and misses others, because each request re-shuffles. So the
+    combination is refused rather than silently reinterpreted — v4 does not quietly ignore
+    one of two parameters a caller sent.
+
+    Raised here rather than as a validator on :class:`~api_v4.schemas.bible.TextSearchQuery`
+    because ``offset`` is not one of its fields: it belongs to the pagination dependency,
+    and this is the first place both are in scope. ``RequestValidationError`` rather than a
+    :class:`~api_v4.errors.V4APIError` so the body is the same shape as the
+    endpoint's other parameter-combination refusals, which come from that model — a caller
+    should not have to branch on *which* invariant it broke to find the message.
+
+    Considered and rejected in T3: a ``shuffle_seed`` making the shuffle reproducible and
+    therefore pageable. A better contract in the abstract, but nothing asks for a pageable
+    shuffle, and it adds a concept to learn for a case no caller has.
+    """
+    if query.random and page.offset:
+        raise fastapi.exceptions.RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("query", "offset"),
+                    "msg": (
+                        "Value error, offset cannot be combined with random=true; a "
+                        "second page of a fresh shuffle would repeat and skip rows"
+                    ),
+                    "input": page.offset,
+                }
+            ]
+        )
+
+
+@router.get(
+    "/{revision_id}/text-search",
+    response_model=TextSearchPage,
+    # `comparison_text` and `alignments` are absent rather than null when they do not
+    # apply, which is a distinction a client acts on — see `TextSearchOut`. The envelope
+    # is unaffected: `TextSearchPage.create` sets all five of its fields explicitly, so
+    # `next_updated_since: null` and `alignment_assessment_id: null` are still emitted.
+    response_model_exclude_unset=True,
+)
+async def text_search(
+    revision_id: int,
+    query: TextSearchParams = Depends(),
+    page: TextSearchPaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> TextSearchPage:
+    """Find the verses of a revision containing a word or phrase, paginated.
+
+    Replaces v3's `GET /textsearch`. Matching is **case-insensitive and whole-word by
+    default**; `*` is a wildcard for any run of word characters and may appear at the
+    start, the end, and inside the term:
+
+    - `foo` — whole-word match (the default)
+    - `foo*` — words starting with `foo`
+    - `*foo` — words ending with `foo`
+    - `*foo*` — `foo` anywhere inside a word
+    - `fo*ar` — a word starting with `fo` and ending with `ar`
+    - `*fo*ar*` — `fo` followed, later in the **same word**, by `ar`
+
+    Every `*` matches within a single word: an internal wildcard never crosses a space. So
+    `grace` does not match "disgraceful", while `*grace*` does. Runs of `*` collapse, so
+    `foo**bar` and `foo*bar` are the same query. At most four internal `*`s, and the term
+    must hold at least one visible character — a term of nothing but a zero-width space is
+    a 422, not a match on everything.
+
+    Accents match regardless of how either side spells them: the term and the stored text
+    are both normalized to NFC before comparison. Composed and decomposed forms of the same
+    character are the same character; a ligature and its letters are **not**.
+
+    **`total` is the exact number of matching verses**, and `offset` walks them. Neither is
+    possible in v3, which applies its real whole-word filter in Python over a capped sample
+    of rough `ILIKE` candidates — so v3 has no `offset` at all, its count is the size of
+    the page rather than of the result, and it carries a `truncated` flag to say the count
+    might be short. v4 matches once, in SQL. `truncated` is therefore gone, with nothing
+    left to hedge, and `random` samples actual matches rather than the substring candidates
+    v3 shuffles.
+
+    **`comparison_revision_id` adds parallel text without changing the result set.** Each
+    hit gains a `comparison_text` from that revision, null where it has no text for the
+    verse. It cannot change which verses match or what `total` counts — v3 drops a hit the
+    comparison revision does not cover, so the same term reports a different number of
+    matches there depending on what you compare against.
+
+    **`include_alignments` annotates each hit with its word-alignment links**, which is
+    what this endpoint is mostly for: search a word, get a sample of verses containing it,
+    and read off which words in the other language it maps to. It needs
+    `comparison_revision_id` — alignments exist for a revision *pair* — and sources them
+    from the most recently finished `word-alignment` assessment for that pair unless
+    `alignment_assessment_id` names one. The envelope reports which run was used. If no
+    usable run exists the hits simply carry no `alignments` field; that is a `200`, not an
+    error.
+
+    **A merged verse span is one hit, labelled with its first verse**, exactly as on
+    `GET /v4/revisions/{id}/verses`: `vref` is always a literal canonical reference and
+    `vrefs` lists every verse the text covers. So a hit joins to the verses read, to
+    `GET /v4/assessments/{id}/results` and to the alignment reads on `vref` alone, where
+    v3 returns `book`, `chapter` and `verse` as three separate fields that a client has to
+    reassemble. The `<range>` marker a continuation verse stores is **not searchable** and
+    is never returned: searching for `range` finds verses containing that word, not the
+    storage markers.
+
+    Hits arrive in canonical Bible order — book, then chapter, then verse — where v3 orders
+    by the book abbreviation, running GEN, ACT, AMO. Pass `random=true` for a sample
+    instead; it cannot be combined with a non-zero `offset`.
+
+    Searching is scoped to the one revision in the path. v3 also accepts a `version_id` to
+    search a whole version, which no caller has ever used; if that is wanted later,
+    `GET /v4/versions/{id}/text-search` is an additive change.
+    """
+    _reject_random_with_offset(query.query, page)
+    try:
+        hits, total, alignment_assessment_id = await verse_service.search_text(
+            db,
+            current_user,
+            revision_id,
+            query=query.query,
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except revision_service.RevisionNotFound as exc:
+        # `exc.revision_id`, not `revision_id`: this read authorizes two revisions and the
+        # 404 has to name whichever was unusable.
+        raise _revision_not_found_error(exc, exc.revision_id) from exc
+    except verse_service.InvalidSearchTerm as exc:
+        raise V4APIError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="INVALID_SEARCH_TERM",
+            message=str(exc),
+            details=exc.details,
+        ) from exc
+    except verse_service.AlignmentAssessmentNotForPair as exc:
+        raise V4APIError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="ALIGNMENT_ASSESSMENT_NOT_FOR_PAIR",
+            message=str(exc),
+            details={
+                "alignment_assessment_id": exc.alignment_assessment_id,
+                "revision_id": exc.revision_id,
+                "comparison_revision_id": exc.comparison_revision_id,
+            },
+        ) from exc
+
+    return TextSearchPage.create(
+        items=[TextSearchOut(**hit) for hit in hits],
+        total=total,
+        pagination=page,
+        alignment_assessment_id=alignment_assessment_id,
+    )

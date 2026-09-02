@@ -53,9 +53,13 @@ ceiling should define its own params dependency rather than raise this shared ca
 subclasses this one with a 100/1000 policy for the verse-level *result* reads, so
 the two ceilings sit side by side and the catalog cap stays where the catalog
 lists want it. :class:`VersePaginationParams` (#892) is the second, with a 200/1000
-policy for the verse *text* read. Three dependencies rather than one shared cap is
-the intended shape, not drift: each names a page size sized to what its own consumers
-actually ask for, and none of them can widen another.
+policy for the verse *text* read. :class:`TextSearchPaginationParams` (#893) is the
+third, with a 10/1000 policy for the text search — the *smallest* default on the
+surface, and the one that shows the pattern is about matching consumers rather than
+about growing: a search page is something a person looks at, and each of its rows can
+carry alignment links. Four dependencies rather than one shared cap is the intended
+shape, not drift: each names a page size sized to what its own consumers actually ask
+for, and none of them can widen another.
 """
 
 from datetime import datetime
@@ -235,6 +239,66 @@ class VersePaginationParams(PaginationParams):
             description=(
                 "Number of items to skip before collecting the page. "
                 "Defaults to 0; must be >= 0."
+            ),
+        ),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+
+
+#: Default page size for the text search. 10 rather than the verses read's 200, and it is
+#: v3's own ``/textsearch`` default as well as the value the one known caller sends. Two
+#: independent reasons to keep it small: a search result is something a person reads, not
+#: a bulk export — nobody scrolls 200 verses to see where a word occurs — and with
+#: ``include_alignments`` each row carries a list of word pairings, so the default page is
+#: much heavier per row than a plain verse. Reusing :data:`VERSE_DEFAULT_LIMIT` would have
+#: meant a 200-row alignment-annotated default purely to avoid defining one constant.
+TEXT_SEARCH_DEFAULT_LIMIT = 10
+#: Hard maximum page size for the text search; above this is a 422, not a clamp. 1000 is
+#: v3's own ``le=1000`` on this endpoint, unchanged, so nothing a v3 caller can ask for is
+#: lost — and it is the same ceiling the result and verse reads carry, which keeps one
+#: number to remember across the whole verse-level surface.
+TEXT_SEARCH_MAX_LIMIT = 1000
+
+
+class TextSearchPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the text search: 10 by default, 1000 max.
+
+    Consumed as ``page: TextSearchPaginationParams = Depends()`` and interchangeable with
+    the other three at :meth:`V4Page.create`, for the reason
+    :class:`ResultPaginationParams` documents.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    the override.
+
+    **``offset`` is a v4 addition to this endpoint, not a port.** v3's ``/textsearch`` has
+    no ``offset`` at all, and could not have had one: it filters matches in Python over a
+    capped sample of rough ``ILIKE`` candidates, so "skip the first 10 matches" is not a
+    thing its query can express. Matching moved into SQL for exactly this reason — see
+    :func:`bible_routes.v4.verse_service.search_text`. The one case where ``offset`` is
+    refused is ``random=true``, where paging a fresh shuffle would repeat and skip rows.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            TEXT_SEARCH_DEFAULT_LIMIT,
+            ge=1,
+            le=TEXT_SEARCH_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{TEXT_SEARCH_DEFAULT_LIMIT}; must be between 1 and "
+                f"{TEXT_SEARCH_MAX_LIMIT} (out-of-range values are rejected with 422, "
+                f"not clamped)."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0. Cannot be combined with `random=true`."
             ),
         ),
     ) -> None:
