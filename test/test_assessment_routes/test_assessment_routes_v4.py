@@ -8818,8 +8818,8 @@ class TestMissingWordsContract:
     ):
         """``against`` is caller-controlled and each distinct peer costs an authorization
         query, so an unbounded list turns one cheap request into arbitrarily many. Bounded
-        the way ``MAX_VREFS`` bounds ``vrefs``: above any legitimate use, so hitting it
-        means a client bug, and answered with a 422 rather than absorbed."""
+        the way ``MAX_VREFS`` bounds ``only_vrefs``: above any legitimate use, so hitting
+        it means a client bug, and answered with a 422 rather than absorbed."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(db_session, revision_id, reference_id)
         resp = _missing_words(

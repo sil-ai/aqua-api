@@ -141,10 +141,10 @@ class VerseScopeParams:
     are the same numbers from the same constants, and whichever layer rejects first the
     answer is the same 422.
 
-    The one bound **not** restated is the ``vrefs`` length cap. A ``max_length`` here would
-    fire before the model's validator and answer with FastAPI's generic "List should have
-    at most 1000 items", which names the limit but not what the caller sent — and naming
-    both numbers is the entire point of the cap (see
+    The one bound **not** restated is the ``only_vrefs`` length cap. A ``max_length``
+    here would fire before the model's validator and answer with FastAPI's generic
+    "List should have at most 1000 items", which names the limit but not what the caller
+    sent — and naming both numbers is the entire point of the cap (see
     :data:`~api_v4.schemas.bible.MAX_VREFS`). The limit reaches clients through the
     parameter description instead.
     """
@@ -168,8 +168,8 @@ class VerseScopeParams:
         # become a second, much smaller cap on the very list MAX_VREFS governs. The
         # item count is bounded by the model; the per-item length needs no bound,
         # since the platform's URL-length ceiling already bounds the whole list.
-        vrefs: Optional[list[str]] = Query(
-            None, description=_scope_description("vrefs")
+        only_vrefs: Optional[list[str]] = Query(
+            None, description=_scope_description("only_vrefs")
         ),
         include_verses: IncludeVerses = Query(
             IncludeVerses.union, description=_scope_description("include_verses")
@@ -180,7 +180,7 @@ class VerseScopeParams:
                 book=book,
                 chapter=chapter,
                 verse=verse,
-                vrefs=vrefs,
+                only_vrefs=only_vrefs,
                 include_verses=include_verses,
             )
         except ValidationError as exc:
@@ -202,8 +202,16 @@ def _to_verse_out(row, revision_id: int, continuations: dict) -> VerseOut:
     ``union`` no marker row is selected at all and this is a no-op; under ``all`` a merged
     continuation *is* a row, and reporting its text as the literal string ``<range>`` —
     which is what v3's non-merging endpoints do — would be publishing a storage detail as
-    scripture. NULL is coerced for the same reason it is on the export: the column is
-    nullable, and ``all`` left-joins, so a canonical verse with no row arrives as NULL.
+    scripture.
+
+    **Both absences answer ``null``, not ``""``** (#925). The marker means "the text is
+    printed under the anchor above", and a NULL column — reachable because ``all``
+    left-joins, so a canonical verse with no row at all still arrives as one — means
+    "this revision does not have this verse". Neither is an empty verse, and JSON can
+    say so directly. This deliberately does **not** follow the export at
+    :func:`export_text`, whose blank line is a requirement of a line-aligned file that
+    has to stay 41,899 lines long, not a statement about the verse. ``id`` still
+    separates the two cases: set for a continuation, null for a verse with no row.
     """
     verse_id, vref, text = row
     return VerseOut(
@@ -211,7 +219,7 @@ def _to_verse_out(row, revision_id: int, continuations: dict) -> VerseOut:
         revision_id=revision_id,
         vref=vref,
         vrefs=verse_service.covered_vrefs(vref, continuations),
-        text="" if text is None or text == VERSE_RANGE_MARKER else text,
+        text=None if text == VERSE_RANGE_MARKER else text,
     )
 
 
@@ -227,9 +235,16 @@ async def list_verses(
 
     Replaces five v3 endpoints — `/verse`, `/chapter`, `/book`, `/text` and `/vrefs` —
     with one collection and four filters. `book`, `chapter` and `verse` narrow
-    progressively, each needing the one above it. `vrefs` names an explicit, scattered
-    list instead, and cannot be combined with the other three. Omit them all for the whole
-    revision. An inconsistent combination is a `422`, not a silently ignored parameter.
+    progressively, each needing the one above it. `only_vrefs` names an explicit,
+    scattered list instead, and cannot be combined with the other three. Omit them all
+    for the whole revision. An inconsistent combination is a `422`, not a silently
+    ignored parameter.
+
+    **The filter going in is `only_vrefs`; the `vrefs` coming back is a different
+    thing.** A response row's `vrefs` is the verses that row's text *covers*, so on a
+    revision with merged spans it can name verses you did not ask for — and one
+    reference you did ask for can answer as part of another row. Never read the
+    response as an echo of the request.
 
     **Merged verse spans come back merged, labelled with their first verse.** Where a
     publisher printed several verses as one unit — `MAT 9:20-21` — this revision stores the
@@ -254,19 +269,24 @@ async def list_verses(
 
     **`include_verses` picks which verses exist.** `union` (the default) returns only the
     verses this revision has text for. `all` returns every canonical verse in scope, with
-    empty text where the revision has none — 41,899 rows across pages when nothing narrows
-    the request — and does **no merging**: every row covers exactly one verse and `vrefs`
-    is always `[vref]`. Use `all` to find out what a revision is missing; use the default
-    to read what it has, or to join against results. v3's third value, `intersection`, is
-    gone: it is a cross-revision set operation, and v3's own documentation admits it is
-    identical to `union` for a single revision.
+    `text: null` where the revision has none — 41,899 rows across pages when nothing
+    narrows the request — and does **no merging**: every row covers exactly one verse and
+    `vrefs` is always `[vref]`. Use `all` to find out what a revision is missing; use the
+    default to read what it has, or to join against results. v3's third value,
+    `intersection`, is gone: it is a cross-revision set operation, and v3's own
+    documentation admits it is identical to `union` for a single revision.
 
-    **`vrefs` takes at most 1000 references.** More is a `422` naming the limit and the
-    number received. v3 accepts an unlimited list, but past roughly 3,000 the URL exceeds
-    the platform's ingress limit and is rejected *before reaching this application* — the
-    caller gets a non-JSON body and nothing is logged. A stated limit that answers is
-    better than an invisible one. Chunk longer lists; 500 per request is proven in
-    production.
+    **`text` is null, not `""`, where this revision has no text for the verse** — both
+    for a canonical verse it has no row for and for one it merged into the verse above.
+    `id` tells those apart, and both are reachable only under `include_verses=all`. The
+    plaintext export below still uses a blank line, because there a line has to exist.
+
+    **`only_vrefs` takes at most 1000 references.** More is a `422` naming the limit and
+    the number received. v3 accepts an unlimited list, but past roughly 3,000 the URL
+    exceeds the platform's ingress limit and is rejected *before reaching this
+    application* — the caller gets a non-JSON body and nothing is logged. A stated limit
+    that answers is better than an invisible one. Chunk longer lists; 500 per request is
+    proven in production.
 
     For the whole revision as a single vref-aligned file, use
     `GET /v4/revisions/{id}/text` instead — it is not paginated and preserves the blank

@@ -81,7 +81,7 @@ construction a ``<range>`` row and every ``<range>`` row is either a continuatio
 orphan (a marker opening a chapter, with nothing before it to attach to). v3 keeps orphans
 as their own rows carrying the literal string ``<range>`` as scripture text; v4 drops them
 under ``union``, where the mode means "verses this revision has text for" and an orphan
-marker has none. Under ``all`` they come back like any other row, with empty text.
+marker has none. Under ``all`` they come back like any other row, with ``null`` text.
 
 One query shape, two modes
 --------------------------
@@ -179,7 +179,8 @@ def _has_readable_text():
     because ``list_chapters`` needs the same exclusion stated, not inferred.
 
     Note this is deliberately *not* applied under ``include_verses=all``, whose contract
-    is the canonical skeleton: there an unreadable verse is still a row, with empty text.
+    is the canonical skeleton: there an unreadable verse is still a row, with ``null``
+    text.
     ``/chapters`` aligns with ``union`` because that is the mode a navigation tree drives.
     """
     return (
@@ -278,8 +279,8 @@ def _scoped_verses_query(revision_id: int, scope: VerseScope):
         stmt = stmt.where(ChapterReference.number == scope.chapter)
     if scope.verse is not None:
         stmt = stmt.where(VerseReference.number == scope.verse)
-    if scope.vrefs is not None:
-        stmt = stmt.where(VerseReference.full_verse_id.in_(scope.vrefs))
+    if scope.only_vrefs is not None:
+        stmt = stmt.where(VerseReference.full_verse_id.in_(scope.only_vrefs))
 
     return stmt.order_by(
         BookReference.number,
