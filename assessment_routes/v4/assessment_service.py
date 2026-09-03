@@ -271,10 +271,14 @@ rows. Read the differences from every other function above before changing it.
   measure before adding anything here, not a reason to add it pre-emptively.
 
 The verse text is fetched in the same layer, so the router never touches the database.
-The ``<range>`` marker cannot be a hit's text, for the reason :func:`get_results`
+No hit's ``text`` should be the ``<range>`` marker, for the reason :func:`get_results`
 records: a verse marked ``<range>`` is merged away by ``GET /v3/text`` before the runner
 ever sees it, so it gets no vector of its own, and the anchor verse's stored text is the
-whole merged span — exactly the text that was vectorized.
+whole merged span — exactly the text that was vectorized. That argument does not reach
+``reference_text``, which reads the assessment's *reference* revision, merged
+independently of the assessed one; #923 is what the gap cost. :func:`_verse_texts`
+coerces the marker for both halves, so this paragraph is now an explanation of the data
+rather than the only thing keeping the marker out of the response.
 
 **The POST is the same search with the query point arriving differently, and N of them.**
 :func:`get_similar_verses_batch` shares the ranking (:func:`_rank_against_corpus`) and the
@@ -333,6 +337,12 @@ handling once rather than twice.
   production. It was, during this build: twelve word-alignment assessments whose revisions
   carry between 1 and 116 merged spans have **zero** rows on any continuation vref, in
   both tables. The row shape stands as ruled.
+* **That guarantee is about the assessed revision only, and #923 is the proof that
+  matters.** It says where the runner wrote rows; it says nothing about the *reference*
+  revision's span map, which merges independently — so a verse can anchor a span here and
+  continue one there, and ``reference_text`` came back as the literal marker while the
+  anchor check went on holding. :func:`_verse_texts` coerces a marker row to null on both
+  halves. A check that holds is not the same as a guarantee that covers the field.
 * **``/alignmentmatches`` folds in; ``/missing-words`` does not.** Same rows narrowed is a
   filter (``source`` + ``min_score``); same rows plus fields derived from *other*
   assessments is a sub-resource. That is the same test that kept ``/score-comparison`` off
@@ -1941,6 +1951,21 @@ async def _verse_texts(
     A revision is not guaranteed to hold every vref, so a missing entry is normal and the
     caller reports ``null``.
 
+    **A marker row maps to null — not to the marker, and not to the anchor's text**
+    (#923). Where the revision printed this verse as part of the one above it, the verse
+    has no text of its own there, and #892's rule is that the storage marker never
+    reaches a client. Null already means "this revision has no row for this verse", and a
+    marker row is the same fact; the anchor's text would attribute one verse's words to
+    another, invisibly.
+
+    The reference half is where that matters. :func:`get_alignment_scores` records why
+    the assessed revision's rows sit on span anchors only, which is what made ``text``
+    safe in practice — but ``reference_text`` reads a *different* revision, whose span
+    map is independent. A verse can anchor a span in one revision and continue one in the
+    other, so the anchor guarantee held and the marker still reached clients. The
+    coercion lives here, in the lookup both halves share, rather than on the reference
+    branch of any one caller.
+
     ``verse_text`` has no uniqueness constraint on ``(revision_id, verse_reference)``, so
     duplicates are possible and the **lowest id wins, deterministically**. v3 builds the
     same mapping from an unordered result and lets the last row seen overwrite, which is
@@ -1968,7 +1993,12 @@ async def _verse_texts(
     for row in rows:
         # setdefault rather than assignment: ordered by id ascending, so the first row
         # seen for a vref is the lowest-id one and later duplicates do not displace it.
-        texts.setdefault(row.verse_reference, row.text)
+        texts.setdefault(
+            row.verse_reference,
+            None
+            if row.text is None or row.text == verse_range_service.VERSE_RANGE_MARKER
+            else row.text,
+        )
     return texts
 
 
@@ -2537,7 +2567,8 @@ async def get_alignment_scores(
 
     Verse text is hydrated **one query per page over that page's distinct vrefs**, never
     one per row, through the same :func:`_verse_texts` that serves ``/similar-verses`` —
-    so the lowest-id row wins deterministically among duplicate ``verse_text`` rows.
+    so the lowest-id row wins deterministically among duplicate ``verse_text`` rows, and
+    a ``<range>`` row reports as null rather than as the marker (#923).
     Returning the text always is what makes the ``/alignmentmatches`` fold lossless: that
     endpoint joins ``verse_text`` twice, and dropping the two fields would lose output.
     Deliberately the opposite call from ``/results``, which dropped its text fields
@@ -2550,7 +2581,11 @@ async def get_alignment_scores(
     rows here at all. The ruling flagged that as its one unverified assumption; it was
     checked against production during this build and **holds** — twelve word-alignment
     assessments whose revisions carry between 1 and 116 merged spans have zero rows on
-    any continuation vref, in both alignment tables.
+    any continuation vref, in both alignment tables. It is a guarantee about ``vrefs``
+    and about ``text``, and it does not extend to ``reference_text``: that field reads
+    the reference revision, whose spans are merged independently, so a verse that anchors
+    a span here can continue one there. See :func:`_verse_texts`, which is where the
+    marker is kept out of either field.
 
     Returns plain dicts rather than ORM rows because ``vref``, ``vrefs`` and the two text
     fields are all derived; the router has nothing left to compute.
