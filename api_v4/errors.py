@@ -33,6 +33,22 @@ plain error is just ``{"error": {"code": ..., "message": ...}}``.
   generic message; the exception's own text, args, and traceback are never put in
   the body.
 
+``details`` is size-bounded for all of them (#920). Every handler funnels through
+:func:`_error_response`, which caps the payload at :data:`_DETAILS_BUDGET` characters
+and replaces what it drops with a marker saying how much went. Small values — the ones
+worth echoing — are untouched; the case this exists for is a validation error on ``POST
+/v4/revisions``, where Pydantic attaches the rejected value to its error and the
+rejected value is a whole Bible as one base64 string.
+
+Publishing the contract (#928): handlers alone shape the *runtime* body — FastAPI
+documents whatever a route declares, which by default is its success code plus a
+``HTTPValidationError`` 422 that v4 never emits. :data:`V4_ERROR_RESPONSES` and
+:data:`V4_PUBLIC_ERROR_RESPONSES` are the schema half of the same contract, applied at
+the ``include_router`` calls in :mod:`api_v4.app` so ``/v4/openapi.json`` advertises the
+envelope clients are told to branch on. :data:`V4_JSON_ERROR_RESPONSES` is the same set
+for the one route whose *success* body is not JSON, and :data:`V4_FORBIDDEN_RESPONSE` is
+the ``403`` that the nine write paths declare for themselves rather than share.
+
 Re-raise-for-logging (do not "fix" this): the ``Exception`` handler only
 *returns* the clean 500 body. The sub-app's own ``ServerErrorMiddleware`` is what
 calls this handler, sends its response, and *then re-raises the exception* — which
@@ -48,6 +64,7 @@ place; moving it to a status-code handler would break the re-raise.
 from __future__ import annotations
 
 import http
+import math
 
 import fastapi
 from fastapi import status
@@ -101,6 +118,338 @@ class V4ErrorResponse(V4BaseModel):
     error: V4ErrorDetail
 
 
+#: One-line OpenAPI ``description`` per documented error status.
+#:
+#: Kept as data next to the envelope it describes so the wording is written once and
+#: every router that documents a status says the same thing about it.
+_ERROR_DESCRIPTIONS: dict[int, str] = {
+    status.HTTP_401_UNAUTHORIZED: (
+        "Authentication failed: the ``Authorization`` bearer token is missing, "
+        "malformed, or expired."
+    ),
+    status.HTTP_403_FORBIDDEN: (
+        "The resource is visible to the caller, but this action on it is not "
+        "permitted — they are neither its owner nor an administrator. A resource the "
+        "caller may not *see* is a ``404``, not this."
+    ),
+    status.HTTP_404_NOT_FOUND: (
+        "The resource does not exist, **or** is not visible to the caller. v4 answers "
+        "those two identically on purpose, so that a caller cannot discover which ids "
+        "exist by watching the status code change."
+    ),
+    status.HTTP_422_UNPROCESSABLE_ENTITY: (
+        "The request failed validation. ``details.errors`` carries the per-field "
+        "failures."
+    ),
+    status.HTTP_500_INTERNAL_SERVER_ERROR: (
+        "An unexpected server error. The body carries a fixed generic message and "
+        "never any internal detail."
+    ),
+    # Below this line: statuses only *some* operations can return, so they are declared
+    # per route rather than in the shared sets. Their wording still lives here, so a
+    # second route answering the same status describes it the same way.
+    status.HTTP_400_BAD_REQUEST: (
+        "The request is well-formed but names something unusable — typically a "
+        "foreign key that does not resolve. Distinct from ``422``, which is a shape "
+        "or type failure the framework catches before the handler runs."
+    ),
+    status.HTTP_409_CONFLICT: (
+        "The request conflicts with work that already exists. Branch on ``code`` to "
+        "tell the cases apart: some are overridable and some are not."
+    ),
+    status.HTTP_503_SERVICE_UNAVAILABLE: (
+        "A downstream dependency could not be reached. The request was valid and may "
+        "be worth retrying."
+    ),
+}
+
+
+#: The ``$ref`` a generated schema uses for the envelope: FastAPI names a Pydantic
+#: model in ``components.schemas`` by its class name. Needed only by
+#: :func:`json_error_responses`, which cannot go through ``model=``. Asserted resolvable
+#: against the real schema by ``test/test_v4_openapi.py``, since a bare string cannot
+#: fail loudly on its own.
+V4_ERROR_RESPONSE_REF = f"#/components/schemas/{V4ErrorResponse.__name__}"
+
+#: The statuses the shared sets document. One tuple, so the two spellings below stay in
+#: step; see :data:`V4_ERROR_RESPONSES` for why these four and not 403.
+_DOMAIN_ERROR_STATUSES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_404_NOT_FOUND,
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+    status.HTTP_500_INTERNAL_SERVER_ERROR,
+)
+
+
+def error_responses(*status_codes: int) -> dict[int, dict]:
+    """Build a FastAPI ``responses=`` mapping for ``status_codes``.
+
+    Every entry documents :class:`V4ErrorResponse`, because every error leaving
+    ``/v4`` is that envelope. Exists so the sets below — and any route that needs a
+    subset or an extra status — are all built from one place, and so declaring a
+    status is a one-token change rather than a copied five-line block.
+    """
+    return {
+        code: {"model": V4ErrorResponse, "description": _ERROR_DESCRIPTIONS[code]}
+        for code in status_codes
+    }
+
+
+def json_error_responses(*status_codes: int) -> dict[int, dict]:
+    """:func:`error_responses` for a route whose ``response_class`` is not JSON.
+
+    FastAPI documents a ``model=`` response under the *route's* media type —
+    ``route.response_class.media_type``, in ``fastapi/openapi/utils.py`` — not under
+    ``application/json``. So on ``GET /v4/revisions/{id}/text``, a ``PlainTextResponse``
+    route, the shared set documented all five errors as ``text/plain`` bodies. That is
+    simply untrue: every handler in this module returns a ``JSONResponse``, whatever the
+    route's success type, so a v4 error is JSON even where success is plaintext.
+
+    Spelling the content block out is what pins the media type. Passing ``model`` is
+    what triggers the media-type substitution, so this deliberately does not: with no
+    response field to attach, FastAPI merges the dict through verbatim.
+    """
+    return {
+        code: {
+            "description": _ERROR_DESCRIPTIONS[code],
+            "content": {
+                "application/json": {"schema": {"$ref": V4_ERROR_RESPONSE_REF}}
+            },
+        }
+        for code in status_codes
+    }
+
+
+#: The documented error surface of an authenticated v4 domain route (#928).
+#:
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 31
+#: per-route ``responses=`` decorators that would drift apart.
+#:
+#: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
+#: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
+#: only "you can see this but may not modify it" — a *write-path* status. Counted over
+#: the surface, it is reachable on 9 of the 31 domain operations and unreachable on 22:
+#: every read, including all eleven non-delete assessment reads and all four verse
+#: reads. Publishing it on all 31 told clients that any v4 call can be forbidden, which
+#: is false for the large majority and is the sort of thing a generated client turns
+#: into dead error-handling. So the nine writes declare it themselves, via
+#: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
+#: operations declaring it is exactly those nine.
+#:
+#: The four that remain are all genuinely universal except ``404``, which is unreachable
+#: on the 6 operations that look nothing up (``GET /me``, ``GET /me/groups``,
+#: ``GET /groups``, and the version and assessment collection reads). That residue is
+#: small and a ``404`` on a collection read misleads nobody; it is not worth six more
+#: decorators.
+#:
+#: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
+#: the generator only injects that when the route documents no ``422`` of its own
+#: (``fastapi/openapi/utils.py``). A per-route ``responses=`` entry still wins over
+#: anything here (``{**router_responses, **route.responses}`` in ``fastapi/routing.py``),
+#: so this sets a floor and locks nothing down.
+V4_ERROR_RESPONSES: dict[int, dict] = error_responses(*_DOMAIN_ERROR_STATUSES)
+
+#: :data:`V4_ERROR_RESPONSES` for a route whose ``response_class`` is not JSON — see
+#: :func:`json_error_responses` for why that needs a separate spelling. Built from the
+#: same status tuple, so the two sets cannot come to cover different statuses.
+V4_JSON_ERROR_RESPONSES: dict[int, dict] = json_error_responses(*_DOMAIN_ERROR_STATUSES)
+
+#: The ``403`` a write declares for itself — see :data:`V4_ERROR_RESPONSES` for why it
+#: is not shared. Spread into a route's ``responses=`` (``**V4_FORBIDDEN_RESPONSE``)
+#: alongside whatever else that route documents.
+V4_FORBIDDEN_RESPONSE: dict[int, dict] = error_responses(status.HTTP_403_FORBIDDEN)
+
+#: The same, for the routers registered *without* the auth dependency — the discovery
+#: root and the token endpoint. No ``401``/``403``: an unauthenticated route cannot
+#: fail authentication. ``POST /v4/token`` does answer ``401`` for bad credentials, but
+#: that is a different error with a different meaning, so it is declared on the route
+#: itself where it can say so.
+V4_PUBLIC_ERROR_RESPONSES: dict[int, dict] = error_responses(
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+    status.HTTP_500_INTERNAL_SERVER_ERROR,
+)
+
+
+#: Total budget, in characters of caller-supplied content, for one error's ``details``
+#: payload (#920).
+#:
+#: A validation error echoes the value it rejected back under ``input``, and ``POST
+#: /v4/revisions`` takes a whole Bible as one base64 string — so one character over its
+#: ~70 million cap answered with a 422 body of 69,905,069 characters. The budget bounds
+#: that without giving up what the echo is *for*: showing what the server actually
+#: parsed, which can differ from what the caller thinks it sent (a ``nan`` coming back
+#: as ``"nan"``, a ``"5"`` coerced to ``5``, a typo'd key arriving empty). All three are
+#: small values and all three pass through untouched.
+#:
+#: 8192 is set so the largest legitimately-sized value on the v4 surface still survives:
+#: a 300-float query vector for ``POST /v4/assessments/{id}/similar-verses`` encodes to
+#: roughly 6 KB. The next value up — that endpoint's 10,000-character query text — does
+#: not, and at up to 500 query points per request echoing those was the whole 5 MB the
+#: caller had just sent.
+#:
+#: Counted in *characters of content* (string lengths, number reprs, dict keys), not in
+#: JSON bytes: measuring the encoded size means encoding the value, which costs exactly
+#: what this exists to avoid. JSON punctuation and ``\uXXXX`` escapes are uncounted, so
+#: a bounded ``details`` can still serialize to a small multiple of this. Bounding it to
+#: within a factor is the point; the fault being fixed is four orders of magnitude.
+_DETAILS_BUDGET = 8192
+
+#: Shortest string worth replacing. The marker is itself ~80 characters, so swapping a
+#: short string for one would *grow* the response. Only reachable at the tail of a
+#: payload, where the remaining budget can be smaller than the marker.
+_MIN_REPLACEABLE = 256
+
+#: Key under which a truncated dict records the entries it dropped. Deliberately not a
+#: plausible field name.
+_OMITTED_KEY = "..."
+
+
+def _omitted_value(size: int) -> str:
+    """Marker replacing one value too large to echo.
+
+    It states the size it replaced, because a marker that does not say *why* the value
+    is missing reads to the next person debugging a large request as "the field arrived
+    empty" — which is a different bug with a different fix.
+
+    It states the *cap* rather than claiming this value exceeded it. A value is replaced
+    when it does not fit the budget still unspent, which is below the cap as soon as
+    anything earlier in the payload has been charged — so "over the 8,192-character
+    limit" would be a lie on a 300-character value that arrived with 100 left.
+    """
+    return (
+        f"<{size:,} characters omitted: error details are capped at "
+        f"{_DETAILS_BUDGET:,} characters>"
+    )
+
+
+def _omitted_tail(count: int, noun: str) -> str:
+    """Marker for the entries a container dropped once the budget ran out.
+
+    ``noun`` is pluralized by the count, so a one-entry tail does not read
+    "1 more items omitted" — both nouns are chosen to take a regular ``-s``.
+    """
+    return (
+        f"<{count:,} more {noun}{'' if count == 1 else 's'} omitted: error details "
+        f"are capped at {_DETAILS_BUDGET:,} characters>"
+    )
+
+
+def _content_size(value) -> int:
+    """Cheap, allocation-free stand-in for a scalar's encoded length.
+
+    ``len`` on a 70 MB string is O(1), and ``repr`` on an ``int``/``float`` is what
+    ``json`` itself emits, so it is both exact and cheap. A bool goes that way too —
+    ``bool`` is a subclass of ``int``, and ``repr`` gives it the 4 or 5 characters
+    ``json`` would. Anything else — ``None``, or an object ``jsonable_encoder`` somehow
+    left behind — is charged a flat 4 rather than ``repr``-ed, because ``repr`` on an
+    unknown object can materialise the very second copy this function exists to avoid.
+    """
+    if isinstance(value, (str, bytes)):
+        return len(value)
+    if isinstance(value, (int, float)):  # bool included; its repr is 4-5 chars
+        return len(repr(value))
+    return 4  # null
+
+
+def _bounded_json_safe(value, budget: int):
+    """Make ``value`` JSON-safe and bound its size, in one traversal.
+
+    Returns ``(safe_value, cost)``, where ``cost`` is what ``safe_value`` spent of
+    ``budget``. Three things happen on the way down:
+
+    * **A non-finite float becomes its name** (``nan``, ``inf``, ``-inf``). This is
+      #828's scrub. ``jsonable_encoder`` makes unknown *types* safe but leaves these as
+      floats, and Starlette's ``JSONResponse`` dumps with ``allow_nan=False`` — so an
+      unscrubbed one raises inside the handler and the catch-all reshapes the intended
+      4xx into a generic 500 that does not even chain it. Reachable rather than
+      theoretical: strict JSON has no literal for either, but Python's own ``json``
+      module emits ``NaN`` and accepts it back, so a Python client sends one without
+      noticing, and ``POST /v4/assessments/{id}/similar-verses`` rejects exactly that.
+      Named rather than dropped, so the error still shows what it objected to.
+    * **A string longer than the remaining budget becomes a marker** naming its length.
+      This is #920's reported case: one ``input`` holding 69,905,069 base64 characters.
+      Dict *keys* take the same path, because an oversized string can arrive as one.
+    * **A container that exhausts the budget keeps what fit** and gains one marker
+      naming how many entries it dropped. Truncating rather than replacing the whole
+      container is what keeps a request with sixty small validation errors readable;
+      replacing it wholesale would throw away every ``loc`` and ``msg`` to bound a
+      payload whose individual parts were all fine.
+
+    **The budget is spent in document order**, which is the right priority for free:
+    Pydantic emits ``type``, ``loc`` and ``msg`` before ``input``, so *where* and *what*
+    always survive, and it is the echo that gets cut. Earlier errors outlive later ones
+    for the same reason.
+
+    **The walk is bounded, not just its output.** Each container stops iterating the
+    moment the budget is spent, so this visits O(budget) nodes rather than O(payload) —
+    a 70 MB body is never fully traversed here. What it does *not* buy: Pydantic already
+    holds that 70 MB in memory by the time a handler runs, and ``jsonable_encoder`` has
+    already walked it (without copying string payloads — it returns ``str`` identically).
+    This stops transmission and the serialization that would precede it, not allocation.
+
+    **One walk, not two.** Bounding and float-scrubbing are separate problems, but a
+    separate scrub walk would rebuild the entire 70 MB structure before the cap ever saw
+    it — which is most of the cost the cap exists to avoid — and two functions recursing
+    over the same payload can disagree about which containers they descend into, so a
+    value reached by one and not the other would be silently unbounded or silently
+    unserializable. Folding them costs one paragraph of docstring and removes both.
+    """
+    if isinstance(value, dict):
+        kept: dict = {}
+        spent = 0
+        for index, (key, item) in enumerate(value.items()):
+            if spent >= budget:
+                kept[_OMITTED_KEY] = _omitted_tail(len(value) - index, "key")
+                break
+            # The key goes through the same rule as everything else. It has to:
+            # Pydantic's ``union_tag_not_found`` puts the caller's raw dict in
+            # ``input``, so on ``POST /v4/assessments/{id}/similar-verses`` an
+            # untagged query point can carry an arbitrarily long *key*. Charging a
+            # key without bounding it emitted it in full.
+            key, key_cost = _bounded_json_safe(key, max(budget - spent, 0))
+            spent += key_cost
+            item, cost = _bounded_json_safe(item, max(budget - spent, 0))
+            kept[key] = item
+            spent += cost
+        return kept, spent
+
+    if isinstance(value, list):
+        items: list = []
+        spent = 0
+        for index, item in enumerate(value):
+            if spent >= budget:
+                items.append(_omitted_tail(len(value) - index, "item"))
+                break
+            item, cost = _bounded_json_safe(item, max(budget - spent, 0))
+            items.append(item)
+            spent += cost
+        return items, spent
+
+    if isinstance(value, float) and not math.isfinite(value):
+        value = repr(value)
+
+    size = _content_size(value)
+    if size > budget and size > _MIN_REPLACEABLE:
+        marker = _omitted_value(size)
+        return marker, len(marker)
+    return value, size
+
+
+def _bounded_details(details: dict | None) -> dict | None:
+    """``details``, made JSON-safe and bounded to :data:`_DETAILS_BUDGET`.
+
+    ``jsonable_encoder`` runs first and the bound second, deliberately. The reverse
+    would bound a cheaper walk, but it would be bounding the wrong thing: the encoder
+    can turn one small object into a large one (it falls back to ``vars(obj)``), and a
+    value it has not normalized yet cannot be measured — ``repr``-ing it to find out how
+    big it is is the copy this is avoiding. Bounding what actually goes on the wire
+    means bounding what the encoder produced. ``jsonable_encoder(None)`` is ``None``, so
+    absent details still fall through to ``exclude_none``.
+    """
+    bounded, _ = _bounded_json_safe(jsonable_encoder(details), _DETAILS_BUDGET)
+    return bounded
+
+
 def _error_response(
     *,
     status_code: int,
@@ -125,10 +474,17 @@ def _error_response(
     error, so logs show only the serialization failure). Coercing up front turns
     that landmine into a normal serialization. ``jsonable_encoder(None)`` is
     ``None``, so absent details still drop out via ``exclude_none``.
+
+    :func:`_bounded_details` then covers the two things ``jsonable_encoder`` does not:
+    ``nan`` and ``inf`` survive it as floats and ``JSONResponse`` refuses them (#828),
+    and nothing at all bounds how *big* the result is (#920). Both are fixed in the one
+    traversal that function documents.
     """
     payload = V4ErrorResponse(
         error=V4ErrorDetail(
-            code=code, message=message, details=jsonable_encoder(details)
+            code=code,
+            message=message,
+            details=_bounded_details(details),
         )
     )
     return JSONResponse(
@@ -202,8 +558,9 @@ async def _handle_validation_error(
         code="VALIDATION_ERROR",
         message="Request validation failed.",
         # exc.errors() can hold non-serializable objects (e.g. the original
-        # ValueError under `ctx`); _error_response jsonable-encodes details, so
-        # they are made JSON-safe there.
+        # ValueError under `ctx`) and non-finite floats echoed back under `input`;
+        # _error_response jsonable-encodes details and scrubs those floats, so they
+        # are made JSON-safe there.
         details={"errors": exc.errors()},
     )
 

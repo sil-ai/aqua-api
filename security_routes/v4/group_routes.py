@@ -29,6 +29,7 @@ import fastapi
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.errors import V4_FORBIDDEN_RESPONSE
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.security import GroupOut
 from database.dependencies import get_db
@@ -39,7 +40,13 @@ from security_routes.v4.dependencies import require_admin
 router = fastapi.APIRouter(prefix="/groups", tags=["Groups"])
 
 
-@router.get("", response_model=V4Page[GroupOut])
+@router.get(
+    "",
+    response_model=V4Page[GroupOut],
+    # The one *read* that can 403: require_admin raises ADMIN_REQUIRED. Everywhere
+    # else on the v4 surface a 403 marks a write. See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def list_groups(
     page: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -49,9 +56,9 @@ async def list_groups(
 
     ``_admin`` is named with a leading underscore because the handler does not use
     the user — the dependency is here for its authorization side effect. It
-    replaces (rather than accompanies) ``get_current_user``: ``require_admin``
-    depends on it internally, and FastAPI dedupes, so authentication still happens
-    exactly once.
+    replaces (rather than accompanies) the router-level ``get_current_user_v4``:
+    ``require_admin`` depends on it internally, and FastAPI dedupes, so
+    authentication still happens exactly once.
     """
     groups, total = await user_service.list_groups(
         db, limit=page.limit, offset=page.offset

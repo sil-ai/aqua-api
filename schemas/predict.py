@@ -22,6 +22,17 @@ class PredictInput(BaseModel):
     apps: Optional[List[str]] = None
     include_translation: bool = True
     include_critique: bool = True
+    bt_pivot: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Route the agent's back-translation through a pivot language "
+            "(render the target into a close language first, then into the "
+            "reference language) instead of going direct. Null — the default "
+            "— leaves the choice to the agent's deployment default. Whether "
+            "pivoting reads better varies by language pair, so it is settable "
+            "per request rather than fixed at deploy time (see #911)."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
