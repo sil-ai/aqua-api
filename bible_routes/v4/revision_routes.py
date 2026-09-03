@@ -42,7 +42,7 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError, error_responses
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import RevisionCreate, RevisionOut, RevisionPatch
 from bible_routes.v4 import revision_service
@@ -320,7 +320,13 @@ async def create_revision(
     response_model=RevisionOut,
     # 400 is reachable here but not on most of the surface, so it is declared on the
     # route rather than in the shared set: an unresolvable foreign key in the body.
-    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
 )
 async def update_revision(
     revision_id: int,
@@ -348,7 +354,14 @@ async def update_revision(
     return await _out_for(db, revision)
 
 
-@router.delete("/{revision_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{revision_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),

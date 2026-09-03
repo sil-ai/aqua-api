@@ -42,7 +42,7 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError, error_responses
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
 from bible_routes.v4 import version_service
@@ -161,7 +161,13 @@ async def get_version(
     status_code=status.HTTP_201_CREATED,
     # 400 is reachable here but not on most of the surface, so it is declared on the
     # route rather than in the shared set: an unresolvable foreign key in the body.
-    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
 )
 async def create_version(
     data: VersionCreate,
@@ -203,7 +209,13 @@ async def create_version(
     response_model=VersionOut,
     # 400 is reachable here but not on most of the surface, so it is declared on the
     # route rather than in the shared set: an unresolvable foreign key in the body.
-    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
 )
 async def update_version(
     version_id: int,
@@ -295,7 +307,14 @@ def _group_access_error(exc: Exception, version_id: int, group_id: int) -> V4API
     raise exc
 
 
-@router.put("/{version_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/{version_id}/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def grant_group_access(
     version_id: int,
     group_id: int,
@@ -317,7 +336,12 @@ async def grant_group_access(
 
 
 @router.delete(
-    "/{version_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/{version_id}/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
 )
 async def revoke_group_access(
     version_id: int,
@@ -339,7 +363,14 @@ async def revoke_group_access(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.delete("/{version_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_version(
     version_id: int,
     db: AsyncSession = Depends(get_db),

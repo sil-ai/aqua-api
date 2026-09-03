@@ -46,7 +46,8 @@ documents whatever a route declares, which by default is its success code plus a
 :data:`V4_PUBLIC_ERROR_RESPONSES` are the schema half of the same contract, applied at
 the ``include_router`` calls in :mod:`api_v4.app` so ``/v4/openapi.json`` advertises the
 envelope clients are told to branch on. :data:`V4_JSON_ERROR_RESPONSES` is the same set
-for the one route whose *success* body is not JSON.
+for the one route whose *success* body is not JSON, and :data:`V4_FORBIDDEN_RESPONSE` is
+the ``403`` that the nine write paths declare for themselves rather than share.
 
 Re-raise-for-logging (do not "fix" this): the ``Exception`` handler only
 *returns* the clean 500 body. The sub-app's own ``ServerErrorMiddleware`` is what
@@ -171,10 +172,9 @@ _ERROR_DESCRIPTIONS: dict[int, str] = {
 V4_ERROR_RESPONSE_REF = f"#/components/schemas/{V4ErrorResponse.__name__}"
 
 #: The statuses the shared sets document. One tuple, so the two spellings below stay in
-#: step; see :data:`V4_ERROR_RESPONSES` for why these five.
+#: step; see :data:`V4_ERROR_RESPONSES` for why these four and not 403.
 _DOMAIN_ERROR_STATUSES = (
     status.HTTP_401_UNAUTHORIZED,
-    status.HTTP_403_FORBIDDEN,
     status.HTTP_404_NOT_FOUND,
     status.HTTP_422_UNPROCESSABLE_ENTITY,
     status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -222,12 +222,25 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 
 #: The documented error surface of an authenticated v4 domain route (#928).
 #:
-#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 33
-#: per-route ``responses=`` decorators that would drift apart. It is deliberately the
-#: *union* over the domain routers, so a few routes document a status they cannot
-#: actually reach (a collection ``GET`` has no ``404``); the alternative — an accurate
-#: set per route — is the drift this exists to prevent, and over-documenting an error
-#: misleads no client that is branching on ``code``.
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 31
+#: per-route ``responses=`` decorators that would drift apart.
+#:
+#: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
+#: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
+#: only "you can see this but may not modify it" — a *write-path* status. Counted over
+#: the surface, it is reachable on 9 of the 31 domain operations and unreachable on 22:
+#: every read, including all eleven non-delete assessment reads and all four verse
+#: reads. Publishing it on all 31 told clients that any v4 call can be forbidden, which
+#: is false for the large majority and is the sort of thing a generated client turns
+#: into dead error-handling. So the nine writes declare it themselves, via
+#: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
+#: operations declaring it is exactly those nine.
+#:
+#: The four that remain are all genuinely universal except ``404``, which is unreachable
+#: on the 6 operations that look nothing up (``GET /me``, ``GET /me/groups``,
+#: ``GET /groups``, and the version and assessment collection reads). That residue is
+#: small and a ``404`` on a collection read misleads nobody; it is not worth six more
+#: decorators.
 #:
 #: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
 #: the generator only injects that when the route documents no ``422`` of its own
@@ -240,6 +253,11 @@ V4_ERROR_RESPONSES: dict[int, dict] = error_responses(*_DOMAIN_ERROR_STATUSES)
 #: :func:`json_error_responses` for why that needs a separate spelling. Built from the
 #: same status tuple, so the two sets cannot come to cover different statuses.
 V4_JSON_ERROR_RESPONSES: dict[int, dict] = json_error_responses(*_DOMAIN_ERROR_STATUSES)
+
+#: The ``403`` a write declares for itself — see :data:`V4_ERROR_RESPONSES` for why it
+#: is not shared. Spread into a route's ``responses=`` (``**V4_FORBIDDEN_RESPONSE``)
+#: alongside whatever else that route documents.
+V4_FORBIDDEN_RESPONSE: dict[int, dict] = error_responses(status.HTTP_403_FORBIDDEN)
 
 #: The same, for the routers registered *without* the auth dependency — the discovery
 #: root and the token endpoint. No ``401``/``403``: an unauthenticated route cannot

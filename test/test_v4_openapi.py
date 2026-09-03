@@ -48,7 +48,26 @@ from security_routes.v4.dependencies import v4_oauth2_scheme
 V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
 
 #: The statuses ``V4_ERROR_RESPONSES`` puts on every authenticated domain operation.
-DOMAIN_ERROR_STATUSES = frozenset({"401", "403", "404", "422", "500"})
+#: 403 is deliberately absent — see :class:`TestForbiddenIsWriteOnly`.
+DOMAIN_ERROR_STATUSES = frozenset({"401", "404", "422", "500"})
+
+#: The nine operations that can actually answer 403, enumerated by walking each
+#: handler and its helpers for ``status.HTTP_403_FORBIDDEN`` (and for a ``require_admin``
+#: dependency). Written out rather than computed so the test states the expected
+#: surface instead of re-deriving whatever the code currently does.
+FORBIDDEN_OPERATIONS = frozenset(
+    {
+        ("post", "/versions"),
+        ("patch", "/versions/{version_id}"),
+        ("put", "/versions/{version_id}/groups/{group_id}"),
+        ("delete", "/versions/{version_id}/groups/{group_id}"),
+        ("delete", "/versions/{version_id}"),
+        ("patch", "/revisions/{revision_id}"),
+        ("delete", "/revisions/{revision_id}"),
+        ("delete", "/assessments/{assessment_id}"),
+        ("get", "/groups"),
+    }
+)
 
 ASSESSMENTS_PATH = "/assessments"
 POLL_PATH = "/assessments/{assessment_id}"
@@ -281,6 +300,43 @@ class TestPublishedErrorContract:
         assert "INVALID_CREDENTIALS" in responses["401"]["description"]
         # No 403: nothing here can be forbidden, because nothing is authenticated.
         assert "403" not in responses
+
+
+class TestForbiddenIsWriteOnly:
+    """403 is declared on the nine operations that can raise it, and nowhere else.
+
+    v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
+    probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
+    write-path status: reachable on 9 of the 31 domain operations, unreachable on 22.
+
+    It briefly *was* in the shared set, which published it on all 31. This class is what
+    keeps it out: a client generated from the schema would otherwise carry dead
+    forbidden-handling on every read, and a reader of ``/v4/docs`` would conclude any
+    v4 call can be refused.
+    """
+
+    def test_exactly_the_write_paths_declare_403(self, schema):
+        declared = {
+            (method, path)
+            for path, method, operation in _operations(schema)
+            if "security" in operation and "403" in operation["responses"]
+        }
+        assert declared == FORBIDDEN_OPERATIONS, (
+            "unexpected: "
+            f"{sorted(declared - FORBIDDEN_OPERATIONS)}; missing: "
+            f"{sorted(FORBIDDEN_OPERATIONS - declared)}"
+        )
+
+    def test_the_declared_403s_use_the_error_envelope(self, schema):
+        for method, path in sorted(FORBIDDEN_OPERATIONS):
+            response = schema["paths"][path][method]["responses"]["403"]
+            ref = response["content"]["application/json"]["schema"]["$ref"]
+            assert ref == V4_ERROR_REF, f"{method.upper()} {path}"
+
+    def test_no_read_of_a_collection_claims_403(self, schema):
+        """The clearest cases, spelled out: a plain list cannot be forbidden."""
+        for path in ("/versions", "/revisions", "/assessments", "/users/me"):
+            assert "403" not in schema["paths"][path]["get"]["responses"], path
 
 
 class TestJobHeaders:

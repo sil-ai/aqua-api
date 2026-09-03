@@ -232,7 +232,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError, error_responses
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.jobs import (
     JOB_ACCEPTED_HEADERS,
     JOB_POLL_HEADERS,
@@ -1759,7 +1759,14 @@ async def get_assessment_score_comparison(
     )
 
 
-@router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{assessment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_assessment(
     assessment_id: int,
     db: AsyncSession = Depends(get_db),
