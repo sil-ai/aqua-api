@@ -234,6 +234,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api_v4.delta import next_watermark, updated_since_description
 from api_v4.errors import V4APIError, error_responses
 from api_v4.jobs import (
+    JOB_ACCEPTED_HEADERS,
+    JOB_POLL_HEADERS,
+    JOB_POLL_PENDING_HEADERS,
     JobEnvelope,
     JobState,
     JobSubmitAccepted,
@@ -347,7 +350,7 @@ def _poll_url(request: Request, assessment_id: int) -> str:
     "",
     status_code=status.HTTP_202_ACCEPTED,
     responses={
-        202: {"model": JobSubmitAccepted},
+        202: {"model": JobSubmitAccepted, "headers": JOB_ACCEPTED_HEADERS},
         # The two statuses only this operation can answer, so they are declared here
         # rather than in the shared set. Both are documented on the endpoint itself and
         # a client has to handle them: the 409 is what `force` overrides (for the
@@ -664,8 +667,17 @@ async def list_assessments(
     response_model=AssessmentJob,
     # The 202 is a real, documented outcome of this GET, not an error path, so it needs
     # its own entry — FastAPI documents only the declared status_code otherwise.
+    #
+    # The 200 entry declares no model: FastAPI generates that half from
+    # ``response_model`` and deep-merges this dict into it, so the entry exists purely
+    # to hang ``Retry-After`` on the status a RUNNING poll actually returns.
     responses={
-        202: {"model": AssessmentJob, "description": "Accepted, not yet started"}
+        200: {"headers": JOB_POLL_HEADERS},
+        202: {
+            "model": AssessmentJob,
+            "description": "Accepted, not yet started",
+            "headers": JOB_POLL_PENDING_HEADERS,
+        },
     },
 )
 async def get_assessment(

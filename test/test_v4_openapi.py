@@ -40,6 +40,7 @@ from fastapi.testclient import TestClient
 import app as app_module
 from api_v4.app import create_v4_app
 from api_v4.errors import V4_ERROR_RESPONSE_REF
+from api_v4.jobs import JobState
 from security_routes.auth_routes import oauth2_scheme as v3_oauth2_scheme
 from security_routes.v4.dependencies import v4_oauth2_scheme
 
@@ -48,6 +49,9 @@ V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
 
 #: The statuses ``V4_ERROR_RESPONSES`` puts on every authenticated domain operation.
 DOMAIN_ERROR_STATUSES = frozenset({"401", "403", "404", "422", "500"})
+
+ASSESSMENTS_PATH = "/assessments"
+POLL_PATH = "/assessments/{assessment_id}"
 
 
 @pytest.fixture(scope="module")
@@ -277,3 +281,56 @@ class TestPublishedErrorContract:
         assert "INVALID_CREDENTIALS" in responses["401"]["description"]
         # No 403: nothing here can be forbidden, because nothing is authenticated.
         assert "403" not in responses
+
+
+class TestJobHeaders:
+    """Part 3: ``Location`` and ``Retry-After`` are discoverable.
+
+    The asymmetry between submit and poll is the contract, so each test pins one side
+    of it *including* what the other side must not claim.
+    """
+
+    def test_submit_declares_both_job_headers(self, schema):
+        headers = schema["paths"][ASSESSMENTS_PATH]["post"]["responses"]["202"][
+            "headers"
+        ]
+        assert set(headers) == {"Location", "Retry-After"}
+        # Both are unconditional on a 202: job_accepted_response refuses to build one
+        # without a poll_url or with a sub-1 cadence.
+        assert headers["Location"]["required"] is True
+        assert headers["Retry-After"]["required"] is True
+
+    def test_the_poll_never_declares_a_location(self, schema):
+        """A poll answers *at* the poll URL; ``set_poll_headers`` sets no ``Location``.
+
+        Declaring one would send a generated client looking for a header that is never
+        there.
+        """
+        responses = schema["paths"][POLL_PATH]["get"]["responses"]
+        for code in ("200", "202"):
+            assert "Location" not in responses[code].get("headers", {}), code
+
+    def test_the_poll_202_requires_retry_after(self, schema):
+        """A 202 means ``PENDING``, which is never terminal, so the header is certain."""
+        assert not JobState.PENDING.is_terminal
+        headers = schema["paths"][POLL_PATH]["get"]["responses"]["202"]["headers"]
+        assert set(headers) == {"Retry-After"}
+        assert headers["Retry-After"]["required"] is True
+
+    def test_the_poll_200_declares_retry_after_as_optional(self, schema):
+        """The 200 is the response a polling loop sees most, and it is the subtle one.
+
+        ``RUNNING`` is non-terminal but answers 200, so the cadence hint rides on the
+        200 as well — leaving it undeclared would hide the header on the *common* poll.
+        It cannot be ``required``, because the terminal states share that same 200 and
+        deliberately carry no ``Retry-After``.
+        """
+        assert not JobState.RUNNING.is_terminal
+        assert JobState.SUCCEEDED.is_terminal and JobState.FAILED.is_terminal
+
+        response = schema["paths"][POLL_PATH]["get"]["responses"]["200"]
+        assert set(response["headers"]) == {"Retry-After"}
+        assert response["headers"]["Retry-After"]["required"] is False
+        # Declaring a bare `headers` entry for the 200 must not cost it the body
+        # schema FastAPI generates from `response_model`.
+        assert "content" in response
