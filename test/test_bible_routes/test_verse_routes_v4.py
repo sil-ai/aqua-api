@@ -18,7 +18,8 @@ What each class pins down:
   soft-deleted-parent all report the *same* 404, never a 403. Driven for every read
   through ``READ_PARAMS``, so a read added to this router cannot quietly skip it.
 * ``TestScope`` — every filter combination that should be rejected is rejected by the
-  request model, not at runtime, including the ``vrefs`` cap and its error message.
+  request model, not at runtime, including the ``only_vrefs`` cap and its error
+  message.
 * ``TestFilters`` — the five v3 endpoints answered through one collection.
 * ``TestMergedSpans`` — the deliberate behaviour change: merged spans come back merged,
   labelled with their anchor, and the ``<range>`` marker never reaches the wire.
@@ -404,29 +405,33 @@ class TestScope:
     @pytest.mark.parametrize(
         "narrower", [{"book": "GEN"}, {"book": "GEN", "chapter": 1}]
     )
-    def test_vrefs_cannot_be_combined_with_a_book_scope(
+    def test_only_vrefs_cannot_be_combined_with_a_book_scope(
         self, client, regular_token1, genesis_revision, narrower
     ):
         """Two ways of naming a set of verses; combining them can only ever intersect one
         with the other, silently returning fewer rows than either implies."""
         resp = _verses(
-            client, regular_token1, genesis_revision, vrefs=["GEN 1:1"], **narrower
+            client, regular_token1, genesis_revision, only_vrefs=["GEN 1:1"], **narrower
         )
-        assert "vrefs cannot be combined with book, chapter or verse" in _messages(resp)
+        assert "only_vrefs cannot be combined with book, chapter or verse" in _messages(
+            resp
+        )
 
-    def test_vrefs_cannot_be_combined_with_verse(
+    def test_only_vrefs_cannot_be_combined_with_verse(
         self, client, regular_token1, genesis_revision
     ):
         resp = _verses(
             client,
             regular_token1,
             genesis_revision,
-            vrefs=["GEN 1:1"],
+            only_vrefs=["GEN 1:1"],
             book="GEN",
             chapter=1,
             verse=1,
         )
-        assert "vrefs cannot be combined with book, chapter or verse" in _messages(resp)
+        assert "only_vrefs cannot be combined with book, chapter or verse" in _messages(
+            resp
+        )
 
     @pytest.mark.parametrize("book", ["GE", "GENE"])
     def test_a_wrong_length_book_is_a_422(
@@ -456,7 +461,7 @@ class TestScope:
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
-    def test_the_maximum_vrefs_list_is_accepted(
+    def test_the_maximum_only_vrefs_list_is_accepted(
         self, client, regular_token1, genesis_revision
     ):
         """Exactly at the cap succeeds — the boundary is inclusive, and the one page a
@@ -464,7 +469,9 @@ class TestScope:
         since ``MAX_VREFS`` and ``VERSE_MAX_LIMIT`` are the same number."""
         vrefs = list(VREF_LINES[:MAX_VREFS])
         assert len(vrefs) == MAX_VREFS
-        page = _page(_verses(client, regular_token1, genesis_revision, vrefs=vrefs))
+        page = _page(
+            _verses(client, regular_token1, genesis_revision, only_vrefs=vrefs)
+        )
         # The first 1000 canonical references run from GEN 1:1 into GEN 33, so they cover
         # every Genesis verse the fixture revision holds and nothing outside it.
         assert [row["vref"] for row in page["items"]] == [
@@ -482,30 +489,39 @@ class TestScope:
         so the caller gets a non-JSON body and nothing is logged. This is the answerable
         replacement, so it has to name what was sent as well as what is allowed."""
         vrefs = list(VREF_LINES[: MAX_VREFS + 1])
-        resp = _verses(client, regular_token1, genesis_revision, vrefs=vrefs)
+        resp = _verses(client, regular_token1, genesis_revision, only_vrefs=vrefs)
         message = _messages(resp)
         assert _error_code(resp) == "VALIDATION_ERROR"
-        assert f"at most {MAX_VREFS} vrefs per request" in message
+        assert f"only_vrefs takes at most {MAX_VREFS} references per request" in message
         assert f"received {MAX_VREFS + 1:,}" in message
 
     def test_a_far_oversized_list_still_answers_over_the_wire(
         self, client, regular_token1, genesis_revision
     ):
-        """Three times the cap — a ~52 KB URL — still comes back as a JSON 422 rather than
-        as something the transport decided on its own."""
-        vrefs = list(VREF_LINES[:3000])
+        """Twice the cap — a ~48 KB URL — still comes back as a JSON 422 rather than as
+        something the transport decided on its own.
+
+        2,000 rather than a rounder 3,000 because ``&only_vrefs=`` costs 5 bytes more per
+        reference than the ``&vrefs=`` this parameter used to be called (#925), which
+        moves httpx's own 65,536-character URL ceiling down to **2,672 references**. Past
+        that the request cannot be sent at all and this test would be asserting the
+        transport's refusal rather than this API's answer. 2,000 keeps a real HTTP round
+        trip with a quarter of the ceiling still spare, which is the whole point of it
+        sitting beside the model-level assertion below.
+        """
+        vrefs = list(VREF_LINES[:2000])
         message = _messages(
-            _verses(client, regular_token1, genesis_revision, vrefs=vrefs)
+            _verses(client, regular_token1, genesis_revision, only_vrefs=vrefs)
         )
-        assert f"at most {MAX_VREFS} vrefs per request" in message
-        assert "received 3,000" in message
+        assert f"only_vrefs takes at most {MAX_VREFS} references per request" in message
+        assert "received 2,000" in message
 
     def test_the_message_names_the_count_from_the_original_report(self):
         """#867's real failing request carried 4,683 references, and the message has to be
         able to say exactly that, with the separator that makes it readable at a glance.
 
         Asserted against the model rather than over HTTP because **that request cannot be
-        sent at all**: percent-encoded it is an ~82 KB query string, which httpx refuses
+        sent at all**: percent-encoded it is a ~112 KB query string, which httpx refuses
         outright (``URL component 'query' too long``, its 65,536-character ceiling) — the
         same class of transport-level refusal that produced the original incident, where
         the platform ingress rejected the request before it reached the application and
@@ -514,10 +530,32 @@ class TestScope:
         told the number to chunk to rather than being cut off by infrastructure.
         """
         with pytest.raises(ValidationError) as excinfo:
-            VerseScope(vrefs=[VREF_LINES[i % CANONICAL_VERSES] for i in range(4683)])
+            VerseScope(
+                only_vrefs=[VREF_LINES[i % CANONICAL_VERSES] for i in range(4683)]
+            )
         message = " | ".join(e["msg"] for e in excinfo.value.errors())
-        assert f"at most {MAX_VREFS} vrefs per request" in message
+        assert f"only_vrefs takes at most {MAX_VREFS} references per request" in message
         assert "received 4,683" in message
+
+    def test_the_scattered_selection_filter_is_declared_as_only_vrefs(self, client):
+        """The rename is itself the contract (#925), so it is asserted on the spec and
+        not only through the calls above.
+
+        ``vrefs`` must not be a parameter of this operation, and the reason is that an
+        unrecognized query parameter is *ignored* everywhere on v4 rather than refused —
+        so a request still sending the old name would silently be answered with the
+        whole revision instead of the scattered selection it asked for. Nothing but this
+        assertion would notice the old name coming back.
+        """
+        spec = client.get(f"{PREFIX}/openapi.json").json()
+        params = {
+            p["name"]
+            for p in spec["paths"]["/revisions/{revision_id}/verses"]["get"][
+                "parameters"
+            ]
+        }
+        assert "only_vrefs" in params
+        assert "vrefs" not in params
 
 
 class TestFilters:
@@ -589,7 +627,7 @@ class TestFilters:
         assert page["items"][0]["vref"] == "GEN 1:2"
         assert page["items"][0]["text"] == "And the earth was without form"
 
-    def test_vrefs_returns_a_scattered_selection(
+    def test_only_vrefs_returns_a_scattered_selection(
         self, client, regular_token1, genesis_revision
     ):
         """v3's ``GET /vrefs``, and the case no book/chapter filter can express."""
@@ -598,13 +636,15 @@ class TestFilters:
                 client,
                 regular_token1,
                 genesis_revision,
-                vrefs=["MAT 2:1", "GEN 1:3"],
+                only_vrefs=["MAT 2:1", "GEN 1:3"],
             )
         ) == ["GEN 1:3", "MAT 2:1"]
 
-    def test_vrefs_are_case_insensitive(self, client, regular_token1, genesis_revision):
+    def test_only_vrefs_are_case_insensitive(
+        self, client, regular_token1, genesis_revision
+    ):
         assert _vrefs(
-            _verses(client, regular_token1, genesis_revision, vrefs=["gen 1:3"])
+            _verses(client, regular_token1, genesis_revision, only_vrefs=["gen 1:3"])
         ) == ["GEN 1:3"]
 
     def test_a_well_formed_book_naming_nothing_is_an_empty_page_not_a_404(
@@ -622,7 +662,7 @@ class TestFilters:
                 client,
                 regular_token1,
                 genesis_revision,
-                vrefs=["GEN 1:1", "NOT A VREF"],
+                only_vrefs=["GEN 1:1", "NOT A VREF"],
             )
         )
         assert [row["vref"] for row in page["items"]] == ["GEN 1:1"]
@@ -766,9 +806,63 @@ class TestMergedSpans:
             == []
         )
         assert (
-            _rows(_verses(client, regular_token1, merged_revision, vrefs=["MAT 9:21"]))
+            _rows(
+                _verses(
+                    client,
+                    regular_token1,
+                    merged_revision,
+                    only_vrefs=["MAT 9:21"],
+                )
+            )
             == []
         )
+
+    def test_the_response_vrefs_is_span_coverage_not_an_echo_of_the_request(
+        self, client, regular_token1, merged_revision
+    ):
+        """The trap the ``only_vrefs`` rename closes (#925).
+
+        While the request filter was *also* called ``vrefs``, sending ``MAT 9:20`` and
+        ``MAT 9:21`` against this revision came back as one row whose ``vrefs`` was
+        exactly ``["MAT 9:20", "MAT 9:21"]`` — indistinguishable from an echo of what was
+        sent, and not one. It is the span's coverage, coinciding. A client reading it as
+        an echo would be wrong in a way nothing tells them about, so the two ways the
+        response provably is not an echo are pinned here: it can name references the
+        caller never sent, and it can answer several the caller did send with one row.
+        """
+        # The coincidence, first, because it is the case that reads as an echo: send
+        # both halves of the span and one row comes back whose coverage happens to equal
+        # the request exactly.
+        coincidence = _rows(
+            _verses(
+                client,
+                regular_token1,
+                merged_revision,
+                only_vrefs=["MAT 9:20", "MAT 9:21"],
+            )
+        )
+        assert [row["vrefs"] for row in coincidence] == [["MAT 9:20", "MAT 9:21"]]
+
+        # Not an echo, one: ask for the anchor alone and `vrefs` still names the
+        # continuation — a reference that was never sent.
+        anchor_only = _rows(
+            _verses(client, regular_token1, merged_revision, only_vrefs=["MAT 9:20"])
+        )
+        assert [row["vrefs"] for row in anchor_only] == [["MAT 9:20", "MAT 9:21"]]
+
+        # Not an echo, two: three references over one three-verse span answer as a
+        # single row, so the row count does not track the request length either.
+        span = _rows(
+            _verses(
+                client,
+                regular_token1,
+                merged_revision,
+                only_vrefs=["MAT 25:2", "MAT 25:3", "MAT 25:4"],
+            )
+        )
+        assert [(row["vref"], row["vrefs"]) for row in span] == [
+            ("MAT 25:2", ["MAT 25:2", "MAT 25:3", "MAT 25:4"])
+        ]
 
     def test_a_chapter_opening_marker_absorbs_nothing_and_is_not_served(
         self, client, regular_token1, db_session, group1_version
@@ -811,9 +905,10 @@ class TestMergedSpans:
         self, client, regular_token1, merged_revision
     ):
         """``all`` is the canonical skeleton: 41,899 rows means 41,899 rows, so a
-        continuation is a row of its own — with empty text, since its content was printed
-        under the anchor. Folding it in as well would have the anchor claim a verse that is
-        also present as its own row, which is the contradiction ``vrefs`` exists to avoid.
+        continuation is a row of its own — with ``null`` text, since its content was
+        printed under the anchor. Folding it in as well would have the anchor claim a
+        verse that is also present as its own row, which is the contradiction ``vrefs``
+        exists to avoid.
         """
         page = _page(
             _verses(
@@ -828,7 +923,10 @@ class TestMergedSpans:
         by_vref = {row["vref"]: row for row in page["items"]}
         assert by_vref["MAT 9:20"]["vrefs"] == ["MAT 9:20"]
         assert by_vref["MAT 9:21"]["vrefs"] == ["MAT 9:21"]
-        assert by_vref["MAT 9:21"]["text"] == ""
+        # Null, not "", and the set `id` is what separates this case — a continuation
+        # whose text is printed under its anchor — from a canonical verse the revision
+        # has no row for at all (#925).
+        assert by_vref["MAT 9:21"]["text"] is None
         assert by_vref["MAT 9:21"]["id"] is not None
 
 
@@ -875,7 +973,7 @@ class TestIncludeVerses:
             "GEN 1:3",
         ]
 
-    def test_all_leaves_a_missing_verse_empty_with_a_null_id(
+    def test_all_leaves_a_missing_verse_null_with_a_null_id(
         self, client, regular_token1, sparse_revision
     ):
         rows = _rows(
@@ -889,26 +987,27 @@ class TestIncludeVerses:
             )
         )
         missing = {row["vref"]: row for row in rows}["GEN 1:2"]
-        assert missing["text"] == ""
+        assert missing["text"] is None
         assert missing["id"] is None
         assert missing["vrefs"] == ["GEN 1:2"]
 
     def test_all_answers_which_of_a_vref_list_the_revision_has(
         self, client, regular_token1, sparse_revision
     ):
-        """The composition ``vrefs`` + ``all`` is new — v3 offered the flag only on its
-        whole-revision read — and it is the direct answer to "which of these does this
-        revision have?", which under ``union`` you can only infer from an absence."""
+        """The composition ``only_vrefs`` + ``all`` is new — v3 offered the flag only on
+        its whole-revision read — and it is the direct answer to "which of these does
+        this revision have?", which under ``union`` you can only infer from an absence.
+        """
         rows = _rows(
             _verses(
                 client,
                 regular_token1,
                 sparse_revision,
-                vrefs=["GEN 1:1", "GEN 1:2"],
+                only_vrefs=["GEN 1:1", "GEN 1:2"],
                 include_verses="all",
             )
         )
-        assert [(row["vref"], bool(row["text"])) for row in rows] == [
+        assert [(row["vref"], row["text"] is not None) for row in rows] == [
             ("GEN 1:1", True),
             ("GEN 1:2", False),
         ]

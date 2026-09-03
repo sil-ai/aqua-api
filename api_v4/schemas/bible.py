@@ -441,12 +441,12 @@ class RevisionOut(V4BaseModel):
 #: read (#892) need the same bound.
 BOOK_ABBREVIATION_LENGTH = 3
 
-#: Maximum number of references a single ``vrefs`` filter may carry (#867, settled on
-#: #892). A vref costs ~18-20 bytes once percent-encoded with its ``&vrefs=`` overhead,
-#: so 1000 is ~20 KB of URL — comfortably under the ~60 KB platform ingress ceiling,
-#: with 500-per-request already proven in production by the one known client. It is
-#: also :data:`api_v4.pagination.VERSE_MAX_LIMIT`, so a caller who asks for the maximum
-#: number of references can receive them all in a single page.
+#: Maximum number of references a single ``only_vrefs`` filter may carry (#867,
+#: settled on #892). A vref costs 23-27 bytes once percent-encoded with its
+#: ``&only_vrefs=`` overhead, so 1000 is ~24 KB of URL — comfortably under the ~60 KB
+#: platform ingress ceiling, with 500-per-request already proven in production by the
+#: one known client. It is also :data:`api_v4.pagination.VERSE_MAX_LIMIT`, so a caller
+#: who asks for the maximum number of references can receive them all in a single page.
 #:
 #: **The limit is not the point; the error is.** v3 accepts an unlimited list, but past
 #: roughly 3,000 references the URL exceeds the platform ingress limit and is rejected
@@ -484,26 +484,38 @@ class VerseScope(V4BaseModel):
 
     1. ``chapter`` requires ``book``
     2. ``verse`` requires ``book`` (and ``chapter``)
-    3. ``vrefs`` cannot be combined with ``book`` / ``chapter`` / ``verse``
+    3. ``only_vrefs`` cannot be combined with ``book`` / ``chapter`` / ``verse``
 
     Rule 3 is the one v3 has no opinion on, because in v3 the two were different
     endpoints. They are two ways of naming a set of verses, and combining them can only
     intersect one with the other — which returns fewer rows than either filter alone
     suggests, silently. Rejecting is also the reversible direction: allowing the
     combination later is not a breaking change, forbidding it later would be. The stated
-    use case for ``vrefs`` is a whole-Bible word search, whose references land wherever
-    the word occurs, so nothing about it wants a book filter as well.
+    use case for ``only_vrefs`` is a whole-Bible word search, whose references land
+    wherever the word occurs, so nothing about it wants a book filter as well.
 
     ``include_verses`` composes with all of them, which *is* new: v3 offered the flag
     only on ``/text``, its whole-revision read. ``include_verses=all`` with ``book=MAT``
     is every canonical verse of Matthew including the ones this revision lacks, and with
-    ``vrefs=[...]`` it is a direct answer to "which of these references does this
+    ``only_vrefs=[...]`` it is a direct answer to "which of these references does this
     revision have?".
 
-    A well-formed ``book`` naming no book, or a ``vrefs`` entry naming no canonical
-    verse, yields an empty page rather than a 404: these narrow an already-authorized
-    set instead of naming the collection's parent. Only the revision id in the path can
-    404.
+    A well-formed ``book`` naming no book, or an ``only_vrefs`` entry naming no
+    canonical verse, yields an empty page rather than a 404: these narrow an
+    already-authorized set instead of naming the collection's parent. Only the revision
+    id in the path can 404.
+
+    **The filter is ``only_vrefs``, not ``vrefs``, and the prefix is load-bearing**
+    (#925, repo owner, 2026-09-03). ``vrefs`` is taken on the response, where
+    :class:`VerseOut` uses it for the verses a row's text *covers*. One name for both
+    would have been actively misleading rather than merely untidy: ask for
+    ``MAT 9:20`` and ``MAT 9:21`` on a revision that merged them and the single row
+    that comes back reports ``vrefs: ["MAT 9:20", "MAT 9:21"]``, which looks exactly
+    like an echo of the request and is not — it is the span's coverage, coinciding.
+    Renamed on the request side because the response pair ``vref`` + ``vrefs`` is the
+    published join contract across seven models, while the filter is one field on one
+    endpoint. Same reasoning, same window, as the ``occurrences`` rename on the ngrams
+    read (:mod:`api_v4.schemas.assessment`).
     """
 
     book: str | None = Field(
@@ -513,22 +525,25 @@ class VerseScope(V4BaseModel):
         description=(
             "Restrict to one book, as its three-letter USFM abbreviation (`MAT`). "
             "Case-insensitive. A well-formed abbreviation that names no book yields an "
-            "empty page, not a 404. Cannot be combined with `vrefs`."
+            "empty page, not a 404. Cannot be combined with `only_vrefs`."
         ),
     )
     chapter: int | None = Field(
         default=None,
         ge=1,
-        description="Restrict to one chapter. Requires `book`; excludes `vrefs`.",
+        description=(
+            "Restrict to one chapter. Requires `book`; excludes `only_vrefs`."
+        ),
     )
     verse: int | None = Field(
         default=None,
         ge=1,
         description=(
-            "Restrict to one verse. Requires `book` and `chapter`; excludes `vrefs`."
+            "Restrict to one verse. Requires `book` and `chapter`; excludes "
+            "`only_vrefs`."
         ),
     )
-    vrefs: list[str] | None = Field(
+    only_vrefs: list[str] | None = Field(
         default=None,
         description=(
             f"Restrict to this explicit list of verse references (`GEN 1:1`), for a "
@@ -539,7 +554,10 @@ class VerseScope(V4BaseModel):
             f"Under the default `include_verses=union` a requested reference the "
             f"revision has no text for is absent from the page; use "
             f"`include_verses=all` to have every requested reference come back, with "
-            f"empty text where there is none."
+            f"null text where there is none. **This is not the response's `vrefs`,** "
+            f"which reports the verses a returned row's text covers: a merged span "
+            f"answers one reference you sent with a `vrefs` naming several, so the "
+            f"response is never an echo of this list."
         ),
     )
     include_verses: IncludeVerses = Field(
@@ -548,9 +566,9 @@ class VerseScope(V4BaseModel):
             "`union` (the default) returns only the verses this revision has text for, "
             "with verses the publisher merged into a neighbour folded into that "
             "neighbour's row. `all` returns every canonical verse in scope — all 41,899 "
-            "of them when nothing else narrows the request — with empty text where the "
-            "revision has none, and performs no merging: every row covers exactly one "
-            "verse. Join against a result set using the default."
+            "of them when nothing else narrows the request — with `text: null` where "
+            "the revision has none, and performs no merging: every row covers exactly "
+            "one verse. Join against a result set using the default."
         ),
     )
 
@@ -566,9 +584,9 @@ class VerseScope(V4BaseModel):
         """
         return value.upper() if value is not None else None
 
-    @field_validator("vrefs")
+    @field_validator("only_vrefs")
     @classmethod
-    def _bounded_vrefs(cls, value: list[str] | None) -> list[str] | None:
+    def _bounded_only_vrefs(cls, value: list[str] | None) -> list[str] | None:
         """Enforce :data:`MAX_VREFS` and normalize each reference.
 
         The bound is **not** declared as a ``max_length`` on the field, and that is
@@ -589,7 +607,8 @@ class VerseScope(V4BaseModel):
             return None
         if len(value) > MAX_VREFS:
             raise ValueError(
-                f"at most {MAX_VREFS} vrefs per request; received {len(value):,}"
+                f"only_vrefs takes at most {MAX_VREFS} references per request; "
+                f"received {len(value):,}"
             )
         return [vref.strip().upper() for vref in value]
 
@@ -599,10 +618,12 @@ class VerseScope(V4BaseModel):
             raise ValueError("chapter requires book")
         if self.verse is not None and self.chapter is None:
             raise ValueError("verse requires book and chapter")
-        if self.vrefs is not None and (
+        if self.only_vrefs is not None and (
             self.book is not None or self.chapter is not None or self.verse is not None
         ):
-            raise ValueError("vrefs cannot be combined with book, chapter or verse")
+            raise ValueError(
+                "only_vrefs cannot be combined with book, chapter or verse"
+            )
         return self
 
 
@@ -627,10 +648,33 @@ class VerseOut(V4BaseModel):
       publisher printed several verses as one unit. Under ``include_verses=all`` it is
       always exactly ``[vref]``, because that mode does no merging.
 
+    The request-side filter that names an explicit list of references is
+    :attr:`VerseScope.only_vrefs`, deliberately *not* ``vrefs``: a row's ``vrefs`` is
+    span coverage, so on a merged revision it can name verses the caller never asked
+    for, and one name for both meanings reads as an echo it is not (#925).
+
     ``text`` never carries the stored ``<range>`` marker. Under ``union`` a merged
-    continuation is not a row at all; under ``all`` it is a row with empty text. The one
-    place the marker is still emitted verbatim is ``GET /v4/revisions/{id}/text``, where
-    it is part of the file format rather than a leaked storage detail.
+    continuation is not a row at all; under ``all`` it is a row whose ``text`` is
+    ``null``. The one place the marker is still emitted verbatim is
+    ``GET /v4/revisions/{id}/text``, where it is part of the file format rather than a
+    leaked storage detail.
+
+    **``text`` is nullable, and null means "this revision has no text here"** (#925,
+    repo owner, 2026-09-03). It was a required ``str`` reporting ``""``, which put this
+    read out of step with every other v4 field carrying the same fact — ``text`` and
+    ``reference_text`` on each of :class:`api_v4.schemas.assessment.AlignmentScoreOut`
+    and :class:`api_v4.schemas.assessment.SimilarVerseOut`, plus
+    :attr:`TextSearchOut.comparison_text`, five fields on three models, every one of
+    them ``str | None`` answering null. The ``""`` came from the plaintext export,
+    where a textless verse *must* be a blank line for the file to stay 41,899 lines
+    long; that is a constraint of a line-aligned format and JSON has no equivalent.
+    Nullable is also the reversible direction while there are no clients: narrowing to
+    a required ``str`` later is safe for a client that already handles null, and
+    widening later would not be.
+
+    Both null cases are reachable only under ``include_verses=all``, and ``id`` tells
+    them apart: null ``id`` is a canonical verse with no stored row, a set ``id`` is a
+    continuation whose text is printed under its anchor.
     """
 
     id: int | None = Field(
@@ -660,10 +704,13 @@ class VerseOut(V4BaseModel):
             "`include_verses=all`, which does not merge."
         ),
     )
-    text: str = Field(
+    text: str | None = Field(
+        default=None,
         description=(
-            "The verse text, or the merged text of the span. Empty for a canonical "
-            "verse this revision has no text for. Never the `<range>` marker."
+            "The verse text, or the merged text of the span. Null where this revision "
+            "has no text for the verse — either no stored row at all, or a row the "
+            "publisher merged into the verse above, which `id` tells apart. Only "
+            "reachable under `include_verses=all`. Never the `<range>` marker."
         ),
     )
 
@@ -875,9 +922,10 @@ class TextSearchOut(V4BaseModel):
     without the client reassembling the reference itself.
 
     Not :class:`VerseOut` itself, for two reasons that are both about not lying in
-    OpenAPI. This row adds two fields; and ``VerseOut.id`` is nullable there because
-    ``include_verses=all`` can return a canonical verse with no stored row, which cannot
-    happen here — a hit matched stored text, so it has a row.
+    OpenAPI. This row adds two fields; and ``VerseOut``'s ``id`` and ``text`` are both
+    nullable there because ``include_verses=all`` can return a canonical verse with no
+    stored row — which cannot happen here, since a hit matched stored text, so it has a
+    row and that row has text. Same meanings, narrower types.
 
     **The last two fields are absent, not null, when they do not apply**, which is why the
     route sets ``response_model_exclude_unset=True``:
