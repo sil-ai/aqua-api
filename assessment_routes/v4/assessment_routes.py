@@ -232,7 +232,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4APIError, error_responses
 from api_v4.jobs import (
     JobEnvelope,
     JobState,
@@ -346,7 +346,17 @@ def _poll_url(request: Request, assessment_id: int) -> str:
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
-    responses={202: {"model": JobSubmitAccepted}},
+    responses={
+        202: {"model": JobSubmitAccepted},
+        # The two statuses only this operation can answer, so they are declared here
+        # rather than in the shared set. Both are documented on the endpoint itself and
+        # a client has to handle them: the 409 is what `force` overrides (for the
+        # already-finished case, not the still-running one), and the 503 means the
+        # runner was unreachable and the row was left marked failed.
+        **error_responses(
+            status.HTTP_409_CONFLICT, status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+    },
 )
 async def create_assessment(
     request: Request,

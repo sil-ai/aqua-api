@@ -42,7 +42,7 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
 from bible_routes.v4 import version_service
@@ -155,7 +155,14 @@ async def get_version(
     return _to_out(version, group_map.get(version.id, []))
 
 
-@router.post("", response_model=VersionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=VersionOut,
+    status_code=status.HTTP_201_CREATED,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def create_version(
     data: VersionCreate,
     db: AsyncSession = Depends(get_db),
@@ -191,7 +198,13 @@ async def create_version(
     return _to_out(version, group_map.get(version.id, []))
 
 
-@router.patch("/{version_id}", response_model=VersionOut)
+@router.patch(
+    "/{version_id}",
+    response_model=VersionOut,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def update_version(
     version_id: int,
     data: VersionPatch,

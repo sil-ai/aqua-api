@@ -57,7 +57,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api_v4.errors import V4APIError
+from api_v4.errors import V4_JSON_ERROR_RESPONSES, V4APIError
 from api_v4.pagination import (
     PaginationParams,
     TextSearchPaginationParams,
@@ -318,7 +318,11 @@ async def list_verses(
         200: {
             "content": {"text/plain": {}},
             "description": "The revision's text, one line per canonical verse reference.",
-        }
+        },
+        # The one v4 route whose success body is not JSON, and so the one that cannot
+        # take the router-level error set: FastAPI would document each error as a
+        # `text/plain` body. Its errors are JSON like every other v4 error.
+        **V4_JSON_ERROR_RESPONSES,
     },
 )
 async def export_text(

@@ -40,6 +40,14 @@ worth echoing — are untouched; the case this exists for is a validation error 
 /v4/revisions``, where Pydantic attaches the rejected value to its error and the
 rejected value is a whole Bible as one base64 string.
 
+Publishing the contract (#928): handlers alone shape the *runtime* body — FastAPI
+documents whatever a route declares, which by default is its success code plus a
+``HTTPValidationError`` 422 that v4 never emits. :data:`V4_ERROR_RESPONSES` and
+:data:`V4_PUBLIC_ERROR_RESPONSES` are the schema half of the same contract, applied at
+the ``include_router`` calls in :mod:`api_v4.app` so ``/v4/openapi.json`` advertises the
+envelope clients are told to branch on. :data:`V4_JSON_ERROR_RESPONSES` is the same set
+for the one route whose *success* body is not JSON.
+
 Re-raise-for-logging (do not "fix" this): the ``Exception`` handler only
 *returns* the clean 500 body. The sub-app's own ``ServerErrorMiddleware`` is what
 calls this handler, sends its response, and *then re-raises the exception* — which
@@ -107,6 +115,141 @@ class V4ErrorResponse(V4BaseModel):
     """The v4 error envelope — the response body for every v4 error."""
 
     error: V4ErrorDetail
+
+
+#: One-line OpenAPI ``description`` per documented error status.
+#:
+#: Kept as data next to the envelope it describes so the wording is written once and
+#: every router that documents a status says the same thing about it.
+_ERROR_DESCRIPTIONS: dict[int, str] = {
+    status.HTTP_401_UNAUTHORIZED: (
+        "Authentication failed: the ``Authorization`` bearer token is missing, "
+        "malformed, or expired."
+    ),
+    status.HTTP_403_FORBIDDEN: (
+        "The resource is visible to the caller, but this action on it is not "
+        "permitted — they are neither its owner nor an administrator. A resource the "
+        "caller may not *see* is a ``404``, not this."
+    ),
+    status.HTTP_404_NOT_FOUND: (
+        "The resource does not exist, **or** is not visible to the caller. v4 answers "
+        "those two identically on purpose, so that a caller cannot discover which ids "
+        "exist by watching the status code change."
+    ),
+    status.HTTP_422_UNPROCESSABLE_ENTITY: (
+        "The request failed validation. ``details.errors`` carries the per-field "
+        "failures."
+    ),
+    status.HTTP_500_INTERNAL_SERVER_ERROR: (
+        "An unexpected server error. The body carries a fixed generic message and "
+        "never any internal detail."
+    ),
+    # Below this line: statuses only *some* operations can return, so they are declared
+    # per route rather than in the shared sets. Their wording still lives here, so a
+    # second route answering the same status describes it the same way.
+    status.HTTP_400_BAD_REQUEST: (
+        "The request is well-formed but names something unusable — typically a "
+        "foreign key that does not resolve. Distinct from ``422``, which is a shape "
+        "or type failure the framework catches before the handler runs."
+    ),
+    status.HTTP_409_CONFLICT: (
+        "The request conflicts with work that already exists. Branch on ``code`` to "
+        "tell the cases apart: some are overridable and some are not."
+    ),
+    status.HTTP_503_SERVICE_UNAVAILABLE: (
+        "A downstream dependency could not be reached. The request was valid and may "
+        "be worth retrying."
+    ),
+}
+
+
+#: The ``$ref`` a generated schema uses for the envelope: FastAPI names a Pydantic
+#: model in ``components.schemas`` by its class name. Needed only by
+#: :func:`json_error_responses`, which cannot go through ``model=``. Asserted resolvable
+#: against the real schema by ``test/test_v4_openapi.py``, since a bare string cannot
+#: fail loudly on its own.
+V4_ERROR_RESPONSE_REF = f"#/components/schemas/{V4ErrorResponse.__name__}"
+
+#: The statuses the shared sets document. One tuple, so the two spellings below stay in
+#: step; see :data:`V4_ERROR_RESPONSES` for why these five.
+_DOMAIN_ERROR_STATUSES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+    status.HTTP_404_NOT_FOUND,
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+    status.HTTP_500_INTERNAL_SERVER_ERROR,
+)
+
+
+def error_responses(*status_codes: int) -> dict[int, dict]:
+    """Build a FastAPI ``responses=`` mapping for ``status_codes``.
+
+    Every entry documents :class:`V4ErrorResponse`, because every error leaving
+    ``/v4`` is that envelope. Exists so the sets below — and any route that needs a
+    subset or an extra status — are all built from one place, and so declaring a
+    status is a one-token change rather than a copied five-line block.
+    """
+    return {
+        code: {"model": V4ErrorResponse, "description": _ERROR_DESCRIPTIONS[code]}
+        for code in status_codes
+    }
+
+
+def json_error_responses(*status_codes: int) -> dict[int, dict]:
+    """:func:`error_responses` for a route whose ``response_class`` is not JSON.
+
+    FastAPI documents a ``model=`` response under the *route's* media type —
+    ``route.response_class.media_type``, in ``fastapi/openapi/utils.py`` — not under
+    ``application/json``. So on ``GET /v4/revisions/{id}/text``, a ``PlainTextResponse``
+    route, the shared set documented all five errors as ``text/plain`` bodies. That is
+    simply untrue: every handler in this module returns a ``JSONResponse``, whatever the
+    route's success type, so a v4 error is JSON even where success is plaintext.
+
+    Spelling the content block out is what pins the media type. Passing ``model`` is
+    what triggers the media-type substitution, so this deliberately does not: with no
+    response field to attach, FastAPI merges the dict through verbatim.
+    """
+    return {
+        code: {
+            "description": _ERROR_DESCRIPTIONS[code],
+            "content": {
+                "application/json": {"schema": {"$ref": V4_ERROR_RESPONSE_REF}}
+            },
+        }
+        for code in status_codes
+    }
+
+
+#: The documented error surface of an authenticated v4 domain route (#928).
+#:
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 33
+#: per-route ``responses=`` decorators that would drift apart. It is deliberately the
+#: *union* over the domain routers, so a few routes document a status they cannot
+#: actually reach (a collection ``GET`` has no ``404``); the alternative — an accurate
+#: set per route — is the drift this exists to prevent, and over-documenting an error
+#: misleads no client that is branching on ``code``.
+#:
+#: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
+#: the generator only injects that when the route documents no ``422`` of its own
+#: (``fastapi/openapi/utils.py``). A per-route ``responses=`` entry still wins over
+#: anything here (``{**router_responses, **route.responses}`` in ``fastapi/routing.py``),
+#: so this sets a floor and locks nothing down.
+V4_ERROR_RESPONSES: dict[int, dict] = error_responses(*_DOMAIN_ERROR_STATUSES)
+
+#: :data:`V4_ERROR_RESPONSES` for a route whose ``response_class`` is not JSON — see
+#: :func:`json_error_responses` for why that needs a separate spelling. Built from the
+#: same status tuple, so the two sets cannot come to cover different statuses.
+V4_JSON_ERROR_RESPONSES: dict[int, dict] = json_error_responses(*_DOMAIN_ERROR_STATUSES)
+
+#: The same, for the routers registered *without* the auth dependency — the discovery
+#: root and the token endpoint. No ``401``/``403``: an unauthenticated route cannot
+#: fail authentication. ``POST /v4/token`` does answer ``401`` for bad credentials, but
+#: that is a different error with a different meaning, so it is declared on the route
+#: itself where it can say so.
+V4_PUBLIC_ERROR_RESPONSES: dict[int, dict] = error_responses(
+    status.HTTP_422_UNPROCESSABLE_ENTITY,
+    status.HTTP_500_INTERNAL_SERVER_ERROR,
+)
 
 
 #: Total budget, in characters of caller-supplied content, for one error's ``details``

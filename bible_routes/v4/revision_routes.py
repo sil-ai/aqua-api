@@ -42,7 +42,7 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import RevisionCreate, RevisionOut, RevisionPatch
 from bible_routes.v4 import revision_service
@@ -263,7 +263,14 @@ async def get_revision(
     return await _out_for(db, revision)
 
 
-@router.post("", response_model=RevisionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=RevisionOut,
+    status_code=status.HTTP_201_CREATED,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def create_revision(
     data: RevisionCreate,
     db: AsyncSession = Depends(get_db),
@@ -308,7 +315,13 @@ async def create_revision(
     return await _out_for(db, revision)
 
 
-@router.patch("/{revision_id}", response_model=RevisionOut)
+@router.patch(
+    "/{revision_id}",
+    response_model=RevisionOut,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def update_revision(
     revision_id: int,
     data: RevisionPatch,
