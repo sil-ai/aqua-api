@@ -26,6 +26,11 @@ This module ships four pieces:
   ``Retry-After``, body ``{"job_id": ...}``).
 * :func:`poll_status_code` / :func:`set_poll_headers` — the poll-side half of the
   same contract, so every slice answers a poll identically.
+* :data:`JOB_ACCEPTED_HEADERS` / :data:`JOB_POLL_PENDING_HEADERS` /
+  :data:`JOB_POLL_HEADERS` — the ``responses={...: {"headers": ...}}`` declarations
+  that publish those two headers to ``/v4/openapi.json`` (#928). The functions above
+  set the headers; these document them, and FastAPI never checks one against the
+  other, so a change to either wants the same change to its pair.
 
 Scope: this PR defines the reusable *contract only*. It deliberately wires
 nothing into assessments, training, or predict — those are separate vertical
@@ -552,9 +557,71 @@ def set_poll_headers(
         response.headers["Retry-After"] = str(retry_after_s)
 
 
+def _retry_after_header(*, required: bool, when: str) -> dict:
+    """One OpenAPI header object for ``Retry-After``.
+
+    ``when`` completes the sentence "Sent ..." so each response can say on what
+    condition the header appears; ``required`` is what OpenAPI has instead of that
+    prose, and it is only true where the status code alone guarantees the header.
+    """
+    return {
+        "description": (
+            "Seconds to wait before polling again. Always delta-seconds, never an "
+            f"HTTP-date. Sent {when}."
+        ),
+        "required": required,
+        "schema": {"type": "integer", "minimum": 1},
+    }
+
+
+#: OpenAPI ``headers`` for a submit's ``202`` — what :func:`job_accepted_response`
+#: actually sets (#928). Declared as data here, rather than inline on the one route
+#: that has a submit today, for the same reason the helpers above are shared: training
+#: and predict answer the same 202 and must document it the same way.
+#:
+#: Both are ``required``: :func:`job_accepted_response` sets them unconditionally and
+#: refuses to build a response without a ``poll_url`` or with a sub-1 cadence.
+JOB_ACCEPTED_HEADERS: dict[str, dict] = {
+    "Location": {
+        "description": (
+            "The poll URL for the job just accepted — a root-relative path, since the "
+            "assessment *is* the job. Follow this rather than building the URL."
+        ),
+        "required": True,
+        "schema": {"type": "string", "format": "uri-reference"},
+    },
+    "Retry-After": _retry_after_header(required=True, when="on every 202"),
+}
+
+#: OpenAPI ``headers`` for a poll's ``202``. No ``Location``: a poll answers *at* the
+#: poll URL, and :func:`set_poll_headers` does not set one — declaring it would invent
+#: a header the endpoint never sends.
+#:
+#: ``required``, because a ``202`` means ``PENDING``, which is never terminal.
+JOB_POLL_PENDING_HEADERS: dict[str, dict] = {
+    "Retry-After": _retry_after_header(required=True, when="on every 202"),
+}
+
+#: OpenAPI ``headers`` for a poll's ``200`` — the response a polling loop sees most,
+#: and the reason this is declared at all: ``RUNNING`` is non-terminal but answers
+#: ``200`` (:func:`poll_status_code`), so the cadence hint rides on the 200 too.
+#:
+#: Not ``required``: the same 200 covers the terminal states, where
+#: :func:`set_poll_headers` deliberately *removes* the header so a finished job cannot
+#: invite another poll.
+JOB_POLL_HEADERS: dict[str, dict] = {
+    "Retry-After": _retry_after_header(
+        required=False, when="while the job is RUNNING, and omitted once it is terminal"
+    ),
+}
+
+
 # Re-exported so a slice needs one import line for the whole contract.
 __all__ = [
     "ASSESSMENT_STATE_MAP",
+    "JOB_ACCEPTED_HEADERS",
+    "JOB_POLL_HEADERS",
+    "JOB_POLL_PENDING_HEADERS",
     "TERMINAL_JOB_STATES",
     "JobEnvelope",
     "JobState",

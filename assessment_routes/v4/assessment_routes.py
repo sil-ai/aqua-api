@@ -232,8 +232,11 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.jobs import (
+    JOB_ACCEPTED_HEADERS,
+    JOB_POLL_HEADERS,
+    JOB_POLL_PENDING_HEADERS,
     JobEnvelope,
     JobState,
     JobSubmitAccepted,
@@ -284,7 +287,7 @@ from database.dependencies import get_db
 from database.models import Assessment
 from database.models import UserDB as UserModel
 from schemas.assessment import AssessmentType
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/assessments", tags=["Assessments"])
 
@@ -346,13 +349,23 @@ def _poll_url(request: Request, assessment_id: int) -> str:
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
-    responses={202: {"model": JobSubmitAccepted}},
+    responses={
+        202: {"model": JobSubmitAccepted, "headers": JOB_ACCEPTED_HEADERS},
+        # The two statuses only this operation can answer, so they are declared here
+        # rather than in the shared set. Both are documented on the endpoint itself and
+        # a client has to handle them: the 409 is what `force` overrides (for the
+        # already-finished case, not the still-running one), and the 503 means the
+        # runner was unreachable and the row was left marked failed.
+        **error_responses(
+            status.HTTP_409_CONFLICT, status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+    },
 )
 async def create_assessment(
     request: Request,
     data: AssessmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> JSONResponse:
     """Submit an assessment run.
 
@@ -598,7 +611,7 @@ async def list_assessments(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[AssessmentOut]:
     """List assessments the caller may access, lowest id first, paginated.
 
@@ -654,15 +667,24 @@ async def list_assessments(
     response_model=AssessmentJob,
     # The 202 is a real, documented outcome of this GET, not an error path, so it needs
     # its own entry — FastAPI documents only the declared status_code otherwise.
+    #
+    # The 200 entry declares no model: FastAPI generates that half from
+    # ``response_model`` and deep-merges this dict into it, so the entry exists purely
+    # to hang ``Retry-After`` on the status a RUNNING poll actually returns.
     responses={
-        202: {"model": AssessmentJob, "description": "Accepted, not yet started"}
+        200: {"headers": JOB_POLL_HEADERS},
+        202: {
+            "model": AssessmentJob,
+            "description": "Accepted, not yet started",
+            "headers": JOB_POLL_PENDING_HEADERS,
+        },
     },
 )
 async def get_assessment(
     assessment_id: int,
     response: Response,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> AssessmentJob:
     """Poll one assessment: its own fields, merged with the job envelope.
 
@@ -868,7 +890,7 @@ async def get_assessment_results(
     page: ResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[AssessmentResultRow]:
     """Read one assessment's per-verse scores, in canonical Bible order.
 
@@ -946,7 +968,7 @@ async def get_assessment_ngrams(
     assessment_id: int,
     page: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[NgramResultOut]:
     """Read one assessment's n-grams, each with the verses it occurs in.
 
@@ -1030,7 +1052,7 @@ async def get_assessment_similar_verses(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> SimilarVersesOut:
     """Find the verses most similar to a given verse, within one `tfidf` assessment.
 
@@ -1117,7 +1139,7 @@ async def post_assessment_similar_verses(
     assessment_id: int,
     body: SimilarVersesRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> SimilarVersesBatchOut:
     """Find the verses most similar to each of several query points, in one request.
 
@@ -1306,7 +1328,7 @@ async def get_assessment_alignment_scores(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[AlignmentScoreOut]:
     """Read one assessment's word-level alignment scores, in canonical Bible order.
 
@@ -1403,7 +1425,7 @@ async def get_assessment_missing_words(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[MissingWordOut]:
     """Read words a translation appears to have dropped, judged against peer translations.
 
@@ -1520,7 +1542,7 @@ async def get_assessment_text_lengths(
     page: ResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[TextLengthsRow]:
     """Read how long each verse of a translation is, in canonical Bible order.
 
@@ -1625,7 +1647,7 @@ async def get_assessment_score_comparison(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> ScoreComparisonPage:
     """Read how unusual a translation's scores are, against comparable translations.
 
@@ -1737,11 +1759,18 @@ async def get_assessment_score_comparison(
     )
 
 
-@router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{assessment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_assessment(
     assessment_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete an assessment (its owner, or an admin).
 

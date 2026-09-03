@@ -42,14 +42,14 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import RevisionCreate, RevisionOut, RevisionPatch
 from bible_routes.v4 import revision_service
 from database.dependencies import get_db
 from database.models import BibleRevision, BibleVersion
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/revisions", tags=["Revisions"])
 
@@ -204,7 +204,7 @@ async def list_revisions(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[RevisionOut]:
     """List revisions the caller may access, lowest id first, paginated.
 
@@ -244,7 +244,7 @@ async def list_revisions(
 async def get_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Fetch a single revision by id, scoped to what the caller may see.
 
@@ -263,11 +263,18 @@ async def get_revision(
     return await _out_for(db, revision)
 
 
-@router.post("", response_model=RevisionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=RevisionOut,
+    status_code=status.HTTP_201_CREATED,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def create_revision(
     data: RevisionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Create a revision and load its verse text, in one JSON request.
 
@@ -308,12 +315,24 @@ async def create_revision(
     return await _out_for(db, revision)
 
 
-@router.patch("/{revision_id}", response_model=RevisionOut)
+@router.patch(
+    "/{revision_id}",
+    response_model=RevisionOut,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
+)
 async def update_revision(
     revision_id: int,
     data: RevisionPatch,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Partially update a revision (parent version's owner, or an admin).
 
@@ -335,11 +354,18 @@ async def update_revision(
     return await _out_for(db, revision)
 
 
-@router.delete("/{revision_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{revision_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete a revision (parent version's owner, or an admin).
 
