@@ -1158,8 +1158,9 @@ class SimilarVerseOut(V4BaseModel):
         default=None,
         description=(
             "The assessed revision's text for this verse, so a ranked list can be "
-            "rendered without a request per hit. Null only if the revision has no row "
-            "for the verse."
+            "rendered without a request per hit. Null where that revision has no text of "
+            "its own for the verse — either no row at all, or a row that merely marks the "
+            "verse as printed within the one above it."
         ),
     )
     reference_text: str | None = Field(
@@ -1168,7 +1169,10 @@ class SimilarVerseOut(V4BaseModel):
             "The same verse in the assessment's own reference revision, for "
             "side-by-side display. Null for every hit when the assessment has no "
             "reference, which is the normal case for this type — not an error, and not "
-            "something a caller can override: v3's `reference_id` parameter is gone."
+            "something a caller can override: v3's `reference_id` parameter is gone. "
+            "Null for a single hit where that revision has no text of its own for the "
+            "verse, which includes printing it within the verse above: the two revisions "
+            "merge verses independently, so this can differ from `text` verse by verse."
         ),
     )
 
@@ -1721,7 +1725,9 @@ class AlignmentScoreOut(V4BaseModel):
             "this is the **whole merged span's** text, which is how a vref-aligned "
             "upload stores it — the continuations hold the `<range>` marker and carry no "
             "text of their own. So this is exactly the text the alignment ran over. Null "
-            "if the revision has no row for the verse."
+            "where the revision has no text of its own for the verse: either no row at "
+            "all, or one of those marker rows, which reports as null rather than "
+            "publishing the marker."
         ),
     )
     reference_text: str | None = Field(
@@ -1729,7 +1735,10 @@ class AlignmentScoreOut(V4BaseModel):
         description=(
             "The same verse in the assessment's reference revision, for side-by-side "
             "display. Word alignment always has a reference, so this is null only where "
-            "the reference lacks the verse."
+            "that revision has no text of its own for the verse — either no row at all, "
+            "or a `<range>` marker row. The two revisions merge spans independently, so "
+            "a verse whose `text` is a whole merged span here can be a continuation "
+            "there, and vice versa."
         ),
     )
 

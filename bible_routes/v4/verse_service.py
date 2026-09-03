@@ -760,13 +760,14 @@ async def _comparison_texts(
     ``ix_verse_text_verse_reference_revision``. A revision need not hold every vref, so a
     missing entry is normal and the caller reports null.
 
-    **A marker row maps to null, not to the marker**, which is what distinguishes this
-    from ``assessment_service._verse_texts``, the same lookup for the alignment reads.
-    Where the comparison revision printed this verse as part of the one above it, the verse
-    has no text of its own there, and #892's rule is that the storage marker never reaches
-    a client. Reporting null says the true thing; reporting the anchor's text instead would
-    attribute one verse's words to another, and reporting ``<range>`` would publish a
-    storage detail as scripture.
+    **A marker row maps to null, not to the marker.** Where the comparison revision
+    printed this verse as part of the one above it, the verse has no text of its own
+    there, and #892's rule is that the storage marker never reaches a client. Reporting
+    null says the true thing; reporting the anchor's text instead would attribute one
+    verse's words to another, and reporting ``<range>`` would publish a storage detail as
+    scripture. ``assessment_service._verse_texts``, the same lookup for the alignment
+    reads, now does the same — it did not when this was written, and that difference is
+    how #923 was found rather than something either side should keep.
 
     ``verse_text`` has no uniqueness constraint on ``(revision_id, verse_reference)``, so
     the **lowest id wins deterministically** — the convention the rest of the tree applies

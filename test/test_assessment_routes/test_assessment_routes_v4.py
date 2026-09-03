@@ -7290,6 +7290,155 @@ class TestAlignmentScoresText:
             assert list(parameters).count("MAT 9:20") == 1
 
 
+class TestVerseTextMarkerCoercion:
+    """The ``<range>`` marker never reaches a client through the three reads that
+    hydrate verse text via ``assessment_service._verse_texts`` (#923, #892's rule).
+
+    One class rather than a test in each endpoint's own text group, because the three
+    reads share one lookup and that is the fact worth pinning: split these up and a
+    later refactor can move the coercion onto one caller without anything noticing.
+
+    **The reference half is where this bites.** ``/alignment-scores`` documents why the
+    assessed revision's rows sit on span anchors only, so ``text`` was already safe in
+    practice — but ``reference_text`` reads a *different* revision, whose span map is
+    independent. A verse can anchor a span in one revision and continue one in the
+    other, which is how the leak survived a check that genuinely held.
+    """
+
+    #: The issue's own repro: 9:20-21 is one span in the reference revision and two
+    #: separate verses in the assessed one, so 9:21 carries real text on one side and
+    #: the marker on the other.
+    ASSESSED = {
+        "MAT 9:20": "she touched the fringe of his cloak",
+        "MAT 9:21": "for she said to herself",
+    }
+    REFERENCE = {
+        "MAT 9:20": "em i tasim arere bilong klos bilong em",
+        "MAT 9:21": RANGE,
+    }
+
+    def _aligned(self, db_session, group1_version):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_alignment(db_session, assessment_id, "MAT 9:21", "said", "tok")
+        return revision_id, reference_id, assessment_id
+
+    def _vectorized(self, db_session, group1_version):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
+        )
+        _make_vector(db_session, assessment_id, "MAT 9:20", 1)
+        _make_vector(db_session, assessment_id, "MAT 9:21", 5)
+        return revision_id, reference_id, assessment_id
+
+    def test_alignment_scores_reports_null_for_a_reference_side_marker(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The exact response the issue reproduced: ``text`` right, ``reference_text``
+        the literal marker.
+
+        ``is None`` is the whole assertion, and it carries the substantive half of the
+        ruling with it: null rather than the text of the verse above, which is what a
+        "helpful" fix gets wrong. The verse has no text of its own in that revision, so
+        reporting the anchor's would attribute one verse's words to another with nothing
+        in the response to show it happened.
+        """
+        revision_id, reference_id, assessment_id = self._aligned(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        _make_verse_texts(db_session, reference_id, self.REFERENCE)
+        (row,) = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert row["text"] == "for she said to herself"
+        assert row["reference_text"] is None
+
+    def test_a_reference_side_marker_leaves_vrefs_alone(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``vrefs`` is the *assessed* revision's span map and nothing else. The verse
+        anchors no span there, so it covers itself only — pinned because the two facts
+        are easy to conflate once both revisions are in play."""
+        revision_id, reference_id, assessment_id = self._aligned(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        _make_verse_texts(db_session, reference_id, self.REFERENCE)
+        (row,) = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert row["vref"] == "MAT 9:21"
+        assert row["vrefs"] == ["MAT 9:21"]
+
+    def test_alignment_scores_coerces_the_assessed_side_too(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Defence in depth, and it is what keeps the coercion in the lookup rather than
+        on the reference branch of the caller. Production has no alignment row on a
+        continuation vref — twelve assessments, zero rows, which is why ``text`` was safe
+        — but that is a property of the runner, not something this read enforces."""
+        revision_id, reference_id, assessment_id = self._aligned(
+            db_session, group1_version
+        )
+        _make_verse_texts(
+            db_session, revision_id, {"MAT 9:20": "she touched", "MAT 9:21": RANGE}
+        )
+        _make_verse_texts(db_session, reference_id, self.REFERENCE)
+        (row,) = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert row["text"] is None
+        assert row["reference_text"] is None
+
+    def test_similar_verses_reports_null_for_a_reference_side_marker(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The GET form. A ``tfidf`` assessment with a reference is the v3-created case —
+        ``TfidfOptions`` declares no ``reference_id`` — and it is the only one of these
+        three reads whose text fields the module docstring argued were marker-free."""
+        revision_id, reference_id, assessment_id = self._vectorized(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        _make_verse_texts(db_session, reference_id, self.REFERENCE)
+        (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="MAT 9:20"))
+        assert hit["vref"] == "MAT 9:21"
+        assert hit["text"] == "for she said to herself"
+        assert hit["reference_text"] is None
+
+    def test_the_similar_verses_post_reports_null_for_a_reference_side_marker(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The POST form. It shares ``_hit`` and the hydration with the GET, so this
+        cannot diverge without the shared function changing — which is exactly the
+        refactor this asserts against."""
+        revision_id, reference_id, assessment_id = self._vectorized(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        _make_verse_texts(db_session, reference_id, self.REFERENCE)
+        resp = _post_similar(
+            client,
+            regular_token1,
+            assessment_id,
+            queries=[{"type": "vref", "vref": "MAT 9:20"}],
+        )
+        ((hit,),) = [entry["items"] for entry in _entries(resp)]
+        assert hit["vref"] == "MAT 9:21"
+        assert hit["text"] == "for she said to herself"
+        assert hit["reference_text"] is None
+
+    def test_an_unmerged_pair_still_reports_both_texts(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The control. Without it a coercion that nulled *every* reference text would
+        pass every assertion above."""
+        revision_id, reference_id, assessment_id = self._aligned(
+            db_session, group1_version
+        )
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        _make_verse_texts(db_session, reference_id, {"MAT 9:21": "long wanem em i tok"})
+        (row,) = _rows(_alignment_scores(client, regular_token1, assessment_id))
+        assert row["text"] == "for she said to herself"
+        assert row["reference_text"] == "long wanem em i tok"
+
+
 class TestAlignmentScoresFilters:
     """``source``, ``min_score``, ``score_type`` and the verse scope."""
 
