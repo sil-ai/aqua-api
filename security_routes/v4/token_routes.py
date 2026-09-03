@@ -1,7 +1,7 @@
 """v4 token router — ``POST /v4/token`` (issues #826/#828/#831, epic #842).
 
 Its own module, and its own router, for one structural reason: :mod:`api_v4.app`
-registers domain routers with ``dependencies=[Depends(get_current_user_v4)]` so v4 is
+registers domain routers with ``dependencies=[Depends(get_current_user_v4)]`` so v4 is
 protected-by-default (#831), and **the token endpoint cannot inherit that** — it
 is the endpoint that issues the token, so requiring one would be a deadlock (you
 would need a token to get a token). Keeping it in a separate router means it is
