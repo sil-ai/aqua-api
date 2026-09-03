@@ -271,14 +271,22 @@ rows. Read the differences from every other function above before changing it.
   measure before adding anything here, not a reason to add it pre-emptively.
 
 The verse text is fetched in the same layer, so the router never touches the database.
-No hit's ``text`` should be the ``<range>`` marker, for the reason :func:`get_results`
-records: a verse marked ``<range>`` is merged away by ``GET /v3/text`` before the runner
-ever sees it, so it gets no vector of its own, and the anchor verse's stored text is the
-whole merged span — exactly the text that was vectorized. That argument does not reach
-``reference_text``, which reads the assessment's *reference* revision, merged
-independently of the assessed one; #923 is what the gap cost. :func:`_verse_texts`
-coerces the marker for both halves, so this paragraph is now an explanation of the data
-rather than the only thing keeping the marker out of the response.
+No hit's ``text`` should be the ``<range>`` marker — but **not** by the mechanism
+:func:`get_results` records, and the difference is worth stating rather than borrowing.
+``aqua-assessments/assessments/tfidf/app.py::fetch_revision`` loads text from
+``GET /v3/text`` with ``include_verses=all``, and that mode merges nothing: it returns all
+41,899 canonical slots and rewrites the marker to ``""`` (the ``all`` branch of v3's
+``get_text``). So this runner *does* see a continuation verse. It sees it empty, and drops
+it as empty — ``is_empty_verse`` collects the indices and the vectorization skips them —
+so the verse gets no vector of its own. Same conclusion the types ``/results`` serves
+reach by having their spans merged at fetch time instead, and either way the anchor's
+stored text is the whole merged span, which is exactly the text that was vectorized.
+
+That covers the assessed revision only. It does not reach ``reference_text``, which reads
+the assessment's *reference* revision, merged independently of the assessed one; #923 is
+what the gap cost. :func:`_verse_texts` coerces the marker for both halves, so the
+paragraph above is now an explanation of the data rather than the only thing keeping the
+marker out of the response.
 
 **The POST is the same search with the query point arriving differently, and N of them.**
 :func:`get_similar_verses_batch` shares the ranking (:func:`_rank_against_corpus`) and the
