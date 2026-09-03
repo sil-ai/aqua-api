@@ -49,9 +49,9 @@ async def list_groups(
 
     ``_admin`` is named with a leading underscore because the handler does not use
     the user — the dependency is here for its authorization side effect. It
-    replaces (rather than accompanies) ``get_current_user``: ``require_admin``
-    depends on it internally, and FastAPI dedupes, so authentication still happens
-    exactly once.
+    replaces (rather than accompanies) the router-level ``get_current_user_v4``:
+    ``require_admin`` depends on it internally, and FastAPI dedupes, so
+    authentication still happens exactly once.
     """
     groups, total = await user_service.list_groups(
         db, limit=page.limit, offset=page.offset

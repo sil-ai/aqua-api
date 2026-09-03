@@ -49,7 +49,7 @@ from bible_routes.v4 import version_service
 from database.dependencies import get_db
 from database.models import BibleVersion
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/versions", tags=["Versions"])
 
@@ -101,7 +101,7 @@ async def list_versions(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[VersionOut]:
     """List versions the caller may access, newest-id last, paginated.
 
@@ -139,7 +139,7 @@ async def list_versions(
 async def get_version(
     version_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Fetch a single version by id, scoped to what the caller may see."""
     try:
@@ -166,7 +166,7 @@ async def get_version(
 async def create_version(
     data: VersionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Create a version owned by the caller and grant its groups access."""
     try:
@@ -209,7 +209,7 @@ async def update_version(
     version_id: int,
     data: VersionPatch,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Partially update a version's fields (owner or admin only).
 
@@ -300,7 +300,7 @@ async def grant_group_access(
     version_id: int,
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Grant a group access to a version (owner or admin only).
 
@@ -323,7 +323,7 @@ async def revoke_group_access(
     version_id: int,
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Revoke a group's access to a version (owner or admin only).
 
@@ -343,7 +343,7 @@ async def revoke_group_access(
 async def delete_version(
     version_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete a version (owner or admin only)."""
     try:

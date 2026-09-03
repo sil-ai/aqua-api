@@ -33,10 +33,15 @@ import json
 
 import fastapi
 import pytest
+from fastapi.dependencies.utils import get_flat_dependant
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import app as app_module
+from api_v4.app import create_v4_app
 from api_v4.errors import V4_ERROR_RESPONSE_REF
+from security_routes.auth_routes import oauth2_scheme as v3_oauth2_scheme
+from security_routes.v4.dependencies import v4_oauth2_scheme
 
 #: What every documented v4 error must point at.
 V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
@@ -59,6 +64,12 @@ def schema():
     return response.json()
 
 
+@pytest.fixture(scope="module")
+def v4_app():
+    """The sub-app itself, for the assertions that inspect wiring rather than output."""
+    return create_v4_app(configure_cors=app_module.configure_cors)
+
+
 def _operations(schema):
     """Every ``(path, method, operation)`` in the schema."""
     return [
@@ -66,6 +77,81 @@ def _operations(schema):
         for path, item in schema["paths"].items()
         for method, operation in item.items()
     ]
+
+
+def _security_schemes_in_use(v4_app):
+    """The ``SecurityBase`` *objects* FastAPI would harvest from the v4 route tree.
+
+    This is the same traversal ``fastapi.openapi.utils.get_openapi`` performs, so it
+    sees precisely what the schema would be built from — but it yields the instances
+    rather than the rendered dict, which is what makes a v3 leak detectable at all.
+    See :func:`test_no_v4_route_depends_on_the_v3_security_scheme`.
+    """
+    schemes = set()
+    for route in v4_app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for requirement in get_flat_dependant(route.dependant).security_requirements:
+            schemes.add(requirement.security_scheme)
+    return schemes
+
+
+class TestSecurityScheme:
+    """Part 2: ``securitySchemes`` names an endpoint that exists."""
+
+    def test_exactly_one_security_scheme_is_published(self, schema):
+        schemes = schema["components"]["securitySchemes"]
+        assert set(schemes) == {"OAuth2PasswordBearer"}, (
+            "v4 should publish exactly one security scheme. A second one means a route "
+            "pulled in a differently-named SecurityBase dependency."
+        )
+
+    def test_token_url_resolves_to_the_working_token_endpoint(self, schema):
+        """The whole point of #928: the published ``tokenUrl`` must not 404.
+
+        ``tokenUrl`` is relative, so it only means anything against ``servers`` — the
+        pair is what the ``/v4/docs`` Authorize button and any generated OAuth2 client
+        resolve. It read ``latest/token`` before this fix, i.e. ``/v4/latest/token``.
+        """
+        flow = schema["components"]["securitySchemes"]["OAuth2PasswordBearer"]["flows"][
+            "password"
+        ]
+        base = schema["servers"][0]["url"]
+        assert base == "/v4", "the mount's root_path is what makes tokenUrl resolvable"
+        assert f"{base}/{flow['tokenUrl']}" == "/v4/token"
+
+        # ...and that resolved path is a real POST on this very schema, not just a
+        # plausible-looking string.
+        assert "post" in schema["paths"]["/token"]
+
+    def test_no_v4_route_depends_on_the_v3_security_scheme(self, v4_app):
+        """The leak detector — and the reason it is not a scheme *count* assertion.
+
+        FastAPI keys ``securitySchemes`` by ``scheme_name``, which defaults to the
+        class name. The v3 and v4 schemes are both ``OAuth2PasswordBearer``, so wiring
+        the v3 dependency back into a v4 route does **not** add a second entry: the two
+        collide on one key and the last route processed wins, silently restoring the
+        broken ``tokenUrl`` while the count still reads 1. ``group_router`` is
+        registered last in ``api_v4.app``, which makes it the most dangerous place for
+        one to reappear.
+
+        Comparing scheme *objects* has no such blind spot.
+        """
+        in_use = _security_schemes_in_use(v4_app)
+        assert in_use == {v4_oauth2_scheme}, (
+            "every v4 route must authenticate through get_current_user_v4; a v3 "
+            "get_current_user dependency puts auth_routes' scheme back in the tree"
+        )
+        assert v3_oauth2_scheme not in in_use
+
+    def test_the_v3_scheme_is_untouched(self):
+        """v3 is frozen: this fix added a v4 scheme, it did not edit v3's.
+
+        ``latest/token`` is *correct* for v3, which is mounted at ``/latest``. Pinned
+        here so a future "tidy-up" that redirects the v3 scheme at v4's endpoint fails
+        loudly rather than breaking every v3 client's Authorize button.
+        """
+        assert v3_oauth2_scheme.model.flows.password.tokenUrl == "latest/token"
 
 
 class TestPublishedErrorContract:

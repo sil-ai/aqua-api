@@ -51,7 +51,10 @@ would send a plaintext ``Internal Server Error`` 500 instead.
 Publishing that contract (#928): the envelope is also *documented*, via the shared
 ``responses=`` dicts from :mod:`api_v4.errors` applied at each ``include_router`` call
 below — without them FastAPI advertises only each route's success code plus a
-``HTTPValidationError`` 422 that v4 never emits.
+``HTTPValidationError`` 422 that v4 never emits. For the same reason v4 authenticates
+through :func:`security_routes.v4.dependencies.get_current_user_v4` rather than the v3
+``get_current_user``: the scheme instance in a route's dependency tree is what sets the
+published ``tokenUrl``, and v3's points at ``/v4/latest/token``, which 404s.
 
 Lifespan caveat: Starlette ``Mount`` only dispatches ``http``/``websocket``
 scopes, never ``lifespan`` — so a ``lifespan=`` passed to this sub-app would
@@ -73,7 +76,7 @@ from assessment_routes.v4.assessment_routes import router as assessment_router
 from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.verse_routes import router as verse_router
 from bible_routes.v4.version_routes import router as version_router
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 from security_routes.v4.group_routes import router as group_router
 from security_routes.v4.token_routes import router as token_router
 from security_routes.v4.user_routes import router as user_router
@@ -127,10 +130,10 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     v4_app.include_router(token_router, responses=V4_PUBLIC_ERROR_RESPONSES)
 
     # Domain routers are auth-protected at the router level (#831): a
-    # ``dependencies=[Depends(get_current_user)]`` here makes "protected by
+    # ``dependencies=[Depends(get_current_user_v4)]`` here makes "protected by
     # default" the failure mode, so a handler that forgets its own auth
     # dependency still cannot ship unauthenticated. Handlers that need the user
-    # re-declare ``current_user: UserModel = Depends(get_current_user)`` — FastAPI
+    # re-declare ``current_user: UserModel = Depends(get_current_user_v4)`` — FastAPI
     # dedupes the dependency, so it runs once per request.
     #
     # ``responses=`` rides along for the same reason the dependency does: one
@@ -149,7 +152,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     ):
         v4_app.include_router(
             domain_router,
-            dependencies=[fastapi.Depends(get_current_user)],
+            dependencies=[fastapi.Depends(get_current_user_v4)],
             responses=V4_ERROR_RESPONSES,
         )
 

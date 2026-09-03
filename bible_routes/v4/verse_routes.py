@@ -79,7 +79,7 @@ from bible_routes.v4 import revision_service, verse_service
 from bible_routes.v4.verse_range_service import VERSE_RANGE_MARKER
 from database.dependencies import get_db
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/revisions", tags=["Verses"])
 
@@ -229,7 +229,7 @@ async def list_verses(
     page: VersePaginationParams = Depends(),
     scope: VerseScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[VerseOut]:
     """Read a revision's verses, in canonical Bible order, paginated.
 
@@ -328,7 +328,7 @@ async def list_verses(
 async def export_text(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> PlainTextResponse:
     """Export a revision as vref-aligned plaintext: exactly 41,899 lines, always.
 
@@ -369,7 +369,7 @@ async def export_text(
 async def list_chapters(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionChaptersOut:
     """Which book/chapter combinations this revision has verses for.
 
@@ -520,7 +520,7 @@ async def text_search(
     query: TextSearchParams = Depends(),
     page: TextSearchPaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> TextSearchPage:
     """Find the verses of a revision containing a word or phrase, paginated.
 

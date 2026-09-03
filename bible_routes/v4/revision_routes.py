@@ -49,7 +49,7 @@ from bible_routes.v4 import revision_service
 from database.dependencies import get_db
 from database.models import BibleRevision, BibleVersion
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/revisions", tags=["Revisions"])
 
@@ -204,7 +204,7 @@ async def list_revisions(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[RevisionOut]:
     """List revisions the caller may access, lowest id first, paginated.
 
@@ -244,7 +244,7 @@ async def list_revisions(
 async def get_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Fetch a single revision by id, scoped to what the caller may see.
 
@@ -274,7 +274,7 @@ async def get_revision(
 async def create_revision(
     data: RevisionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Create a revision and load its verse text, in one JSON request.
 
@@ -326,7 +326,7 @@ async def update_revision(
     revision_id: int,
     data: RevisionPatch,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Partially update a revision (parent version's owner, or an admin).
 
@@ -352,7 +352,7 @@ async def update_revision(
 async def delete_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete a revision (parent version's owner, or an admin).
 

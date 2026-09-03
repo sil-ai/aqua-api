@@ -36,6 +36,13 @@ includes carrying the redundant ``is_admin`` claim: it is real debt (#732 —
 nothing reads it; both ``get_current_user`` and ``get_current_admin`` load the
 flag from the database), but dropping it here would fork the token format between
 the two surfaces for no gain. #732 removes it from both at once.
+
+**This is the endpoint** ``securitySchemes.tokenUrl`` **names.** v4 publishes
+``tokenUrl: "token"``, which against the sub-app's ``servers: [{"url": "/v4"}]``
+resolves here; it read ``"latest/token"`` until #928, because the scheme was harvested
+from frozen v3. The scheme now lives in :mod:`security_routes.v4.dependencies`, so
+renaming or moving this route means fixing its ``tokenUrl`` there too — nothing links
+the two automatically, and ``test/test_v4_openapi.py`` is what catches the drift.
 """
 
 __version__ = "v4"
