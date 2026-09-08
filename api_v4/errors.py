@@ -617,6 +617,16 @@ def _bounded_details(details: dict | None) -> dict | None:
     ``details`` goes for the same reason as above: the exception arrives with the walk
     never having run and nothing partial to keep.
 
+    **A cycle lands here too, and that is a real trade rather than a free win.** A
+    self-referential ``details`` exhausts the same stack, so it now comes back as this
+    marker carrying the endpoint's own 4xx, where before it was a 500 — but a cyclic
+    ``details`` is a *server* bug, not a client one, and because the exception no longer
+    escapes there is no traceback in the logs for it. Telling a cycle apart from sheer
+    depth needs cycle detection, which means a visited set and a second walk; pydantic
+    does not bother either, and reports merely-deep data as ``Circular reference
+    detected``. So the marker in the response body is where that bug surfaces instead,
+    which is where the person exercising the endpoint will be looking.
+
     Fixing this by bounding depth *before* the encoder was the alternative, and it is
     the wrong trade: finding every branch deeper than the ceiling means visiting every
     branch, which is the O(payload) walk the encoder-first ordering exists to avoid, and

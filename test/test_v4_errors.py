@@ -768,6 +768,71 @@ def test_a_payload_too_deep_for_the_encoder_degrades_to_a_marker():
     assert str(_MAX_DETAILS_DEPTH) not in bounded[_OMITTED_KEY], bounded
 
 
+def test_a_circular_details_degrades_to_a_marker_rather_than_a_500():
+    """A cycle exhausts the encoder's stack the same way sheer depth does, so it takes
+    the same path out.
+
+    Pinned because it is the one case where that path carries a *server* bug: the
+    endpoint built a self-referential ``details``, and since the exception no longer
+    escapes, no traceback is logged for it — this marker in the body is where it shows
+    up. Telling a cycle from a deep payload would need cycle detection, a visited set
+    and a second walk; pydantic does not bother either, and reports merely-deep data as
+    ``Circular reference detected``.
+    """
+    cyclic = {}
+    cyclic["self"] = cyclic
+
+    bounded = _bounded_details({"input": cyclic})
+
+    assert set(bounded) == {_OMITTED_KEY}
+    assert "nest too deeply" in bounded[_OMITTED_KEY], bounded
+
+
+def test_the_float_scrub_still_runs_at_the_depth_ceiling():
+    """The depth cut replaces *containers* only, so a scalar sitting at the ceiling
+    falls through to the rest of the walk — and must still be scrubbed.
+
+    The interaction is worth holding down: move the depth guard ahead of the scrub, or
+    widen it to replace every value rather than every container, and #828 regresses at
+    exactly this depth, where ``JSONResponse`` refuses the body and the 4xx becomes the
+    500 both fixes exist to remove.
+    """
+    value = float("nan")
+    for _ in range(_MAX_DETAILS_DEPTH):
+        value = {"a": value}
+
+    bounded = _bounded_details(value)
+
+    assert _chain_leaf(bounded) == "nan"
+    # allow_nan=False is what Starlette's JSONResponse dumps with. Plain json.dumps
+    # emits NaN happily and would prove nothing.
+    json.dumps(bounded, allow_nan=False)
+
+
+def test_many_deep_branches_cannot_inflate_the_response():
+    """The depth marker trades a whole branch for about 70 characters, and the budget
+    still stops the walk — but the nesting left standing above each cut is JSON
+    punctuation, which the cost model does not charge (see ``_DETAILS_BUDGET``).
+
+    So the guarantee here is the one that data structure can actually offer: a small
+    multiple of the budget, the same bound the wide-container tests above assert, rather
+    than an amplifier that grows with how many deep branches the caller sends.
+    """
+    deep = 1
+    for _ in range(_MAX_DETAILS_DEPTH * 2):
+        deep = [deep]
+
+    bounded = _bounded_details({f"k{index}": deep for index in range(500)})
+    encoded = json.dumps(bounded)
+
+    assert "levels of nesting" in encoded
+    assert _container_depth(bounded) == _MAX_DETAILS_DEPTH
+    # The budget stopped the walk long before the 500th branch, and said so.
+    assert len(bounded) < 500
+    assert _OMITTED_KEY in bounded
+    assert len(encoded) < 4 * _DETAILS_BUDGET, len(encoded)
+
+
 # ---------------------------------------------------------------------------
 # Undecodable bytes in details (#933). jsonable_encoder decodes bytes as UTF-8
 # and raises on anything else, and it runs *before* the walk above — so neither
