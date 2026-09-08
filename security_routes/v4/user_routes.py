@@ -42,15 +42,15 @@ from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.security import GroupOut, UserOut
 from database.dependencies import get_db
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
 from security_routes.v4 import user_service
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.get("/me", response_model=UserOut)
 async def read_current_user(
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> UserOut:
     """Return the authenticated user's own profile.
 
@@ -65,7 +65,7 @@ async def read_current_user(
 async def list_current_user_groups(
     page: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[GroupOut]:
     """List the groups the caller belongs to, ordered by group id, paginated.
 

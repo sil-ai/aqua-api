@@ -42,14 +42,14 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
 from bible_routes.v4 import version_service
 from database.dependencies import get_db
 from database.models import BibleVersion
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/versions", tags=["Versions"])
 
@@ -101,7 +101,7 @@ async def list_versions(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[VersionOut]:
     """List versions the caller may access, newest-id last, paginated.
 
@@ -139,7 +139,7 @@ async def list_versions(
 async def get_version(
     version_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Fetch a single version by id, scoped to what the caller may see."""
     try:
@@ -155,11 +155,24 @@ async def get_version(
     return _to_out(version, group_map.get(version.id, []))
 
 
-@router.post("", response_model=VersionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=VersionOut,
+    status_code=status.HTTP_201_CREATED,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
+)
 async def create_version(
     data: VersionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Create a version owned by the caller and grant its groups access."""
     try:
@@ -191,12 +204,24 @@ async def create_version(
     return _to_out(version, group_map.get(version.id, []))
 
 
-@router.patch("/{version_id}", response_model=VersionOut)
+@router.patch(
+    "/{version_id}",
+    response_model=VersionOut,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
+)
 async def update_version(
     version_id: int,
     data: VersionPatch,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> VersionOut:
     """Partially update a version's fields (owner or admin only).
 
@@ -282,12 +307,19 @@ def _group_access_error(exc: Exception, version_id: int, group_id: int) -> V4API
     raise exc
 
 
-@router.put("/{version_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/{version_id}/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def grant_group_access(
     version_id: int,
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Grant a group access to a version (owner or admin only).
 
@@ -304,13 +336,18 @@ async def grant_group_access(
 
 
 @router.delete(
-    "/{version_id}/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/{version_id}/groups/{group_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
 )
 async def revoke_group_access(
     version_id: int,
     group_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Revoke a group's access to a version (owner or admin only).
 
@@ -326,11 +363,18 @@ async def revoke_group_access(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.delete("/{version_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{version_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_version(
     version_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete a version (owner or admin only)."""
     try:

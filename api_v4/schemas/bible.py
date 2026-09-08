@@ -1,7 +1,7 @@
-"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891, epic #842).
+"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891/#892, epic #842).
 
-The Bible-domain slices on the v4 surface are Versions and Revisions. These
-schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
+The Bible-domain slices on the v4 surface are Versions, Revisions, and Verses &
+text. These schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
 **snake_case** (issue #830): every field's canonical name is its snake_case Python
 attribute, and that is what v4 emits.
 
@@ -28,10 +28,12 @@ are load-bearing for the #830 goal:
 # ``TypeError: unsupported operand type(s) for |`` at import time.
 from datetime import date as date_type
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
+from api_v4.pagination import V4Page
 from api_v4.schemas.base import V4BaseModel
 
 #: Shared by ``VersionCreate`` and ``VersionPatch``. ``back_translation_id`` is a
@@ -424,3 +426,637 @@ class RevisionOut(V4BaseModel):
     # timestamp — max() skips NULLs, so such a row simply cannot advance a
     # watermark. Mirrors VersionOut.updated_at.
     updated_at: datetime | None = None
+
+
+# --- Verses & text (issue #892) ----------------------------------------------
+
+#: Length of a USFM book abbreviation. Every entry in ``fixtures/book_reference.txt``
+#: is exactly three characters (``GEN``, ``1SA``, ``3JN``), which is what makes an
+#: *exact* length the right validation: v3 checks only ``len(book) > 3``, so it accepts
+#: ``"G"`` and turns it into an empty result set.
+#:
+#: Lives here, in the Bible domain, and is imported by
+#: :mod:`api_v4.schemas.assessment`: a book abbreviation is a Bible-domain fact
+#: whichever read is scoping by it, and both the results read (#893) and the verses
+#: read (#892) need the same bound.
+BOOK_ABBREVIATION_LENGTH = 3
+
+#: Maximum number of references a single ``only_vrefs`` filter may carry (#867,
+#: settled on #892). A vref costs 23-27 bytes once percent-encoded with its
+#: ``&only_vrefs=`` overhead, so 1000 is ~24 KB of URL — comfortably under the ~60 KB
+#: platform ingress ceiling, with 500-per-request already proven in production by the
+#: one known client. It is also :data:`api_v4.pagination.VERSE_MAX_LIMIT`, so a caller
+#: who asks for the maximum number of references can receive them all in a single page.
+#:
+#: **The limit is not the point; the error is.** v3 accepts an unlimited list, but past
+#: roughly 3,000 references the URL exceeds the platform ingress limit and is rejected
+#: *before reaching the application* — the caller gets a non-JSON body and the server
+#: logs nothing. A stated limit that answers with a 422 naming both numbers converts a
+#: silent infrastructure rejection into an answerable API response. A ``POST`` variant
+#: was considered and rejected: a POST that creates nothing cuts against v4's
+#: "verbs live in the HTTP method" rule and gives two ways to perform one read.
+MAX_VREFS = 1000
+
+
+class IncludeVerses(str, Enum):
+    """Which verses ``GET /v4/revisions/{id}/verses`` returns.
+
+    v3's flag has a third value, ``intersection``, which v3's own docs describe as
+    "treated identically to 'union' for a single revision". It is a *cross-revision*
+    set operation, and the only endpoint that could give it meaning — v3's
+    ``GET /texts`` — is cut from v4 (no client has ever called it). A value that can
+    never differ from another value is not a choice, so v4 has two.
+    """
+
+    #: Every canonical verse reference, whether or not this revision has text for it.
+    all = "all"
+    #: Only the verses this revision actually has text for. The default.
+    union = "union"
+
+
+class VerseScope(V4BaseModel):
+    """Which verses to return from ``GET /v4/revisions/{id}/verses``.
+
+    The five parameters cover what v3 spread across five endpoints — ``/verse``,
+    ``/chapter``, ``/book``, ``/text`` and ``/vrefs`` — and the invariants that make
+    them coherent hold **by construction** here rather than as runtime checks, the same
+    way :class:`api_v4.schemas.assessment.ResultScope` does it for the results read:
+
+    1. ``chapter`` requires ``book``
+    2. ``verse`` requires ``book`` (and ``chapter``)
+    3. ``only_vrefs`` cannot be combined with ``book`` / ``chapter`` / ``verse``
+
+    Rule 3 is the one v3 has no opinion on, because in v3 the two were different
+    endpoints. They are two ways of naming a set of verses, and combining them can only
+    intersect one with the other — which returns fewer rows than either filter alone
+    suggests, silently. Rejecting is also the reversible direction: allowing the
+    combination later is not a breaking change, forbidding it later would be. The stated
+    use case for ``only_vrefs`` is a whole-Bible word search, whose references land
+    wherever the word occurs, so nothing about it wants a book filter as well.
+
+    ``include_verses`` composes with all of them, which *is* new: v3 offered the flag
+    only on ``/text``, its whole-revision read. ``include_verses=all`` with ``book=MAT``
+    is every canonical verse of Matthew including the ones this revision lacks, and with
+    ``only_vrefs=[...]`` it is a direct answer to "which of these references does this
+    revision have?".
+
+    A well-formed ``book`` naming no book, or an ``only_vrefs`` entry naming no
+    canonical verse, yields an empty page rather than a 404: these narrow an
+    already-authorized set instead of naming the collection's parent. Only the revision
+    id in the path can 404.
+
+    **The filter is ``only_vrefs``, not ``vrefs``, and the prefix is load-bearing**
+    (#925, repo owner, 2026-09-03). ``vrefs`` is taken on the response, where
+    :class:`VerseOut` uses it for the verses a row's text *covers*. One name for both
+    would have been actively misleading rather than merely untidy: ask for
+    ``MAT 9:20`` and ``MAT 9:21`` on a revision that merged them and the single row
+    that comes back reports ``vrefs: ["MAT 9:20", "MAT 9:21"]``, which looks exactly
+    like an echo of the request and is not — it is the span's coverage, coinciding.
+    Renamed on the request side because the response pair ``vref`` + ``vrefs`` is the
+    published join contract across seven models, while the filter is one field on one
+    endpoint. Same reasoning, same window, as the ``occurrences`` rename on the ngrams
+    read (:mod:`api_v4.schemas.assessment`).
+    """
+
+    book: str | None = Field(
+        default=None,
+        min_length=BOOK_ABBREVIATION_LENGTH,
+        max_length=BOOK_ABBREVIATION_LENGTH,
+        description=(
+            "Restrict to one book, as its three-letter USFM abbreviation (`MAT`). "
+            "Case-insensitive. A well-formed abbreviation that names no book yields an "
+            "empty page, not a 404. Cannot be combined with `only_vrefs`."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Restrict to one chapter. Requires `book`; excludes `only_vrefs`."
+        ),
+    )
+    verse: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Restrict to one verse. Requires `book` and `chapter`; excludes "
+            "`only_vrefs`."
+        ),
+    )
+    only_vrefs: list[str] | None = Field(
+        default=None,
+        description=(
+            f"Restrict to this explicit list of verse references (`GEN 1:1`), for a "
+            f"scattered selection no book/chapter filter can express. Case-insensitive. "
+            f"**At most {MAX_VREFS} per request**; more is a 422 naming the limit and "
+            f"the number received. Cannot be combined with `book`, `chapter` or "
+            f"`verse`. A reference naming no canonical verse simply matches nothing. "
+            f"Under the default `include_verses=union` a requested reference the "
+            f"revision has no text for is absent from the page; use "
+            f"`include_verses=all` to have every requested reference come back, with "
+            f"null text where there is none. **This is not the response's `vrefs`,** "
+            f"which reports the verses a returned row's text covers: a merged span "
+            f"answers one reference you sent with a `vrefs` naming several, so the "
+            f"response is never an echo of this list."
+        ),
+    )
+    include_verses: IncludeVerses = Field(
+        default=IncludeVerses.union,
+        description=(
+            "`union` (the default) returns only the verses this revision has text for, "
+            "with verses the publisher merged into a neighbour folded into that "
+            "neighbour's row. `all` returns every canonical verse in scope — all 41,899 "
+            "of them when nothing else narrows the request — with `text: null` where "
+            "the revision has none, and performs no merging: every row covers exactly "
+            "one verse. Join against a result set using the default."
+        ),
+    )
+
+    @field_validator("book")
+    @classmethod
+    def _upper_book(cls, value: str | None) -> str | None:
+        """Normalize the abbreviation to upper case.
+
+        Stored book values come from ``fixtures/vref.txt`` via ``bible_loading``, so
+        they are always upper case. Normalizing the *input* once here lets the query
+        compare the reference column directly rather than wrapping it in ``upper()``,
+        which would forfeit the index.
+        """
+        return value.upper() if value is not None else None
+
+    @field_validator("only_vrefs")
+    @classmethod
+    def _bounded_only_vrefs(cls, value: list[str] | None) -> list[str] | None:
+        """Enforce :data:`MAX_VREFS` and normalize each reference.
+
+        The bound is **not** declared as a ``max_length`` on the field, and that is
+        deliberate: a field constraint runs before this validator and would win, and its
+        message ("List should have at most 1000 items") names the limit but not what the
+        caller actually sent. Naming both numbers is the entire value of the cap (see
+        :data:`MAX_VREFS`), so the check lives where it can say them. The limit is
+        advertised to clients through the field description and the OpenAPI parameter,
+        not through a constraint keyword.
+
+        Upper-casing matches the ``book`` filter's case-insensitivity: a canonical vref
+        is an upper-case book abbreviation followed by digits, a space and a colon, so
+        ``.upper()`` is total over well-formed input and idempotent. Malformed entries
+        are not rejected — they simply match nothing, the same answer as a well-formed
+        reference to a verse the revision lacks.
+        """
+        if value is None:
+            return None
+        if len(value) > MAX_VREFS:
+            raise ValueError(
+                f"only_vrefs takes at most {MAX_VREFS} references per request; "
+                f"received {len(value):,}"
+            )
+        return [vref.strip().upper() for vref in value]
+
+    @model_validator(mode="after")
+    def _consistent_scope(self) -> "VerseScope":
+        if self.chapter is not None and self.book is None:
+            raise ValueError("chapter requires book")
+        if self.verse is not None and self.chapter is None:
+            raise ValueError("verse requires book and chapter")
+        if self.only_vrefs is not None and (
+            self.book is not None or self.chapter is not None or self.verse is not None
+        ):
+            raise ValueError(
+                "only_vrefs cannot be combined with book, chapter or verse"
+            )
+        return self
+
+
+class VerseOut(V4BaseModel):
+    """One row of ``GET /v4/revisions/{id}/verses``.
+
+    ``vref`` and ``vrefs`` are deliberately the **same pair, with the same meaning**, as
+    on :class:`api_v4.schemas.assessment.AssessmentResultOut`. That is the published
+    guarantee behind this read: a client can inner-join a result set to a verse set on
+    ``vref`` and get the text that was actually scored, because both surfaces agree on
+    what a merged span is called and which verses it covers.
+
+    * **``vref`` is the span's first verse** — ``MAT 9:20`` for a row covering
+      ``MAT 9:20-21`` — never a range label like ``"MAT 9:20-21"``. This is the one
+      behaviour change from v3's ``/chapter``, ``/book``, ``/verse`` and ``/vrefs``,
+      which return the publisher's continuation rows raw, marker text and all, and from
+      v3's ``/text``, which labels a merged row with a range string. A range string is
+      not a line of ``fixtures/vref.txt``, so a client joining on it drops the row
+      silently — which is exactly the failure the results read was shaped to avoid.
+    * **``vrefs`` is every verse the row covers**, in canonical order, beginning with
+      ``vref``. A single entry in the overwhelming majority of cases; more only where the
+      publisher printed several verses as one unit. Under ``include_verses=all`` it is
+      always exactly ``[vref]``, because that mode does no merging.
+
+    The request-side filter that names an explicit list of references is
+    :attr:`VerseScope.only_vrefs`, deliberately *not* ``vrefs``: a row's ``vrefs`` is
+    span coverage, so on a merged revision it can name verses the caller never asked
+    for, and one name for both meanings reads as an echo it is not (#925).
+
+    ``text`` never carries the stored ``<range>`` marker. Under ``union`` a merged
+    continuation is not a row at all; under ``all`` it is a row whose ``text`` is
+    ``null``. The one place the marker is still emitted verbatim is
+    ``GET /v4/revisions/{id}/text``, where it is part of the file format rather than a
+    leaked storage detail.
+
+    **``text`` is nullable, and null means "this revision has no text here"** (#925,
+    repo owner, 2026-09-03). It was a required ``str`` reporting ``""``, which put this
+    read out of step with every other v4 field carrying the same fact — ``text`` and
+    ``reference_text`` on each of :class:`api_v4.schemas.assessment.AlignmentScoreOut`
+    and :class:`api_v4.schemas.assessment.SimilarVerseOut`, plus
+    :attr:`TextSearchOut.comparison_text`, five fields on three models, every one of
+    them ``str | None`` answering null. The ``""`` came from the plaintext export,
+    where a textless verse *must* be a blank line for the file to stay 41,899 lines
+    long; that is a constraint of a line-aligned format and JSON has no equivalent.
+    Nullable is also the reversible direction while there are no clients: narrowing to
+    a required ``str`` later is safe for a client that already handles null, and
+    widening later would not be.
+
+    Both null cases are reachable only under ``include_verses=all``, and ``id`` tells
+    them apart: null ``id`` is a canonical verse with no stored row, a set ``id`` is a
+    continuation whose text is printed under its anchor.
+    """
+
+    id: int | None = Field(
+        default=None,
+        description=(
+            "The stored `verse_text` row's id, or null for a canonical verse this "
+            "revision has no row for (only reachable with `include_verses=all`). On a "
+            "merged span it is the anchor's row. Stable, but not a handle: no v4 "
+            "endpoint addresses a single verse by id."
+        ),
+    )
+    revision_id: int = Field(
+        description="The revision this verse belongs to (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse this row is stored under — the **first** verse of the span when "
+            "the publisher merged several. Always a literal canonical verse reference, "
+            "so it joins against `vref.txt` and against an assessment's results."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row's text covers, in canonical order and beginning with "
+            "`vref`. A single entry unless the revision merged verses into this one, in "
+            "which case the continuations follow. Always exactly `[vref]` under "
+            "`include_verses=all`, which does not merge."
+        ),
+    )
+    text: str | None = Field(
+        default=None,
+        description=(
+            "The verse text, or the merged text of the span. Null where this revision "
+            "has no text for the verse — either no stored row at all, or a row the "
+            "publisher merged into the verse above, which `id` tells apart. Only "
+            "reachable under `include_verses=all`. Never the `<range>` marker."
+        ),
+    )
+
+
+class RevisionChaptersOut(V4BaseModel):
+    """Response body for ``GET /v4/revisions/{id}/chapters``.
+
+    v3's ``RevisionChapters`` carried over unchanged, wrapper object included: book
+    abbreviation to the chapter numbers this revision has verses for, books in canonical
+    order and chapters ascending within each.
+
+    The wrapper is kept rather than returning the bare map because a JSON object whose
+    keys are data documents as ``additionalProperties`` in OpenAPI, which generated
+    clients render as an untyped bag; and because a top-level object leaves room to add
+    a sibling field later without changing the response *shape*.
+    """
+
+    chapters: dict[str, list[int]] = Field(
+        description=(
+            "Book abbreviation to the chapter numbers this revision has readable verses "
+            "in. Books in canonical order, chapters ascending. Every chapter listed here "
+            "returns rows from the verses read, so a navigation tree built from this map "
+            "has no dead entries."
+        ),
+    )
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "json_schema_extra": {
+            "example": {"chapters": {"GEN": [1, 2, 3], "MAT": [1, 2]}}
+        },
+    }
+
+
+#: Maximum length of a ``term``. v3's ``max_length=200``, unchanged — a search term is a
+#: word or a short phrase, and the bound also caps the size of the regex the term is
+#: translated into.
+TEXT_SEARCH_TERM_MAX_LENGTH = 200
+
+
+class TextSearchQuery(V4BaseModel):
+    """The non-paging query parameters of ``GET /v4/revisions/{id}/text-search``.
+
+    Declared as a model rather than as bare ``Query`` parameters for the reason
+    :class:`VerseScope` is: the *combinations* that make no sense have to be rejected in
+    one place, and a model validator is the only place that can see more than one
+    parameter at once.
+    :class:`bible_routes.v4.verse_routes.TextSearchParams` is the adapter that keeps the
+    documented parameters flat while these invariants live here.
+
+    Three of the four invariants are the alignment annotation's, and they are all the same
+    rule (T8/T9 on #893): **v4 does not accept an input it will then ignore.** The
+    annotation is sourced from a word-alignment assessment over the
+    ``(revision, comparison_revision)`` pair, so without a comparison revision there is no
+    pair to look in and the flag could never do anything; and the two parameters that only
+    tune the annotation mean nothing with the annotation switched off. v3 accepts all three
+    of those combinations and silently drops the field.
+
+    The fourth is the term's own syntax, and it is **not** here: it lives in
+    :func:`bible_routes.v4.verse_service.search_pattern`, which is also the only thing that
+    needs the parse. Splitting it would mean two implementations of the same wildcard rules
+    on either side of a layer boundary, and the query-language rules belong with the query
+    builder. So a term that is too long or empty is a ``VALIDATION_ERROR`` from the
+    ``Query`` bounds, and a term whose *wildcards* are unusable is an
+    ``INVALID_SEARCH_TERM``, which can name the cap and the number received.
+
+    ``random`` sits here because it is this endpoint's own flag, but the rule that pairs it
+    with ``offset`` (T3) does not: ``offset`` belongs to
+    :class:`~api_v4.pagination.TextSearchPaginationParams`, a different dependency, and a
+    model cannot validate a field it does not have. That one check is made where the two
+    dependencies meet — see
+    :func:`bible_routes.v4.verse_routes._reject_random_with_offset`.
+    """
+
+    term: str = Field(
+        description=(
+            "The word or phrase to search for, case-insensitively. Matches **whole words "
+            "only** unless wildcarded with `*`. See the endpoint description for the full "
+            "wildcard grammar."
+        ),
+    )
+    comparison_revision_id: int | None = Field(
+        default=None,
+        description=(
+            "A second revision to return parallel text from. Each hit gains a "
+            "`comparison_text` holding that revision's text for the same verse, or null "
+            "where it has none — the comparison revision never changes *which* verses "
+            "match, or `total`. Must be a revision you can read, or the response is the "
+            "same 404 as an unreadable path revision. Required for "
+            "`include_alignments`."
+        ),
+    )
+    include_alignments: bool = Field(
+        default=False,
+        description=(
+            "Annotate each hit with the word-alignment links for that verse, so a caller "
+            "can see which words in the comparison revision the matched word maps to. "
+            "**Requires `comparison_revision_id`**: true without it is a 422, because "
+            "alignments only exist for a revision *pair*. When no usable alignment run "
+            "exists for the pair the hits come back without the field and this is not an "
+            "error."
+        ),
+    )
+    min_alignment_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Drop alignment links scoring below this, inclusively (`score >= value`). "
+            "Omitted applies **no floor**, which is a deliberate change from v3's "
+            "silent default of 0.3 — a threshold that quietly removes links is policy "
+            "the caller cannot see, and `min_score` on "
+            "`GET /v4/assessments/{id}/alignment-scores` has no default either. "
+            "**Requires `include_alignments`**: there is nothing to filter otherwise, and "
+            "sending it alone is a 422."
+        ),
+    )
+    alignment_assessment_id: int | None = Field(
+        default=None,
+        description=(
+            "Source the alignments from this specific word-alignment assessment instead "
+            "of letting the server pick. It must be a finished, non-deleted "
+            "`word-alignment` assessment whose revision pair is exactly "
+            "`({revision_id}, comparison_revision_id)`; anything else is a 422 naming it, "
+            "where v3 quietly returns no alignments. **Requires `include_alignments`**, "
+            "for the same reason `min_alignment_score` does. Omit it and the most "
+            "recently finished run for the pair is used — the envelope's "
+            "`alignment_assessment_id` reports which."
+        ),
+    )
+    random: bool = Field(
+        default=False,
+        description=(
+            "Return a random sample of the matches rather than the first page in "
+            "canonical Bible order. `total` is still the exact number of matches. "
+            "**Cannot be combined with a non-zero `offset`** (422): a second page of a "
+            "fresh shuffle would repeat some rows and miss others, so the combination is "
+            "refused rather than silently reinterpreted."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _alignment_parameters_need_something_to_act_on(self) -> "TextSearchQuery":
+        if self.include_alignments and self.comparison_revision_id is None:
+            raise ValueError("include_alignments requires comparison_revision_id")
+        if not self.include_alignments:
+            # Both of these only tune an annotation that is switched off. Rejected rather
+            # than ignored, so a caller who sent one and got no `alignments` learns why.
+            if self.min_alignment_score is not None:
+                raise ValueError("min_alignment_score requires include_alignments")
+            if self.alignment_assessment_id is not None:
+                raise ValueError("alignment_assessment_id requires include_alignments")
+        return self
+
+
+class TextSearchAlignmentOut(V4BaseModel):
+    """One word-alignment link attached to a text-search hit.
+
+    Deliberately **not** :class:`api_v4.schemas.assessment.AlignmentScoreOut`, which is the
+    row shape of ``GET /v4/assessments/{id}/alignment-scores``. That model carries twelve
+    fields, nine of which are either already known here or meaningless here: ``vref`` and
+    ``vrefs`` duplicate the hit they hang off, ``text`` and ``reference_text`` duplicate the
+    hit's own two text fields, ``assessment_id`` is the same for every link on the page and
+    is reported once in the envelope, and ``id``/``flag``/``hide``/``note`` are handles and
+    annotations for a read that addresses these rows directly. This is the three fields v3
+    returns, unchanged, and it is what the aggregation the annotation exists for needs.
+
+    Rows the runner marked ``hide`` are **not** returned, following v3. That is the
+    opposite call from ``/alignment-scores``, where ``hide`` is advisory and the row comes
+    back with the flag set — and the difference is forced rather than chosen: this shape
+    has no ``hide`` field, so a hidden link returned here would be indistinguishable from
+    a visible one. A caller that wants to see hidden links wants ``/alignment-scores``.
+    """
+
+    source: str | None = Field(
+        default=None,
+        description=(
+            "The word on the **comparison** revision's side of the pair, as the runner "
+            "stored it — lower-cased. Note the direction: the alignment assessment's "
+            "`reference_id` side is the comparison revision, and v3 labels that side "
+            "`source`."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description=(
+            "The word on the **searched** revision's side — the side `term` matched "
+            "against."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "The alignment score for this pair, higher being a stronger alignment. Links "
+            "arrive strongest-first within a hit, so a caller reading the top few needs "
+            "no re-sort."
+        ),
+    )
+
+
+class TextSearchOut(V4BaseModel):
+    """One hit of ``GET /v4/revisions/{id}/text-search``.
+
+    ``vref``, ``vrefs`` and ``text`` are :class:`VerseOut`'s three, with the same meanings,
+    because a hit *is* a verse of this revision — so a hit joins to
+    ``GET /v4/revisions/{id}/verses``, to ``GET /v4/assessments/{id}/results`` and to the
+    alignment reads on ``vref`` alone. v3 returns ``book``, ``chapter`` and ``verse`` as
+    three separate fields instead (T10), which no other v4 surface can be joined to
+    without the client reassembling the reference itself.
+
+    Not :class:`VerseOut` itself, for two reasons that are both about not lying in
+    OpenAPI. This row adds two fields; and ``VerseOut``'s ``id`` and ``text`` are both
+    nullable there because ``include_verses=all`` can return a canonical verse with no
+    stored row — which cannot happen here, since a hit matched stored text, so it has a
+    row and that row has text. Same meanings, narrower types.
+
+    **The last two fields are absent, not null, when they do not apply**, which is why the
+    route sets ``response_model_exclude_unset=True``:
+
+    * ``comparison_text`` appears only when ``comparison_revision_id`` was sent. It is then
+      present on *every* hit, and null on a hit the comparison revision has no text for —
+      so null means "that revision does not have this verse", and absent means "you did not
+      ask for a comparison".
+    * ``alignments`` appears only when ``include_alignments`` was sent **and** a usable
+      alignment run was found for the pair (T7). It is then present on every hit, and an
+      empty list on a hit the run has no links for above ``min_alignment_score`` — so
+      ``[]`` means "that verse has no links", and absent means "there was no run to ask".
+
+    Both distinctions are lost if the fields are merely nullable, and both are ones a
+    client acts on: an empty ``alignments`` on every hit is a normal answer, while a
+    missing one means the alignment assessment the caller expected does not exist.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored `verse_text` row's id — the anchor's row on a merged span. Stable, "
+            "but not a handle: no v4 endpoint addresses a single verse by id."
+        ),
+    )
+    revision_id: int = Field(
+        description="The revision that was searched (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse the match was found in — the **first** verse of the span where the "
+            "publisher merged several. Always a literal canonical verse reference, so it "
+            "joins against `vref.txt` and against every other v4 verse-level read."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this hit's text covers, in canonical order and beginning with "
+            "`vref`. A single entry unless the revision merged verses into this one, in "
+            "which case the continuations follow — the same field, derived the same way, "
+            "as on the verses and results reads."
+        ),
+    )
+    text: str = Field(
+        description=(
+            "The matched verse text, or the whole merged span's text where `vrefs` names "
+            "several. Never the `<range>` marker: a marker row holds no text of its own, "
+            "so it is not searchable and cannot be a hit."
+        ),
+    )
+    comparison_text: str | None = Field(
+        default=None,
+        description=(
+            "The same verse in `comparison_revision_id`, for side-by-side display. Null "
+            "where that revision has no text for the verse — including where it merged "
+            "the verse into the one above, since the marker is never emitted. **Absent "
+            "entirely** when no comparison revision was requested."
+        ),
+    )
+    alignments: list[TextSearchAlignmentOut] | None = Field(
+        default=None,
+        description=(
+            "The word-alignment links for this verse, strongest first, filtered by "
+            "`min_alignment_score`. Empty where the run has no links for the verse. "
+            "**Absent entirely** when `include_alignments` was not requested, or when no "
+            "usable alignment run exists for the revision pair."
+        ),
+    )
+
+
+class TextSearchPage(V4Page[TextSearchOut]):
+    """``V4Page`` plus the one thing an alignment-annotated response cannot leave out.
+
+    ``alignment_assessment_id`` names the run the ``alignments`` came from. v3 *logs* this
+    (``alignment_assessment_used``) and never returns it, so a caller that lets the server
+    auto-pick receives scores with no way to know what produced them — it cannot cache
+    against the run, cannot tell two responses apart when a newer assessment lands
+    mid-session, and cannot report which run a suspicious number came from. This is the
+    same gap ``against_assessment_ids`` closes on
+    :class:`api_v4.schemas.assessment.ScoreComparisonPage`, which is also the precedent for
+    the shape: a response carrying derived numbers says what they are derived from.
+
+    **A subclass rather than a purpose-built model**, on the same test
+    ``ScoreComparisonPage`` records: this read pages a real population, so all four
+    inherited fields mean exactly what they mean on every other v4 list — ``total`` is the
+    number of matching verses and ``offset`` walks them. :class:`~api_v4.pagination.V4Page`
+    itself is untouched, because an alignment run has no meaning on the other lists that
+    share it.
+
+    ``next_updated_since`` is inherited and stays null: ``verse_text`` is write-once and
+    carries no modification timestamp, so this list has no delta feed — the same reason the
+    verses read gives.
+    """
+
+    alignment_assessment_id: int | None = Field(
+        default=None,
+        description=(
+            "The word-alignment assessment the `alignments` on this page came from, "
+            "whether you named it or the server picked it. Null when "
+            "`include_alignments` was not requested, and null when it was but no usable "
+            "run exists for the revision pair — in which case the hits carry no "
+            "`alignments` field at all, and this says why."
+        ),
+    )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        items: list,
+        total: int,
+        pagination,
+        alignment_assessment_id: int | None = None,
+        next_updated_since=None,
+    ) -> "TextSearchPage":
+        """As :meth:`V4Page.create`, with the alignment run the page's links came from.
+
+        Overridden so the four shared values still come off the ``pagination`` dependency
+        rather than being copied at the call site — the drift the parent's ``create``
+        exists to prevent. Unlike ``ScoreComparisonPage.create`` the extra argument has a
+        default, because null is a real and common answer here (no alignments were asked
+        for) rather than a page that forgot to say something.
+
+        Passed explicitly even when null: the route serializes with
+        ``exclude_unset=True``, and a field left to its default would be dropped from the
+        body rather than reported as null.
+        """
+        return cls(
+            items=items,
+            total=total,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            next_updated_since=next_updated_since,
+            alignment_assessment_id=alignment_assessment_id,
+        )

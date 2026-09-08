@@ -48,6 +48,14 @@ sending it, so the traceback still reaches the parent ``LoggingMiddleware`` for
 logging (never the client). Without any handler the mount's ``ServerErrorMiddleware``
 would send a plaintext ``Internal Server Error`` 500 instead.
 
+Publishing that contract (#928): the envelope is also *documented*, via the shared
+``responses=`` dicts from :mod:`api_v4.errors` applied at each ``include_router`` call
+below — without them FastAPI advertises only each route's success code plus a
+``HTTPValidationError`` 422 that v4 never emits. For the same reason v4 authenticates
+through :func:`security_routes.v4.dependencies.get_current_user_v4` rather than the v3
+``get_current_user``: the scheme instance in a route's dependency tree is what sets the
+published ``tokenUrl``, and v3's points at ``/v4/latest/token``, which 404s.
+
 Lifespan caveat: Starlette ``Mount`` only dispatches ``http``/``websocket``
 scopes, never ``lifespan`` — so a ``lifespan=`` passed to this sub-app would
 *silently never run*. A later PR that needs v4-only startup/shutdown resources
@@ -57,12 +65,18 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 
 import fastapi
 
-from api_v4.errors import register_exception_handlers
+from api_v4.errors import (
+    V4_ERROR_RESPONSES,
+    V4_PUBLIC_ERROR_RESPONSES,
+    error_responses,
+    register_exception_handlers,
+)
 from api_v4.meta_routes import router as meta_router
 from assessment_routes.v4.assessment_routes import router as assessment_router
 from bible_routes.v4.revision_routes import router as revision_router
+from bible_routes.v4.verse_routes import router as verse_router
 from bible_routes.v4.version_routes import router as version_router
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 from security_routes.v4.group_routes import router as group_router
 from security_routes.v4.token_routes import router as token_router
 from security_routes.v4.user_routes import router as user_router
@@ -98,7 +112,14 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # Left PUBLIC on purpose: the ``/v4/`` discovery root (and the parent app's
     # bare ``/v4`` health shim that reuses its payload) must answer without a
     # token, so do NOT attach auth here.
-    v4_app.include_router(meta_router)
+    #
+    # Only the 500 is documented: the root takes no parameters and no body, so it has
+    # no 422 to declare either (see V4_PUBLIC_ERROR_RESPONSES, which the token router
+    # below does use).
+    v4_app.include_router(
+        meta_router,
+        responses=error_responses(fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR),
+    )
 
     # The token router is likewise PUBLIC, and for the same class of reason: it is
     # the endpoint that *issues* tokens, so attaching the router-level auth
@@ -106,23 +127,33 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # token). This is why it is a separate router from /v4/users — router-level
     # dependencies apply to every route on the router, so a single auth-protected
     # router could not carry an exempt path. See security_routes/v4/token_routes.py.
-    v4_app.include_router(token_router)
+    v4_app.include_router(token_router, responses=V4_PUBLIC_ERROR_RESPONSES)
 
     # Domain routers are auth-protected at the router level (#831): a
-    # ``dependencies=[Depends(get_current_user)]`` here makes "protected by
+    # ``dependencies=[Depends(get_current_user_v4)]`` here makes "protected by
     # default" the failure mode, so a handler that forgets its own auth
     # dependency still cannot ship unauthenticated. Handlers that need the user
-    # re-declare ``current_user: UserModel = Depends(get_current_user)`` — FastAPI
+    # re-declare ``current_user: UserModel = Depends(get_current_user_v4)`` — FastAPI
     # dedupes the dependency, so it runs once per request.
+    #
+    # ``responses=`` rides along for the same reason the dependency does: one
+    # declaration covering every domain route beats 33 that drift. See
+    # V4_ERROR_RESPONSES for what it declares and why the union is deliberate.
     for domain_router in (
         version_router,
         revision_router,
+        # Shares the ``/revisions`` prefix with the Revisions router but declares only
+        # sub-paths (``/{id}/verses``, ``/{id}/text``, ``/{id}/chapters``), so neither
+        # router can shadow the other's routes; registration order is not load-bearing.
+        verse_router,
         assessment_router,
         user_router,
         group_router,
     ):
         v4_app.include_router(
-            domain_router, dependencies=[fastapi.Depends(get_current_user)]
+            domain_router,
+            dependencies=[fastapi.Depends(get_current_user_v4)],
+            responses=V4_ERROR_RESPONSES,
         )
 
     return v4_app
