@@ -1262,6 +1262,44 @@ class TestWireNaming:
     rename.
     """
 
+    def test_openapi_never_republishes_a_withdrawn_spelling(self, client):
+        """No withdrawn name may reappear anywhere in ``/v4/openapi.json``.
+
+        This is a regression guard, and it earns its place: the withdrawn spellings
+        are easy to reintroduce *as prose*. A class docstring becomes the published
+        ``description`` of its schema, so merely explaining "``machineTranslation``
+        is no longer accepted" inside one puts that string back into the document a
+        newcomer reads — which is what #830 removed. It happened twice while #925 was
+        being written.
+
+        The rule is that the names live in the module docstring and in ``#`` comments,
+        neither of which FastAPI publishes. Say "a withdrawn legacy spelling" in a
+        class docstring instead.
+        """
+        spec = client.get(f"{PREFIX}/openapi.json")
+        assert spec.status_code == 200, spec.text
+        document = spec.text
+
+        for withdrawn in (
+            "forwardTranslation",
+            "backTranslation",
+            "machineTranslation",
+            "bible_version_id",
+        ):
+            assert withdrawn not in document, (
+                f"{withdrawn} is published in /v4/openapi.json again — check the "
+                "class docstrings, which FastAPI emits as schema descriptions"
+            )
+
+        # The canonical names are there, so this is not passing by publishing nothing.
+        for canonical in (
+            "forward_translation_id",
+            "back_translation_id",
+            "uploaded_date",
+            "version_id",
+        ):
+            assert canonical in document, canonical
+
     def test_back_translation_id_targets_two_different_tables(self):
         """The defect the suffix fixes, pinned at the source.
 

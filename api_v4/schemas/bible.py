@@ -64,8 +64,8 @@ class VersionCreate(V4BaseModel):
 
     **Closed allowlist** (``extra="forbid"``), matching :class:`VersionPatch` and
     :class:`~api_v4.schemas.assessment.AssessmentCreate`. An unrecognized key is a
-    422, never silently dropped, so a misspelled ``abbrevation`` — or a withdrawn
-    ``machineTranslation`` — cannot come back as a 201 carrying a default the
+    422, never silently dropped, so neither a misspelled ``abbrevation`` nor one of
+    the withdrawn legacy spellings can come back as a 201 carrying a default the
     caller never asked for. Withdrawing the aliases in #925 is what made this
     necessary rather than merely tidy: while they were accepted the old spelling
     still wrote the right column, and afterwards it would have been discarded in
@@ -310,10 +310,9 @@ class RevisionCreate(V4BaseModel):
     :class:`InlineText` closes too so a stray key in the nested ``text`` object is
     caught as well. An unrecognized key is a 422 rather than a silent no-op.
 
-    One withdrawn alias would have been a hard error here regardless: the old
-    ``bible_version_id`` was a second spelling of ``version_id``, which is required,
-    so a body carrying only the old name fails on the missing field rather than on
-    the unknown one.
+    One withdrawn alias would have been a hard error here regardless: it was a
+    second spelling of ``version_id``, which is required, so a body carrying only
+    the old name fails on the missing field rather than on the unknown one.
     """
 
     # Canonical — and since #925, only — name is version_id: it matches the

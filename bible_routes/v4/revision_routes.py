@@ -59,10 +59,11 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
 
     Built from **named columns**, not from ``revision.__dict__`` — the first of the
     three v3 behaviors #891 says not to port (see :class:`RevisionOut`). This is also
-    the one place the wire names are bridged to the ORM spellings, and where the two
-    denormalized parent fields are attached. Two bridges are left after #925 gave
-    ``back_translation_id`` the same spelling on both sides: ``bible_version_id`` ->
-    ``version_id`` and ``date`` -> ``uploaded_date``.
+    the one place ORM attribute names are bridged to their wire spellings, and where
+    the two denormalized parent fields are attached. Two bridges are left after #925
+    gave ``back_translation_id`` the same spelling on both sides: the column
+    ``bible_version_id`` becomes ``version_id``, and the column ``date`` becomes
+    ``uploaded_date``.
 
     Booleans are coerced with ``bool(...)`` because their columns are nullable and
     legacy rows may hold NULL (mirroring v3's null-to-false coercion for ``deleted``).
