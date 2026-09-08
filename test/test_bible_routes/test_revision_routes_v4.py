@@ -304,42 +304,73 @@ class TestCreate:
         # loss of function.
         assert _create(client, regular_token1, version_id).status_code == 201
 
-    def test_create_ignores_withdrawn_camelcase_input(
+    def test_create_rejects_withdrawn_camelcase_input(
         self, client, regular_token1, db_session
     ):
-        """The camelCase aliases are gone too, but on *create* they are ignored.
+        """The camelCase aliases are gone, and the closed allowlist makes them a 422.
 
-        ``RevisionCreate`` does not close its allowlist (only ``RevisionPatch`` does),
-        so an unrecognized key is dropped and the field keeps its default: the request
-        succeeds and ``machineTranslation: True`` yields
-        ``machine_translation: False``. That is a silent no-op rather than an error.
-        The same body is a 422 on PATCH — see
-        ``test_patch_rejects_withdrawn_camelcase_input``. #925 changed names only and
-        left the asymmetry in place.
+        With the alias withdrawn but the model still open, ``machineTranslation: True``
+        would have returned a 201 carrying ``machine_translation: False`` — a request
+        that reports success while doing the opposite of what it asked. So
+        ``RevisionCreate`` sets ``extra="forbid"``, matching ``RevisionPatch``.
         """
         version_id = _create_version(
             client, regular_token1, db_session, abbreviation="V4RCAMEL2"
         )
+        for withdrawn in ("machineTranslation", "backTranslation"):
+            resp = client.post(
+                f"{PREFIX}/revisions",
+                json={
+                    "version_id": version_id,
+                    "name": "Legacy Names",
+                    withdrawn: 1,
+                    "text": {"type": "inline", "content_base64": _aligned_base64()},
+                },
+                headers=_auth(regular_token1),
+            )
+            assert resp.status_code == 422, (withdrawn, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert withdrawn in resp.text
+
+    def test_create_rejects_unknown_keys_including_inside_the_text_object(
+        self, client, regular_token1, db_session
+    ):
+        """The nested ``text`` object closes too, so the fix is not half-done.
+
+        ``InlineText`` sets ``extra="forbid"`` as well. Without it a stray key inside
+        ``text`` would still be dropped in silence, which is the same defect one level
+        down — and it would let a mistyped future variant of the discriminated union
+        look valid.
+        """
+        version_id = _create_version(
+            client, regular_token1, db_session, abbreviation="V4RCLOSED"
+        )
+
+        # Top level: a typo and the server-stamped fields.
+        for extra in ({"naem": "typo"}, {"date": "2020-01-01"}, {"deleted": True}):
+            resp = _create(client, regular_token1, version_id, **extra)
+            assert resp.status_code == 422, (extra, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # Nested inside text.
         resp = client.post(
             f"{PREFIX}/revisions",
             json={
                 "version_id": version_id,
-                "name": "Legacy Names",
-                "machineTranslation": True,
-                "backTranslation": 9999999,
-                "text": {"type": "inline", "content_base64": _aligned_base64()},
+                "text": {
+                    "type": "inline",
+                    "content_base64": _aligned_base64(),
+                    "encodign": "utf-8",
+                },
             },
             headers=_auth(regular_token1),
         )
-        assert resp.status_code == 201, resp.text
-        body = resp.json()
-        assert body["version_id"] == version_id
-        # Both withdrawn keys were dropped: had ``backTranslation`` still been an
-        # alias, that id would have been an INVALID_REFERENCE 400 instead.
-        assert body["machine_translation"] is False
-        assert body["back_translation_id"] is None
-        assert "machineTranslation" not in body
-        assert "backTranslation" not in body
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert "encodign" in resp.text
+
+        # A clean body still creates.
+        assert _create(client, regular_token1, version_id).status_code == 201
 
     def test_create_group_member_who_is_not_the_owner_may_upload(
         self, client, regular_token1, regular_token2, admin_token, db_session

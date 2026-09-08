@@ -118,43 +118,71 @@ class TestCreate:
         assert body["owner_id"] == _user_id(db_session, "testuser1")
         assert body["group_ids"] == [_group_id(db_session, "Group1")]
 
-    def test_create_ignores_withdrawn_camelcase_input(
+    def test_create_rejects_withdrawn_camelcase_input(
         self, client, regular_token1, db_session
     ):
-        """#925 withdrew the camelCase input aliases, and on *create* that means the
-        key is ignored rather than rejected.
+        """#925 withdrew the camelCase aliases; the closed allowlist makes them a 422.
 
-        ``VersionCreate`` does not close its allowlist (only ``VersionPatch`` does), so
-        Pydantic's default ``extra="ignore"`` applies: the request still succeeds and
-        the field falls back to its default. Asserting that explicitly is the point —
-        ``machineTranslation: True`` now produces a version with
-        ``machine_translation: False``, which is a silent no-op, not an error. The
-        same request is a 422 on PATCH (see
-        ``test_patch_rejects_withdrawn_camelcase_input``); #925 deliberately changed
-        names only and left that create/patch asymmetry alone.
+        Withdrawing an alias and closing the allowlist are two halves of one change.
+        With the alias gone but the model still open, ``machineTranslation: True``
+        would have produced a **201** carrying ``machine_translation: False`` — the
+        request "succeeding" while quietly doing the opposite of what it asked. That
+        is worse than an error, so ``VersionCreate`` now sets ``extra="forbid"``,
+        matching ``VersionPatch`` and ``AssessmentCreate``.
         """
-        body = {
-            **BASE_VERSION,
-            "abbreviation": "V4CAMEL",
-            "machineTranslation": True,
-            "forwardTranslation": 12345,
-            "backTranslation": 67890,
-            "add_to_groups": [_group_id(db_session, "Group1")],
-        }
-        resp = client.post(
-            f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+        for withdrawn in (
+            "machineTranslation",
+            "forwardTranslation",
+            "backTranslation",
+        ):
+            body = {
+                **BASE_VERSION,
+                "abbreviation": "V4CAMEL",
+                withdrawn: 1,
+                "add_to_groups": [_group_id(db_session, "Group1")],
+            }
+            resp = client.post(
+                f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+            )
+            assert resp.status_code == 422, (withdrawn, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert withdrawn in resp.text
+
+    def test_create_rejects_unknown_and_non_settable_fields(
+        self, client, regular_token1, db_session
+    ):
+        """The closed allowlist is not only about the withdrawn aliases.
+
+        A misspelled field name can no longer look like success, and the identity and
+        lifecycle fields cannot be written through a create body — the same guarantee
+        ``VersionPatch`` already gave. ``owner_id`` in particular is set from the
+        authenticated caller, never from input.
+        """
+        for extra in (
+            {"abbrevation": "typo"},
+            {"owner_id": 1},
+            {"deleted": True},
+            {"id": 1},
+        ):
+            body = {
+                **BASE_VERSION,
+                "abbreviation": "V4CLOSED",
+                **extra,
+                "add_to_groups": [_group_id(db_session, "Group1")],
+            }
+            resp = client.post(
+                f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+            )
+            assert resp.status_code == 422, (extra, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # The canonical body still creates, so the allowlist is closed and not broken.
+        assert (
+            _create(
+                client, regular_token1, db_session, abbreviation="V4CLOSEDOK"
+            ).status_code
+            == 201
         )
-        assert resp.status_code == 201, resp.text
-        out = resp.json()
-        # Every withdrawn alias was dropped: the fields hold their defaults, not the
-        # values the camelCase keys carried.
-        assert out["machine_translation"] is False
-        assert out["forward_translation_id"] is None
-        assert out["back_translation_id"] is None
-        # ...and nothing echoes the withdrawn spellings back.
-        assert "machineTranslation" not in out
-        assert "forwardTranslation" not in out
-        assert "backTranslation" not in out
 
     def test_create_accepts_the_suffixed_translation_ids(
         self, client, regular_token1, db_session

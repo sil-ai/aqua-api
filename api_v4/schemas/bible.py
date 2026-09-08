@@ -62,10 +62,14 @@ class VersionCreate(V4BaseModel):
     published schema description, and re-printing a withdrawn spelling in
     ``/v4/openapi.json`` would document the thing #830 removed.
 
-    Unlike :class:`VersionPatch`, this model does **not** close its allowlist, so an
-    unrecognized key is ignored rather than rejected and the field keeps its
-    default — a withdrawn alias included. That asymmetry is pre-existing and
-    deliberately left alone by #925, which changed names only.
+    **Closed allowlist** (``extra="forbid"``), matching :class:`VersionPatch` and
+    :class:`~api_v4.schemas.assessment.AssessmentCreate`. An unrecognized key is a
+    422, never silently dropped, so a misspelled ``abbrevation`` — or a withdrawn
+    ``machineTranslation`` — cannot come back as a 201 carrying a default the
+    caller never asked for. Withdrawing the aliases in #925 is what made this
+    necessary rather than merely tidy: while they were accepted the old spelling
+    still wrote the right column, and afterwards it would have been discarded in
+    silence.
     """
 
     name: str
@@ -101,6 +105,8 @@ class VersionCreate(V4BaseModel):
 
     model_config = {
         **V4BaseModel.model_config,
+        # See the class docstring: unknown keys are a 422, not a silent no-op.
+        "extra": "forbid",
         "json_schema_extra": {
             "example": {
                 "name": "English King James Version",
@@ -282,6 +288,16 @@ class InlineText(V4BaseModel):
         ),
     )
 
+    model_config = {
+        **V4BaseModel.model_config,
+        # Closed for the same reason as the models that carry it: an unrecognized
+        # key here would otherwise be dropped in silence, and "the upload silently
+        # ignored half my request" is the failure this whole slice avoids
+        # elsewhere. It also keeps the future discriminated union honest — a member
+        # that accepts stray keys makes a mistyped variant look valid.
+        "extra": "forbid",
+    }
+
 
 class RevisionCreate(V4BaseModel):
     """Request body for ``POST /v4/revisions`` (issues #826/#891).
@@ -290,10 +306,14 @@ class RevisionCreate(V4BaseModel):
     ``RevisionIn = Depends()`` form/query fields. ``uploaded_date`` is not a request
     field: it is stamped server-side, exactly as v3 does.
 
-    As on :class:`VersionCreate`, the allowlist is not closed, so an unrecognized
-    key is ignored rather than rejected. One withdrawn alias is still a hard error
-    here, though: it was a second spelling of ``version_id``, which is required, so
-    a body carrying only the old name is a 422 for the missing field.
+    **Closed allowlist** (``extra="forbid"``), as on :class:`VersionCreate`, and
+    :class:`InlineText` closes too so a stray key in the nested ``text`` object is
+    caught as well. An unrecognized key is a 422 rather than a silent no-op.
+
+    One withdrawn alias would have been a hard error here regardless: the old
+    ``bible_version_id`` was a second spelling of ``version_id``, which is required,
+    so a body carrying only the old name fails on the missing field rather than on
+    the unknown one.
     """
 
     # Canonical — and since #925, only — name is version_id: it matches the
@@ -317,6 +337,8 @@ class RevisionCreate(V4BaseModel):
 
     model_config = {
         **V4BaseModel.model_config,
+        # See the class docstring: unknown keys are a 422, not a silent no-op.
+        "extra": "forbid",
         "json_schema_extra": {
             "example": {
                 "version_id": 1,
