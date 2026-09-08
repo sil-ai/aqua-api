@@ -8,9 +8,10 @@ restricted to ``eng``/``swh`` per the test fixtures. Structured to mirror
 What each class pins down:
 
 * ``TestAuth`` — router-level auth (#831): the collection is protected by default.
-* ``TestCreate`` — the JSON-only upload (#826): a synchronous 201, snake_case out with
-  the legacy camelCase names accepted in (#830), verse text actually loaded, and every
-  bad-payload path mapped to a stable 4xx code instead of a catch-all 500.
+* ``TestCreate`` — the JSON-only upload (#826): a synchronous 201, snake_case in and
+  out with the legacy camelCase names no longer accepted (#830/#925), verse text
+  actually loaded, and every bad-payload path mapped to a stable 4xx code instead of
+  a catch-all 500.
 * ``TestListAndGet`` — the #829 page envelope, group scoping, the ``version_id`` filter,
   and v4's new single-revision read.
 * ``TestPatch`` — the body-shaped replacement for v3's ``PUT /revision?new_name=``, and
@@ -218,7 +219,7 @@ class TestCreate:
         # labelled without a second round of /v4/versions calls.
         assert body["version_abbreviation"] == "V4RCREATE"
         assert body["iso_language"] == "eng"
-        assert body["date"] is not None
+        assert body["uploaded_date"] is not None
         # The upload really loaded verse text (3 non-empty lines in the fixture).
         assert _verse_count(db_session, body["id"]) == 3
 
@@ -248,13 +249,16 @@ class TestCreate:
         assert "bible_version_id" not in body
         # No ORM internals leaked by a splat.
         assert "_sa_instance_state" not in body
+        # #925: the FK carries its ``_id`` suffix and the bare date is gone.
+        assert "back_translation" not in body
+        assert "date" not in body
         assert set(body) == {
             "id",
             "version_id",
             "name",
-            "date",
+            "uploaded_date",
             "published",
-            "back_translation",
+            "back_translation_id",
             "machine_translation",
             "deleted",
             "version_abbreviation",
@@ -263,13 +267,23 @@ class TestCreate:
             "updated_at",
         }
 
-    def test_create_accepts_legacy_camelcase_and_bible_version_id_input(
+    def test_create_rejects_withdrawn_bible_version_id_input(
         self, client, regular_token1, db_session
     ):
-        """Legacy v3 spellings accepted on input; response stays snake_case (#830).
+        """``bible_version_id`` was withdrawn as an input spelling in #925.
 
-        ``bible_version_id`` is the extra alias: it is what v3's *response* called the
-        field, so a client echoing a v3 revision back at v4 keeps working.
+        It was the odd one out among the eleven aliases: snake_case, not camelCase,
+        and justified separately — it is what v3's *response* called the field, so a
+        client echoing a v3 revision straight back at v4 would have kept working. It
+        went for the same reason the camelCase ones did. There is no client
+        mid-migration (``aqua-django-app`` has zero v4 call sites), and because
+        ``validation_alias`` is input-only it was accepted-but-undocumented: only
+        ``version_id`` ever reached ``/v4/openapi.json``, so no published contract
+        promised it.
+
+        This one *is* a hard 422 rather than a silently-ignored key, because
+        ``version_id`` is required — a body carrying only the old spelling fails on
+        the missing required field.
         """
         version_id = _create_version(
             client, regular_token1, db_session, abbreviation="V4RCAMEL"
@@ -279,8 +293,40 @@ class TestCreate:
             json={
                 "bible_version_id": version_id,
                 "name": "Legacy Names",
+                "text": {"type": "inline", "content_base64": _aligned_base64()},
+            },
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert "version_id" in resp.text
+        # The canonical spelling is unaffected, so this is a naming change and not a
+        # loss of function.
+        assert _create(client, regular_token1, version_id).status_code == 201
+
+    def test_create_ignores_withdrawn_camelcase_input(
+        self, client, regular_token1, db_session
+    ):
+        """The camelCase aliases are gone too, but on *create* they are ignored.
+
+        ``RevisionCreate`` does not close its allowlist (only ``RevisionPatch`` does),
+        so an unrecognized key is dropped and the field keeps its default: the request
+        succeeds and ``machineTranslation: True`` yields
+        ``machine_translation: False``. That is a silent no-op rather than an error.
+        The same body is a 422 on PATCH — see
+        ``test_patch_rejects_withdrawn_camelcase_input``. #925 changed names only and
+        left the asymmetry in place.
+        """
+        version_id = _create_version(
+            client, regular_token1, db_session, abbreviation="V4RCAMEL2"
+        )
+        resp = client.post(
+            f"{PREFIX}/revisions",
+            json={
+                "version_id": version_id,
+                "name": "Legacy Names",
                 "machineTranslation": True,
-                "backTranslation": None,
+                "backTranslation": 9999999,
                 "text": {"type": "inline", "content_base64": _aligned_base64()},
             },
             headers=_auth(regular_token1),
@@ -288,8 +334,12 @@ class TestCreate:
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["version_id"] == version_id
-        assert body["machine_translation"] is True
+        # Both withdrawn keys were dropped: had ``backTranslation`` still been an
+        # alias, that id would have been an INVALID_REFERENCE 400 instead.
+        assert body["machine_translation"] is False
+        assert body["back_translation_id"] is None
         assert "machineTranslation" not in body
+        assert "backTranslation" not in body
 
     def test_create_group_member_who_is_not_the_owner_may_upload(
         self, client, regular_token1, regular_token2, admin_token, db_session
@@ -353,7 +403,7 @@ class TestCreate:
         assert resp.status_code == 404, resp.text
         assert resp.json()["error"]["code"] == "VERSION_NOT_FOUND"
 
-    def test_create_unknown_back_translation_is_400_invalid_reference(
+    def test_create_unknown_back_translation_id_is_400_invalid_reference(
         self, client, regular_token1, db_session
     ):
         """``back_translation_id`` is a FK to ``bible_revision.id``; an unknown id is a
@@ -361,22 +411,26 @@ class TestCreate:
         version_id = _create_version(
             client, regular_token1, db_session, abbreviation="V4RBADBT"
         )
-        resp = _create(client, regular_token1, version_id, back_translation=9999999)
+        resp = _create(client, regular_token1, version_id, back_translation_id=9999999)
         assert resp.status_code == 400, resp.text
         err = resp.json()["error"]
         assert err["code"] == "INVALID_REFERENCE"
-        assert err["details"]["fields"] == ["back_translation"]
+        # details.fields is a hint the client acts on, so it names the field as the
+        # client spells it on the wire, suffix included (#925).
+        assert err["details"]["fields"] == ["back_translation_id"]
 
-    def test_create_valid_back_translation_is_stored(
+    def test_create_valid_back_translation_id_is_stored(
         self, client, regular_token1, db_session
     ):
-        """The counterpart: a real revision id round-trips through the snake_case name."""
+        """The counterpart: a real revision id round-trips through the canonical name."""
         version_id, first = _created(
             client, regular_token1, db_session, abbreviation="V4RGOODBT"
         )
-        resp = _create(client, regular_token1, version_id, back_translation=first["id"])
+        resp = _create(
+            client, regular_token1, version_id, back_translation_id=first["id"]
+        )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["back_translation"] == first["id"]
+        assert resp.json()["back_translation_id"] == first["id"]
 
     @pytest.mark.parametrize(
         "reason, content_base64",
@@ -750,7 +804,7 @@ class TestPatch:
         # Untouched fields keep their stored values — this is a partial update.
         assert body["published"] == created["published"]
         assert body["version_id"] == created["version_id"]
-        assert body["date"] == created["date"]
+        assert body["uploaded_date"] == created["uploaded_date"]
         assert _row(db_session, revision_id).name == "Renamed V4"
 
     def test_patch_covers_every_mutable_field(self, client, regular_token1, db_session):
@@ -768,28 +822,40 @@ class TestPatch:
             {
                 "published": True,
                 "machine_translation": True,
-                "back_translation": first["id"],
+                "back_translation_id": first["id"],
             },
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["published"] is True
         assert body["machine_translation"] is True
-        assert body["back_translation"] == first["id"]
+        assert body["back_translation_id"] == first["id"]
 
         row = _row(db_session, target)
         assert row.published is True
         assert row.machine_translation is True
         assert row.back_translation_id == first["id"]
 
-    def test_patch_accepts_legacy_camelcase_input(
+    def test_patch_rejects_withdrawn_camelcase_input(
         self, client, regular_token1, db_session
     ):
+        """On PATCH the withdrawn aliases are a hard 422 (#925).
+
+        ``RevisionPatch`` closes its allowlist (``extra="forbid"``), so an
+        unrecognized key is rejected rather than dropped — the create path cannot do
+        this, which is why the two tests assert different things about the same key.
+        """
         _, created = _created(
             client, regular_token1, db_session, abbreviation="V4RPCAMEL"
         )
+        for withdrawn in ({"machineTranslation": True}, {"backTranslation": 1}):
+            resp = _patch(client, regular_token1, created["id"], withdrawn)
+            assert resp.status_code == 422, (withdrawn, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # The canonical spelling still applies.
         resp = _patch(
-            client, regular_token1, created["id"], {"machineTranslation": True}
+            client, regular_token1, created["id"], {"machine_translation": True}
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["machine_translation"] is True
@@ -808,9 +874,13 @@ class TestPatch:
         for body in (
             {"id": revision_id + 1},
             {"version_id": version_id},
+            # Was never a patch alias, and since #925 is not an input spelling
+            # anywhere on the surface.
             {"bible_version_id": version_id},
             {"deleted": True},
+            # Renamed to uploaded_date in #925; neither spelling is patchable.
             {"date": "2020-01-01"},
+            {"uploaded_date": "2020-01-01"},
             {"naem": "typo"},
         ):
             resp = _patch(client, regular_token1, revision_id, body)
@@ -830,13 +900,13 @@ class TestPatch:
             client, regular_token1, db_session, abbreviation="V4RPNULL"
         )
         target = _create(
-            client, regular_token1, version_id, back_translation=first["id"]
+            client, regular_token1, version_id, back_translation_id=first["id"]
         ).json()["id"]
 
-        # back_translation is nullable on the wire, so an explicit null clears it.
-        cleared = _patch(client, regular_token1, target, {"back_translation": None})
+        # back_translation_id is nullable on the wire, so an explicit null clears it.
+        cleared = _patch(client, regular_token1, target, {"back_translation_id": None})
         assert cleared.status_code == 200, cleared.text
-        assert cleared.json()["back_translation"] is None
+        assert cleared.json()["back_translation_id"] is None
 
         # published is not: an explicit null is a 422, not a NULLed column.
         rejected = _patch(client, regular_token1, target, {"published": None})
@@ -865,7 +935,7 @@ class TestPatch:
             client,
             regular_token1,
             revision_id,
-            {"name": "Should Not Persist", "back_translation": 9999999},
+            {"name": "Should Not Persist", "back_translation_id": 9999999},
         )
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
@@ -1150,6 +1220,150 @@ class TestNullDeletedVisibility:
         assert _fetch(client, regular_token1, revision_id)["deleted"] is False
 
 
+class TestWireNaming:
+    """The #925 wire-naming rulings, pinned so they are not quietly undone.
+
+    #925 settled the v4 field names while v4 still had no clients: it dropped all
+    eleven input aliases, gave the two translation FKs the ``_id`` suffix their
+    columns already carried, and renamed ``date`` to ``uploaded_date``. The rejection
+    and passthrough behaviour lives in ``TestCreate``/``TestPatch``; what this class
+    covers is *why* the suffix had to exist and that the date narrowing survived the
+    rename.
+    """
+
+    def test_back_translation_id_targets_two_different_tables(self):
+        """The defect the suffix fixes, pinned at the source.
+
+        ``back_translation_id`` appears on both resources and means a different id
+        space on each: a version's points at another **version**, a revision's at
+        another **revision**. Under the old bare ``back_translation`` a client reading
+        one field could not tell which endpoint to resolve the value against — the
+        name was identical and the target was not. The reference fields around them
+        carry the suffix (``owner_id``, ``group_ids``, ``reference_id``,
+        ``revision_id``, ``version_id``), so these two were the outliers.
+
+        One deliberate holdout, so this is not read as a blanket rule:
+        ``VersionCreate.add_to_groups`` carries group ids without the suffix and #925
+        ruled it stays, because a required create-time instruction is not the same
+        concept as ``group_ids`` read state and a matching name would imply a symmetry
+        that does not exist.
+        """
+        from database.models import BibleVersion as BibleVersionModel
+
+        def fk_target(model, attr):
+            column = getattr(model, attr).property.columns[0]
+            targets = [fk.target_fullname for fk in column.foreign_keys]
+            assert len(targets) == 1, (attr, targets)
+            return targets[0]
+
+        assert fk_target(BibleVersionModel, "back_translation_id") == "bible_version.id"
+        assert (
+            fk_target(BibleRevisionModel, "back_translation_id") == "bible_revision.id"
+        )
+
+        # The other half of the documented asymmetry: forward_translation_id is a
+        # plain Integer with no constraint at all, which is why a bad value there is
+        # stored rather than rejected. See FORWARD_TRANSLATION_DESCRIPTION.
+        forward = BibleVersionModel.forward_translation_id.property.columns[0]
+        assert not forward.foreign_keys
+
+    def test_back_translation_id_resolves_in_each_resources_own_id_space(
+        self, client, regular_token1, db_session
+    ):
+        """End-to-end counterpart: each field's value is usable against its own
+        endpoint, and only against its own endpoint."""
+        from database.models import BibleVersion as BibleVersionModel
+
+        # Version space: a version's back_translation_id is another *version*.
+        target_version_id = _create_version(
+            client, regular_token1, db_session, abbreviation="V4WNBTV"
+        )
+        host_version_id = _create_version(
+            client, regular_token1, db_session, abbreviation="V4WNHOST"
+        )
+        patched = client.patch(
+            f"{PREFIX}/versions/{host_version_id}",
+            json={"back_translation_id": target_version_id},
+            headers=_auth(regular_token1),
+        )
+        assert patched.status_code == 200, patched.text
+        version_out = patched.json()
+        assert version_out["back_translation_id"] == target_version_id
+
+        # Revision space: a revision's back_translation_id is another *revision*.
+        first = _create(client, regular_token1, host_version_id).json()
+        second = _create(
+            client, regular_token1, host_version_id, back_translation_id=first["id"]
+        ).json()
+        assert second["back_translation_id"] == first["id"]
+
+        # The version's value reads back as a version...
+        resp = client.get(
+            f"{PREFIX}/versions/{version_out['back_translation_id']}",
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["id"] == target_version_id
+        assert (
+            db_session.query(BibleVersionModel)
+            .filter_by(id=version_out["back_translation_id"])
+            .first()
+            is not None
+        )
+
+        # ...and the revision's value reads back as a revision. Same field name on
+        # the wire, two different resources behind it.
+        assert (
+            _fetch(client, regular_token1, second["back_translation_id"])["id"]
+            == first["id"]
+        )
+        assert _row(db_session, second["back_translation_id"]) is not None
+
+    def test_uploaded_date_narrows_a_legacy_non_midnight_row(
+        self, client, regular_token1, db_session
+    ):
+        """The rename kept the type, so the narrowing still has to happen.
+
+        ``uploaded_date`` is a ``date`` on the wire while ``bible_revision.date`` is a
+        ``DateTime``, and Pydantic *raises* rather than truncating when it is handed a
+        datetime with a non-zero time component. Legacy rows are not guaranteed to be
+        midnight, so ``_to_out`` narrows explicitly — without that this response would
+        be a 500. #925 renamed the field and deliberately did **not** widen the type.
+        """
+        _, created = _created(
+            client, regular_token1, db_session, abbreviation="V4WNDATE"
+        )
+        revision_id = created["id"]
+
+        row = _row(db_session, revision_id)
+        row.date = datetime(2020, 1, 2, 13, 45, 56)
+        db_session.commit()
+
+        body = _fetch(client, regular_token1, revision_id)
+        assert body["uploaded_date"] == "2020-01-02"
+        # The old spelling is gone from the response, not merely duplicated.
+        assert "date" not in body
+
+    def test_uploaded_date_tolerates_a_plain_date_and_a_null(
+        self, client, regular_token1, db_session
+    ):
+        """The other two shapes the attribute can hold.
+
+        ``_to_out`` narrows only the ``datetime`` case, which is what makes it total:
+        an ORM object built in Python and not yet round-tripped still holds whatever
+        was assigned (v3's upload assigns a ``date``), and a legacy row may hold NULL.
+        """
+        _, created = _created(
+            client, regular_token1, db_session, abbreviation="V4WNDATE2"
+        )
+        revision_id = created["id"]
+
+        row = _row(db_session, revision_id)
+        row.date = None
+        db_session.commit()
+        assert _fetch(client, regular_token1, revision_id)["uploaded_date"] is None
+
+
 class TestUploadTransaction:
     """The upload is a single transaction, so a mid-load failure leaves nothing behind.
 
@@ -1267,12 +1481,12 @@ class TestUploadTransaction:
         verse INSERT can raise ``IntegrityError`` if the reference table stops matching
         ``fixtures/vref.txt``. While ``create_revision`` had one ``except IntegrityError``
         around both the revision flush *and* the verse inserts, that surfaced as a 400
-        ``INVALID_REFERENCE`` naming ``back_translation`` — blaming a field the client got
+        ``INVALID_REFERENCE`` naming ``back_translation_id`` — blaming a field the client got
         right, and burying a data-drift condition that should page someone. The two-stage
         split makes it a 500.
 
         The other half of the split is pinned by
-        ``test_create_unknown_back_translation_is_400_invalid_reference``: a real
+        ``test_create_unknown_back_translation_id_is_400_invalid_reference``: a real
         client-supplied bad FK must still be a 400.
         """
         version_id = _create_version(

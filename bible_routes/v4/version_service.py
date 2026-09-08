@@ -157,8 +157,11 @@ class InvalidReference(VersionServiceError):
     """
 
     #: FK-backed request fields, surfaced in the error details as a hint to the
-    #: client about which inputs can trigger this.
-    FIELDS = ("iso_language", "iso_script", "back_translation")
+    #: client about which inputs can trigger this. These are **wire** field names,
+    #: not ORM attributes — they are echoed to the client as ``details.fields`` for
+    #: it to act on, so they track the request schema (#925 renamed
+    #: ``back_translation`` to ``back_translation_id`` there).
+    FIELDS = ("iso_language", "iso_script", "back_translation_id")
 
 
 def _visible_versions_query(
@@ -297,7 +300,7 @@ async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
     group was given and :class:`GroupMembershipRequired` for any group the caller
     does not belong to — both validated before any row is written. A FK violation
     on insert (unknown ``iso_language`` / ``iso_script`` code, or a non-existent
-    ``back_translation`` id) becomes :class:`InvalidReference` rather than a raw
+    ``back_translation_id``) becomes :class:`InvalidReference` rather than a raw
     ``IntegrityError`` (which the catch-all would turn into a 500). Duplicate group
     ids in ``add_to_groups`` are collapsed (order-preserving) so a caller cannot
     create duplicate access rows.
@@ -329,8 +332,8 @@ async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
         iso_script=data.iso_script,
         abbreviation=data.abbreviation,
         rights=data.rights,
-        forward_translation_id=data.forward_translation,
-        back_translation_id=data.back_translation,
+        forward_translation_id=data.forward_translation_id,
+        back_translation_id=data.back_translation_id,
         machine_translation=data.machine_translation,
         owner_id=user.id,
         is_reference=data.is_reference,
@@ -405,21 +408,26 @@ async def _get_version_for_write(
     return version
 
 
-#: Patchable ``VersionPatch`` field -> ``BibleVersion`` ORM attribute. The mapping
-#: is exhaustive over the schema's fields and :func:`update_version` indexes it
-#: *directly* (no ``.get`` / no ``if field in``): a field added to ``VersionPatch``
-#: without a mapping must fail loudly instead of being silently dropped, which is
-#: exactly how v3's phantom ``is_reference`` stayed broken. ``test_version_routes_v4``
-#: pins the two together.
+#: Patchable ``VersionPatch`` field -> ``BibleVersion`` ORM attribute. The keys are
+#: wire/schema field names (they come from ``model_dump()``), the values are ORM
+#: attributes. The mapping is exhaustive over the schema's fields and
+#: :func:`update_version` indexes it *directly* (no ``.get`` / no ``if field in``):
+#: a field added to ``VersionPatch`` without a mapping must fail loudly instead of
+#: being silently dropped, which is exactly how v3's phantom ``is_reference`` stayed
+#: broken. ``test_version_routes_v4`` pins the two together.
+#:
+#: Every entry is an identity mapping since #925 — the two translation FKs were the
+#: only fields whose wire name differed from its column, and they now match. Keep
+#: the indirection anyway: it is what makes an unmapped new field raise instead of
+#: silently not being written.
 _PATCH_FIELD_TO_COLUMN = {
     "name": "name",
     "iso_language": "iso_language",
     "iso_script": "iso_script",
     "abbreviation": "abbreviation",
     "rights": "rights",
-    # The two request fields whose ORM attribute is spelled differently.
-    "forward_translation": "forward_translation_id",
-    "back_translation": "back_translation_id",
+    "forward_translation_id": "forward_translation_id",
+    "back_translation_id": "back_translation_id",
     "machine_translation": "machine_translation",
     "is_reference": "is_reference",
     "transcribed_audio": "transcribed_audio",
@@ -450,7 +458,7 @@ async def update_version(
 
     Raises :class:`VersionNotFound` / :class:`VersionAccessForbidden` from the
     shared gate, and :class:`InvalidReference` when a patched FK-backed field
-    (``iso_language``, ``iso_script``, ``back_translation``) points at something
+    (``iso_language``, ``iso_script``, ``back_translation_id``) points at something
     that does not exist.
     """
     version = await _get_version_for_write(db, user, version_id)
