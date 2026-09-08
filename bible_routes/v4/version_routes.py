@@ -57,10 +57,12 @@ router = fastapi.APIRouter(prefix="/versions", tags=["Versions"])
 def _to_out(version: BibleVersion, group_ids: list[int]) -> VersionOut:
     """Build the snake_case ``VersionOut`` from an ORM row + its group ids.
 
-    The one place ORM-attribute-name differences are bridged
-    (``forward_translation_id`` -> ``forward_translation``). Booleans are coerced
-    with ``bool(...)`` because their columns are nullable and legacy rows may hold
-    NULL (mirrors v3's null-to-false coercion for ``deleted``).
+    Bridges no names. #925 gave the two translation FKs their ``_id`` suffix, so
+    every field is spelled the same on the row as on the wire and the assignments
+    are straight passthroughs. What is left is shaping — attaching ``group_ids``,
+    which is not a column on the row — and coercion: the booleans go through
+    ``bool(...)`` because their columns are nullable and legacy rows may hold NULL
+    (mirrors v3's null-to-false coercion for ``deleted``).
     """
     return VersionOut(
         id=version.id,
@@ -69,8 +71,8 @@ def _to_out(version: BibleVersion, group_ids: list[int]) -> VersionOut:
         iso_script=version.iso_script,
         abbreviation=version.abbreviation,
         rights=version.rights,
-        forward_translation=version.forward_translation_id,
-        back_translation=version.back_translation_id,
+        forward_translation_id=version.forward_translation_id,
+        back_translation_id=version.back_translation_id,
         machine_translation=bool(version.machine_translation),
         is_reference=bool(version.is_reference),
         transcribed_audio=bool(version.transcribed_audio),
@@ -196,7 +198,7 @@ async def create_version(
             code="INVALID_REFERENCE",
             message=(
                 "A referenced value does not exist. Check the FK-backed fields: "
-                "iso_language, iso_script, back_translation."
+                "iso_language, iso_script, back_translation_id."
             ),
             details={"fields": list(version_service.InvalidReference.FIELDS)},
         ) from exc
@@ -256,7 +258,7 @@ async def update_version(
             code="INVALID_REFERENCE",
             message=(
                 "A referenced value does not exist. Check the FK-backed fields: "
-                "iso_language, iso_script, back_translation."
+                "iso_language, iso_script, back_translation_id."
             ),
             details={"fields": list(version_service.InvalidReference.FIELDS)},
         ) from exc

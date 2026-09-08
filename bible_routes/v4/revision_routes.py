@@ -59,14 +59,16 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
 
     Built from **named columns**, not from ``revision.__dict__`` — the first of the
     three v3 behaviors #891 says not to port (see :class:`RevisionOut`). This is also
-    the one place the wire names are bridged to the ORM spellings
-    (``bible_version_id`` -> ``version_id``, ``back_translation_id`` ->
-    ``back_translation``) and the two denormalized parent fields are attached.
+    the one place ORM attribute names are bridged to their wire spellings, and where
+    the two denormalized parent fields are attached. Two bridges are left after #925
+    gave ``back_translation_id`` the same spelling on both sides: the column
+    ``bible_version_id`` becomes ``version_id``, and the column ``date`` becomes
+    ``uploaded_date``.
 
     Booleans are coerced with ``bool(...)`` because their columns are nullable and
     legacy rows may hold NULL (mirroring v3's null-to-false coercion for ``deleted``).
 
-    ``date`` is narrowed to a date here rather than by Pydantic coercion, which *raises*
+    ``uploaded_date`` is narrowed to a date here rather than by Pydantic coercion, which *raises*
     on a datetime whose time component is not midnight — and the column is a DateTime,
     so a legacy row is not guaranteed to be. The ``isinstance`` check is what makes this
     total over both shapes the attribute can hold: a row read back from Postgres carries
@@ -82,9 +84,9 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
         id=revision.id,
         version_id=revision.bible_version_id,
         name=revision.name,
-        date=revision_date,
+        uploaded_date=revision_date,
         published=bool(revision.published),
-        back_translation=revision.back_translation_id,
+        back_translation_id=revision.back_translation_id,
         machine_translation=bool(revision.machine_translation),
         deleted=bool(revision.deleted),
         version_abbreviation=version.abbreviation if version else None,
@@ -125,7 +127,7 @@ def _version_not_visible_error(exc, version_id: int) -> V4APIError:
 def _invalid_reference_error(exc) -> V4APIError:
     """Map :class:`revision_service.InvalidReference` onto its V4APIError.
 
-    Shared by create and patch: a ``back_translation`` id that does not exist is the
+    Shared by create and patch: a ``back_translation_id`` that does not exist is the
     same client mistake on either verb, and the #828 point is that it gets a stable 4xx
     code rather than falling through to the catch-all 500.
     """
@@ -134,7 +136,7 @@ def _invalid_reference_error(exc) -> V4APIError:
         code="INVALID_REFERENCE",
         message=(
             "A referenced value does not exist. Check the FK-backed fields: "
-            "back_translation."
+            "back_translation_id."
         ),
         details={"fields": list(revision_service.InvalidReference.FIELDS)},
     )
@@ -339,7 +341,7 @@ async def update_revision(
     Replaces v3's ``PUT /revision?id=&new_name=``: the new name is a body field rather
     than a query parameter, the response is the updated resource rather than a prose
     ``{"detail": ...}`` message, and the same closed allowlist covers the other mutable
-    fields (``published``, ``back_translation``, ``machine_translation``). A
+    fields (``published``, ``back_translation_id``, ``machine_translation``). A
     non-patchable field such as ``version_id`` or ``deleted`` is a 422 from the
     ``RevisionPatch`` allowlist rather than something this handler has to strip.
     """

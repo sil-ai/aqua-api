@@ -7,7 +7,7 @@ Language codes are restricted to ``eng``/``swh`` per the test fixtures.
 What each assertion is pinning down:
 
 * the list endpoint returns the #829 ``V4Page`` envelope and is group-scoped;
-* create accepts BOTH the canonical snake_case body and the legacy camelCase
+* create accepts ONLY the canonical snake_case body — the legacy camelCase
   names, and always responds in snake_case (#830);
 * adding to a group the caller does not belong to is rejected with the mapped
   #828 error code, and no orphan version is left behind;
@@ -101,7 +101,7 @@ class TestCreate:
             db_session,
             abbreviation="V4SNAKE",
             machine_translation=True,
-            forward_translation=None,
+            forward_translation_id=None,
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -109,28 +109,109 @@ class TestCreate:
         assert body["machine_translation"] is True
         assert "machineTranslation" not in body
         assert "forwardTranslation" not in body
+        # The two translation FKs carry the ``_id`` suffix of their columns (#925),
+        # and the unsuffixed spellings are gone from the response entirely.
+        assert "forward_translation_id" in body
+        assert "back_translation_id" in body
+        assert "forward_translation" not in body
+        assert "back_translation" not in body
         assert body["owner_id"] == _user_id(db_session, "testuser1")
         assert body["group_ids"] == [_group_id(db_session, "Group1")]
 
-    def test_create_accepts_legacy_camelcase_input(
+    def test_create_rejects_withdrawn_camelcase_input(
         self, client, regular_token1, db_session
     ):
-        """Legacy v3 camelCase names still accepted on input; response snake_case."""
-        body = {
-            **BASE_VERSION,
-            "abbreviation": "V4CAMEL",
-            "machineTranslation": True,
-            "forwardTranslation": None,
-            "backTranslation": None,
-            "add_to_groups": [_group_id(db_session, "Group1")],
-        }
-        resp = client.post(
-            f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+        """#925 withdrew the camelCase aliases; the closed allowlist makes them a 422.
+
+        Withdrawing an alias and closing the allowlist are two halves of one change.
+        With the alias gone but the model still open, ``machineTranslation: True``
+        would have produced a **201** carrying ``machine_translation: False`` — the
+        request "succeeding" while quietly doing the opposite of what it asked. That
+        is worse than an error, so ``VersionCreate`` now sets ``extra="forbid"``,
+        matching ``VersionPatch`` and ``AssessmentCreate``.
+        """
+        for withdrawn in (
+            "machineTranslation",
+            "forwardTranslation",
+            "backTranslation",
+        ):
+            body = {
+                **BASE_VERSION,
+                "abbreviation": "V4CAMEL",
+                withdrawn: 1,
+                "add_to_groups": [_group_id(db_session, "Group1")],
+            }
+            resp = client.post(
+                f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+            )
+            assert resp.status_code == 422, (withdrawn, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert withdrawn in resp.text
+
+    def test_create_rejects_unknown_and_non_settable_fields(
+        self, client, regular_token1, db_session
+    ):
+        """The closed allowlist is not only about the withdrawn aliases.
+
+        A misspelled field name can no longer look like success, and the identity and
+        lifecycle fields cannot be written through a create body — the same guarantee
+        ``VersionPatch`` already gave. ``owner_id`` in particular is set from the
+        authenticated caller, never from input.
+        """
+        for extra in (
+            {"abbrevation": "typo"},
+            {"owner_id": 1},
+            {"deleted": True},
+            {"id": 1},
+        ):
+            body = {
+                **BASE_VERSION,
+                "abbreviation": "V4CLOSED",
+                **extra,
+                "add_to_groups": [_group_id(db_session, "Group1")],
+            }
+            resp = client.post(
+                f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+            )
+            assert resp.status_code == 422, (extra, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # The canonical body still creates, so the allowlist is closed and not broken.
+        assert (
+            _create(
+                client, regular_token1, db_session, abbreviation="V4CLOSEDOK"
+            ).status_code
+            == 201
+        )
+
+    def test_create_accepts_the_suffixed_translation_ids(
+        self, client, regular_token1, db_session
+    ):
+        """The canonical spellings are what actually write (#925).
+
+        The mirror of the test above: the same two values that were silently dropped
+        when sent as camelCase are stored and echoed when sent as
+        ``forward_translation_id`` / ``back_translation_id``. ``forward_translation_id``
+        can be an arbitrary integer because that column carries no FK constraint — see
+        ``FORWARD_TRANSLATION_DESCRIPTION``.
+        """
+        other = _create(
+            client, regular_token1, db_session, abbreviation="V4FKTGT"
+        ).json()["id"]
+        resp = _create(
+            client,
+            regular_token1,
+            db_session,
+            abbreviation="V4SUFFIX",
+            machine_translation=True,
+            forward_translation_id=12345,
+            back_translation_id=other,
         )
         assert resp.status_code == 201, resp.text
         out = resp.json()
         assert out["machine_translation"] is True
-        assert "machineTranslation" not in out
+        assert out["forward_translation_id"] == 12345
+        assert out["back_translation_id"] == other
 
     def test_create_into_non_member_group_forbidden_no_orphan(
         self, client, regular_token1, db_session
@@ -225,21 +306,29 @@ class TestCreate:
             assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
             assert field in resp.text
 
-    def test_create_nonexistent_back_translation_is_400_invalid_reference(
+    def test_create_nonexistent_back_translation_id_is_400_invalid_reference(
         self, client, regular_token1, db_session
     ):
-        """A non-existent back_translation FK id becomes a stable 400, not a 500."""
+        """A non-existent back_translation_id becomes a stable 400, not a 500."""
         body = {
             **BASE_VERSION,
             "abbreviation": "V4BADBT",
-            "back_translation": 9999999,  # no such bible_version.id
+            "back_translation_id": 9999999,  # no such bible_version.id
             "add_to_groups": [_group_id(db_session, "Group1")],
         }
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
         )
         assert resp.status_code == 400, resp.text
-        assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
+        err = resp.json()["error"]
+        assert err["code"] == "INVALID_REFERENCE"
+        # details.fields is a hint the client acts on, so it must name the field as
+        # the client spells it on the wire, suffix included (#925).
+        assert err["details"]["fields"] == [
+            "iso_language",
+            "iso_script",
+            "back_translation_id",
+        ]
 
 
 class TestListAndGet:
@@ -565,15 +654,31 @@ class TestPatch:
         # A real field change moves the delta-sync watermark.
         assert body["updated_at"] > created["updated_at"]
 
-    def test_patch_accepts_legacy_camelcase_input(
+    def test_patch_rejects_withdrawn_camelcase_input(
         self, client, regular_token1, db_session
     ):
-        """Same input-alias policy as create: legacy names in, snake_case out."""
+        """On PATCH the withdrawn aliases are a hard 422, not a silent drop (#925).
+
+        ``VersionPatch`` closes its allowlist (``extra="forbid"``), so an unrecognized
+        key is rejected outright — the create path cannot do this, which is why the
+        two tests assert different things about the same request body.
+        """
         version_id = _create(
             client, regular_token1, db_session, abbreviation="V4PCAMEL"
         ).json()["id"]
 
-        resp = _patch(client, regular_token1, version_id, {"machineTranslation": True})
+        for withdrawn in (
+            {"machineTranslation": True},
+            {"forwardTranslation": 1},
+            {"backTranslation": 1},
+        ):
+            resp = _patch(client, regular_token1, version_id, withdrawn)
+            assert resp.status_code == 422, (withdrawn, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # The canonical spellings still work, so this is a naming change and not a
+        # loss of function.
+        resp = _patch(client, regular_token1, version_id, {"machine_translation": True})
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["machine_translation"] is True
