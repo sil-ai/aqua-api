@@ -8,6 +8,29 @@ import os
 # run before `from app import app` regardless of pytest collection order.
 os.environ["AQUA_DB_POOLCLASS"] = "null"
 
+# security_routes.utilities now raises at import time when SECRET_KEY is
+# missing (issue #716). Provide a dummy value for local/ad-hoc test runs so
+# collection works; CI and real deployments set their own real SECRET_KEY.
+# setdefault so we never override a real value the environment provides.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+
+# config.Settings (imported transitively via `from app import app` below)
+# requires AQUA_DB at construction, which runs at collection time — before any
+# test fixture. Provide the standard local test DB so a bare environment (fresh
+# clone, no .env, AQUA_DB unset) can still collect; setdefault means a real
+# AQUA_DB already exported by the shell/CI (e.g. `make test`) always wins.
+os.environ.setdefault(
+    "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+)
+
+# Relax auth rate limits for the test suite. Tests share a single client IP
+# (127.0.0.1) across many fixtures and modules, so the production 5/minute
+# default would trip across normal happy-path token fetches. The dedicated
+# rate-limiting tests override the limiter directly with tighter limits.
+os.environ.setdefault("AUTH_TOKEN_RATE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_USERS_RATE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "10000/minute")
+
 from datetime import date  # noqa: E402
 
 import bcrypt  # noqa: E402
@@ -35,15 +58,20 @@ from database.models import (  # noqa: E402
     VerseReference,
 )
 
-engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
+# Fixture engines must point at the same database as the app under test, so
+# derive them from AQUA_DB (defaulted above) instead of hardcoding the URL —
+# otherwise running against a non-default port/db seeds users into the wrong
+# database and every authenticated request 401s.
+AQUA_DB_URL = os.environ["AQUA_DB"]
+SYNC_AQUA_DB_URL = AQUA_DB_URL.replace("+asyncpg", "")
+
+engine = create_engine(SYNC_AQUA_DB_URL)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 @pytest.fixture(scope="module")
 async def async_test_db_session_2():
-    async_engine = create_async_engine(
-        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-    )
+    async_engine = create_async_engine(AQUA_DB_URL)
 
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
@@ -68,9 +96,7 @@ async def async_test_db_session_2():
 # Asynchronous session fixture
 @pytest.fixture(scope="module")
 async def async_test_db_session():
-    async_engine = create_async_engine(
-        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-    )
+    async_engine = create_async_engine(AQUA_DB_URL)
 
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession

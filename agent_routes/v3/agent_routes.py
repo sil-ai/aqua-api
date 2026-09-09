@@ -4,6 +4,8 @@ import datetime
 import socket
 import time
 import unicodedata
+from collections import Counter
+from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -22,8 +24,16 @@ from database.models import (
     AgentWordAlignment,
     BibleRevision,
     BibleVersion,
+    BibleVersionAccess,
+    CardTranslation,
+    CardTranslationExample,
+    LanguagePivot,
+    PivotCandidate,
 )
 from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 from models import (
     AgentTranslationBulkRequest,
     AgentTranslationOut,
@@ -31,6 +41,9 @@ from models import (
     AgentWordAlignmentBulkRequest,
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
+    BulkLexemeCardDeleteResponse,
+    CardTranslationIn,
+    CardTranslationOut,
     CritiqueIssueOut,
     CritiqueIssueResolutionRequest,
     CritiqueStorageRequest,
@@ -41,8 +54,8 @@ from models import (
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import (
-    get_authorized_revision_ids,
     is_user_authorized_for_assessment,
+    is_user_authorized_for_bible_version,
 )
 from utils.logging_config import setup_logger
 
@@ -52,7 +65,35 @@ logger = setup_logger(__name__, container_id=container_id)
 router = fastapi.APIRouter()
 
 
-def sanitize_text(text: str) -> str:
+def _effective_source_version_expr(source_version_id: int, target_version_id: int):
+    """SQL expression: pivot bible_version_id for the target's iso, else source_version_id.
+
+    Joins language_pivot -> pivot_candidate -> bible_revision (excluding
+    soft-deleted revisions so a withdrawn pivot can't silently route). Folded
+    into the caller's query so the hot path makes no extra round-trip.
+    """
+    from sqlalchemy import func, select
+
+    target_iso_subquery = (
+        select(BibleVersion.iso_language)
+        .where(BibleVersion.id == target_version_id)
+        .scalar_subquery()
+    )
+    pivot_version_subquery = (
+        select(BibleRevision.bible_version_id)
+        .select_from(LanguagePivot)
+        .join(PivotCandidate, PivotCandidate.pivot_iso == LanguagePivot.pivot_iso)
+        .join(BibleRevision, BibleRevision.id == PivotCandidate.pivot_revision_id)
+        .where(
+            LanguagePivot.target_iso == target_iso_subquery,
+            BibleRevision.deleted.isnot(True),
+        )
+        .scalar_subquery()
+    )
+    return func.coalesce(pivot_version_subquery, source_version_id)
+
+
+def sanitize_text(text: Optional[str]) -> Optional[str]:
     """Sanitize text fields to remove control characters.
 
     LLM responses can contain literal newlines, tabs, or other control characters.
@@ -69,6 +110,20 @@ def sanitize_text(text: str) -> str:
     # Collapse multiple spaces into one
     text = re.sub(r" +", " ", text)
     return text.strip()
+
+
+def sanitize_suggestion_items(items):
+    """Sanitize a list of SuggestionItem (suggestions/alternatives) into JSONB-ready dicts.
+
+    An empty or absent list is normalized to None so "none provided" and
+    "explicitly empty" persist identically (NULL).
+    """
+    if not items:
+        return None
+    return [
+        {"text": sanitize_text(item.text), "note": sanitize_text(item.note)}
+        for item in items
+    ]
 
 
 @router.post("/agent/word-alignment", response_model=AgentWordAlignmentOut)
@@ -338,13 +393,12 @@ async def add_critique_issues(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Store critique issues (omissions, additions, and replacements) linked to a specific agent translation.
+    Store MQM-aligned critique issues linked to a specific agent translation.
 
     Input:
     - agent_translation_id: int - The ID of the translation being critiqued
-    - omissions: list[OmissionIssueIn] - source_text present in source but missing from draft
-    - additions: list[AdditionIssueIn] - draft_text present in draft but not in source
-    - replacements: list[ReplacementIssueIn] - source_text incorrectly rendered as draft_text
+    - issues: list[IssueIn] - MQM-aligned issues (dimension, subtype, optional
+      source_text/draft_text/comments/severity/detector/evidence)
 
     Returns:
     - List[CritiqueIssueOut]: List of all created critique issue entries
@@ -394,25 +448,13 @@ async def add_critique_issues(
 
         created_issues = []
 
-        # Create records for omissions
-        for omission in critique.omissions:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="omission",
-                source_text=sanitize_text(omission.source_text),
-                comments=sanitize_text(omission.comments),
-                severity=omission.severity,
+        for issue_in in critique.issues:
+            evidence = (
+                [sanitize_text(item) for item in issue_in.evidence]
+                if issue_in.evidence is not None
+                else None
             )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for additions
-        for addition in critique.additions:
+            suggestions = sanitize_suggestion_items(issue_in.suggestions)
             issue = AgentCritiqueIssue(
                 assessment_id=assessment_id,
                 agent_translation_id=critique.agent_translation_id,
@@ -420,28 +462,15 @@ async def add_critique_issues(
                 book=book,
                 chapter=chapter,
                 verse=verse,
-                issue_type="addition",
-                draft_text=sanitize_text(addition.draft_text),
-                comments=sanitize_text(addition.comments),
-                severity=addition.severity,
-            )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for replacements
-        for replacement in critique.replacements:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="replacement",
-                source_text=sanitize_text(replacement.source_text),
-                draft_text=sanitize_text(replacement.draft_text),
-                comments=sanitize_text(replacement.comments),
-                severity=replacement.severity,
+                dimension=sanitize_text(issue_in.dimension),
+                subtype=sanitize_text(issue_in.subtype),
+                detector=sanitize_text(issue_in.detector),
+                source_text=sanitize_text(issue_in.source_text),
+                draft_text=sanitize_text(issue_in.draft_text),
+                comments=sanitize_text(issue_in.comments),
+                severity=issue_in.severity,
+                evidence=evidence,
+                suggestions=suggestions,
             )
             db.add(issue)
             created_issues.append(issue)
@@ -487,9 +516,14 @@ async def add_lexeme_card(
     """
     Add a new lexeme card entry or update an existing one.
 
-    Uniqueness is enforced on (target_lemma, source_version_id, target_version_id).
-    If a card with the same target_lemma and language pair already exists,
-    it will be updated instead of creating a duplicate.
+    Uniqueness is enforced at the DB level on (LOWER(target_lemma),
+    source_language_iso, target_version_id) — i.e. one canonical card per
+    (lemma, source language, target version), regardless of which specific
+    source_version_id the card was written via. The Python pre-check below
+    keys on source_version_id so callers that re-POST the same exact pair
+    upsert, but cross-source-version collisions inside the same source
+    language fall through to the IntegrityError handler and return 409
+    with the conflicting card's id so callers can PATCH by id.
 
     Input:
     - card: LexemeCardIn - The lexeme card data
@@ -608,8 +642,16 @@ async def add_lexeme_card(
         existing_card = result.scalar_one_or_none()
 
         if existing_card:
-            # If source_lemma differs, reject with 409 and tell them to use PATCH
-            if existing_card.source_lemma != card.source_lemma:
+            # Legacy rows may predate the source_lemma backfill.
+            existing_source_lc = (
+                existing_card.source_lemma.lower()
+                if existing_card.source_lemma is not None
+                else None
+            )
+            incoming_source_lc = (
+                card.source_lemma.lower() if card.source_lemma is not None else None
+            )
+            if existing_source_lc != incoming_source_lc:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -618,14 +660,18 @@ async def add_lexeme_card(
                         f"Use PATCH to update the existing card.",
                         "existing_card_id": existing_card.id,
                         "existing_source_lemma": existing_card.source_lemma,
+                        "existing_source_version_id": existing_card.source_version_id,
                     },
                 )
-            # Otherwise, update the existing card (same source_lemma)
+            # Migrate any pre-backfill mixed-case value to the validator-normalized form.
+            existing_card.source_lemma = card.source_lemma
             # Update existing card
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
+            existing_card.build_version = card.build_version
+            existing_card.model = card.model
             existing_card.last_updated = func.now()
             if is_user_edit:
                 existing_card.last_user_edit = func.now()
@@ -738,7 +784,7 @@ async def add_lexeme_card(
                 examples_result = await db.execute(examples_query)
                 examples_objs = examples_result.scalars().all()
                 examples_list = [
-                    {"source": ex.source_text, "target": ex.target_text}
+                    {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
                     for ex in examples_objs
                 ]
 
@@ -757,6 +803,8 @@ async def add_lexeme_card(
                 "confidence": existing_card.confidence,
                 "english_lemma": existing_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
+                "build_version": existing_card.build_version,
+                "model": existing_card.model,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
                 "last_user_edit": existing_card.last_user_edit,
@@ -786,6 +834,8 @@ async def add_lexeme_card(
                 confidence=card.confidence,
                 english_lemma=card.english_lemma,
                 alignment_scores=sorted_alignment_scores,
+                build_version=card.build_version,
+                model=card.model,
                 last_user_edit=func.now() if is_user_edit else None,
             )
 
@@ -829,7 +879,7 @@ async def add_lexeme_card(
                 examples_result = await db.execute(examples_query)
                 examples_objs = examples_result.scalars().all()
                 examples_list = [
-                    {"source": ex.source_text, "target": ex.target_text}
+                    {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
                     for ex in examples_objs
                 ]
 
@@ -848,6 +898,8 @@ async def add_lexeme_card(
                 "confidence": lexeme_card.confidence,
                 "english_lemma": lexeme_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
+                "build_version": lexeme_card.build_version,
+                "model": lexeme_card.model,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
                 "last_user_edit": lexeme_card.last_user_edit,
@@ -867,13 +919,40 @@ async def add_lexeme_card(
     except IntegrityError as e:
         await db.rollback()
         if "ix_agent_lexeme_cards_unique" in str(e.orig):
+            # The DB unique index is on (LOWER(target_lemma), source_language_iso,
+            # target_version_id). The Python pre-check above keys on
+            # source_version_id, so a conflict here means an existing card has
+            # the same source language but a different source_version_id (e.g. a
+            # different reference version was the pivot at write time). Look up
+            # the conflicting card via the actual unique key so callers can PATCH
+            # by id; PATCH-by-lemma would 404 because it uses source_version_id.
+            # `select` and `func` are already imported at the top of the `try`.
+            existing_card = await db.scalar(
+                select(AgentLexemeCard).where(
+                    func.lower(AgentLexemeCard.target_lemma)
+                    == card.target_lemma.lower(),
+                    AgentLexemeCard.source_language_iso
+                    == (
+                        select(BibleVersion.iso_language)
+                        .where(BibleVersion.id == card.source_version_id)
+                        .scalar_subquery()
+                    ),
+                    AgentLexemeCard.target_version_id == card.target_version_id,
+                )
+            )
+            detail = {
+                "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
+                f"already exists for this language pair. "
+                f"Use PATCH /v3/agent/lexeme-card/{{card_id}} with the "
+                f"returned existing_card_id to update.",
+            }
+            if existing_card is not None:
+                detail["existing_card_id"] = existing_card.id
+                detail["existing_source_lemma"] = existing_card.source_lemma
+                detail["existing_source_version_id"] = existing_card.source_version_id
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
-                    f"already exists for this language pair. "
-                    f"Use PATCH to update the existing card.",
-                },
+                detail=detail,
             ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -908,7 +987,7 @@ async def _apply_lexeme_card_patch(
     card: AgentLexemeCard,
     patch_data: LexemeCardPatch,
     list_mode: ListMode,
-    authorized_revision_ids: set[int],
+    current_user: UserModel,
     db: AsyncSession,
     is_user_edit: bool = False,
 ) -> LexemeCardOut:
@@ -918,6 +997,17 @@ async def _apply_lexeme_card_patch(
     from sqlalchemy.sql import func
 
     provided_fields = patch_data.model_fields_set
+
+    # target_lemma is NOT NULL; reject explicit null with 400 rather than
+    # letting the DB raise an opaque 500 IntegrityError downstream.
+    if "target_lemma" in provided_fields and patch_data.target_lemma is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "target_lemma cannot be null. To leave it unchanged, omit "
+                "the field from the patch body."
+            ),
+        )
 
     # Check if changing target_lemma would create a duplicate
     # Uniqueness is enforced on (LOWER(target_lemma), source_version_id, target_version_id)
@@ -943,9 +1033,16 @@ async def _apply_lexeme_card_patch(
                 },
             )
 
-    # Scalar fields - update if provided
+    # Scalar fields - update if provided. source_lemma is lowercased here
+    # (the Pydantic validator only NFC-normalizes) to honor the canonical
+    # source_lemma case-insensitive index; the overlay write path elsewhere
+    # preserves casing instead.
     if "source_lemma" in provided_fields:
-        card.source_lemma = patch_data.source_lemma
+        card.source_lemma = (
+            patch_data.source_lemma.lower()
+            if patch_data.source_lemma is not None
+            else None
+        )
     if "target_lemma" in provided_fields:
         card.target_lemma = patch_data.target_lemma
     if "pos" in provided_fields:
@@ -954,6 +1051,10 @@ async def _apply_lexeme_card_patch(
         card.confidence = patch_data.confidence
     if "english_lemma" in provided_fields:
         card.english_lemma = patch_data.english_lemma
+    if "build_version" in provided_fields:
+        card.build_version = patch_data.build_version
+    if "model" in provided_fields:
+        card.model = patch_data.model
 
     # Handle alignment_scores (dict) - merge keys, null value removes key
     if "alignment_scores" in provided_fields:
@@ -1053,30 +1154,52 @@ async def _apply_lexeme_card_patch(
                 .on_conflict_do_nothing()
             )
 
-    # Update last_updated timestamp
-    card.last_updated = func.now()
+    # Set timestamps client-side so we don't need a post-commit refresh
+    # round-trip. The TIMESTAMP columns are naive UTC; the DB runs on UTC.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    card.last_updated = now
     if is_user_edit:
-        card.last_user_edit = func.now()
+        card.last_user_edit = now
 
     await db.commit()
-    await db.refresh(card)
 
-    # Query examples for authorized revisions
-    examples_list = []
-    if authorized_revision_ids:
-        examples_query = (
-            select(AgentLexemeCardExample)
-            .where(
-                AgentLexemeCardExample.lexeme_card_id == card.id,
-                AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
+    # Query examples filtered to revisions the user is authorized to see.
+    # Authorization is pushed into SQL as a subquery rather than being
+    # materialised into a Python set and bound as a giant IN-list — that
+    # was the cause of the multi-second latency on this endpoint for users
+    # with access to many revisions. For admins, no filter is needed.
+    examples_query = (
+        select(AgentLexemeCardExample)
+        .where(AgentLexemeCardExample.lexeme_card_id == card.id)
+        .order_by(AgentLexemeCardExample.id)
+    )
+    if not current_user.is_admin:
+        # Scope to the card's version pair, matching the GET handler. Examples
+        # are always created with a revision in the card's language pair, so
+        # this is a no-op for valid data; it shrinks the subquery result set
+        # for users with access to many other versions.
+        authorized_revisions_subq = (
+            select(BibleRevision.id)
+            .distinct()
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .join(
+                BibleVersionAccess,
+                BibleVersionAccess.bible_version_id == BibleVersion.id,
             )
-            .order_by(AgentLexemeCardExample.id)
+            .join(UserGroup, UserGroup.group_id == BibleVersionAccess.group_id)
+            .where(
+                UserGroup.user_id == current_user.id,
+                BibleVersion.id.in_([card.source_version_id, card.target_version_id]),
+            )
         )
-        examples_result = await db.execute(examples_query)
-        examples_objs = examples_result.scalars().all()
-        examples_list = [
-            {"source": ex.source_text, "target": ex.target_text} for ex in examples_objs
-        ]
+        examples_query = examples_query.where(
+            AgentLexemeCardExample.revision_id.in_(authorized_revisions_subq),
+        )
+    examples_result = await db.execute(examples_query)
+    examples_list = [
+        {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
+        for ex in examples_result.scalars().all()
+    ]
 
     # Build response
     card_dict = {
@@ -1093,11 +1216,540 @@ async def _apply_lexeme_card_patch(
         "confidence": card.confidence,
         "english_lemma": card.english_lemma,
         "alignment_scores": card.alignment_scores,
+        "build_version": card.build_version,
+        "model": card.model,
         "created_at": card.created_at,
         "last_updated": card.last_updated,
         "last_user_edit": card.last_user_edit,
     }
     return LexemeCardOut.model_validate(card_dict)
+
+
+# Fields in LexemeCardPatch routed to the canonical agent_lexeme_cards row
+# in overlay-mode patching. Includes target-side and shared-metadata fields
+# that have no per-language overlay column.
+_CANONICAL_PATCH_FIELDS = {
+    "target_lemma",
+    "surface_forms",
+    "pos",
+    "confidence",
+    "english_lemma",
+    "alignment_scores",
+    "build_version",
+    "model",
+}
+# Fields routed to the card_translations overlay row for (card_id, language_iso)
+# in overlay-mode patching. Source-side identity and senses.
+_OVERLAY_PATCH_FIELDS = {
+    "source_lemma",
+    "source_surface_forms",
+    "senses",
+}
+
+
+# NOTE: this literal-path route MUST be declared before
+# @router.patch("/agent/lexeme-card/{card_id}") below — FastAPI matches routes
+# in declaration order, and "translation" would otherwise be captured as a
+# card_id and fail Pydantic int validation.
+@router.patch("/agent/lexeme-card/translation", response_model=LexemeCardOut)
+async def patch_lexeme_card_translation(
+    patch_data: LexemeCardPatch,
+    target_lemma: str,
+    target_version_id: int,
+    language_iso: str = Query(min_length=3, max_length=3),
+    source_version_id: int | None = None,
+    list_mode: ListMode = ListMode.append,
+    is_user_edit: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Patch a lexeme card in the (target_version_id, language_iso) view.
+
+    This is the UI's PATCH primitive. The UI thinks in terms of "I am editing
+    the card I'm looking at in language X" — without any awareness of pivot
+    routing or canonical-vs-overlay storage. The endpoint splits the body
+    internally:
+
+    - Source-side fields (source_lemma, source_surface_forms, senses) land in
+      the ``card_translations`` overlay row for ``(card_id, language_iso)``,
+      upserted on conflict. The canonical's source-side stays untouched, so
+      edits in (target, eng) view can't corrupt the (target, swh) pivot.
+    - Target-side and shared fields (target_lemma, surface_forms, pos,
+      confidence, english_lemma, alignment_scores, build_version, model) land
+      in the canonical ``agent_lexeme_cards`` row. There is only one target
+      column physically, so all overlays project the same target text — fixing
+      a typo from any language view fixes it everywhere.
+    - When ``language_iso`` equals the card's canonical ``source_language_iso``
+      (no pivot routing in play, or pivot resolves back to the requested
+      lang), everything goes to the canonical row — there is no overlay to
+      write to.
+
+    Lookup is pivot-routed via ``_effective_source_version_expr``: pass
+    ``source_version_id`` (typically the UI's reference version) only when
+    multiple canonicals share the same ``(target_lemma, target_version_id)``
+    and disambiguation is required.
+
+    ``is_user_edit=true`` bumps ``last_user_edit`` on every row this patch
+    actually writes to: the canonical row when target-side/shared fields
+    are in the body, the overlay row when source-side fields are in the
+    body. A source-only edit does NOT bump the canonical's
+    ``last_user_edit`` — the user didn't approve the target state, they
+    just changed the source view. The response's top-level
+    ``last_user_edit`` is the max of the two so the UI can render
+    "edited recently" without having to inspect both timestamps.
+
+    ``examples`` are not yet supported in the overlay branch (when
+    ``language_iso != canonical iso``); pass the full overlay including
+    example translations via ``POST /v3/agent/lexeme-card/{card_id}/translation``
+    instead. They are supported in the canonical-match branch via the
+    existing canonical patch path.
+
+    Returns the resulting card shaped as if ``GET /v3/agent/lexeme-card``
+    had just been called with the same ``language_iso``, so the UI can
+    rebind its form state directly from the response.
+    """
+    request_start = time.perf_counter()
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.sql import func as sql_func
+
+        language_iso_lower = language_iso.lower()
+        target_lemma_lower = unicodedata.normalize("NFC", target_lemma).lower()
+
+        conditions = [
+            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma_lower,
+            AgentLexemeCard.target_version_id == target_version_id,
+        ]
+        if source_version_id is not None:
+            conditions.append(
+                AgentLexemeCard.source_version_id
+                == _effective_source_version_expr(source_version_id, target_version_id)
+            )
+        cards = (
+            (await db.execute(select(AgentLexemeCard).where(*conditions)))
+            .scalars()
+            .all()
+        )
+
+        if not cards:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Lexeme card not found for target_lemma={target_lemma}, "
+                    f"target_version_id={target_version_id}, "
+                    f"language_iso={language_iso_lower}"
+                    + (
+                        f", source_version_id={source_version_id}"
+                        if source_version_id is not None
+                        else ""
+                    )
+                ),
+            )
+        if len(cards) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Multiple lexeme cards ({len(cards)}) matched "
+                    f"(target_lemma={target_lemma}, target_version_id={target_version_id}). "
+                    "Provide source_version_id to disambiguate."
+                ),
+            )
+        card = cards[0]
+
+        provided_fields = patch_data.model_fields_set
+        canonical_match = language_iso_lower == card.source_language_iso
+
+        if canonical_match:
+            # Degenerate case: the requested lang IS the canonical lang. There
+            # is no overlay table for it; everything goes to the canonical
+            # row exactly like PATCH by id.
+            result_card = await _apply_lexeme_card_patch(
+                card, patch_data, list_mode, current_user, db, is_user_edit
+            )
+            duration = round(time.perf_counter() - request_start, 2)
+            logger.info(
+                f"patch_lexeme_card_translation completed in {duration}s",
+                extra={
+                    "method": "PATCH",
+                    "path": "/agent/lexeme-card/translation",
+                    "card_id": card.id,
+                    "language_iso": language_iso_lower,
+                    "canonical_match": True,
+                    "overlay_written": False,
+                    "canonical_written": True,
+                    "duration_s": duration,
+                },
+            )
+            return result_card
+
+        # Overlay mode: split the patch between the canonical row and the
+        # (card_id, language_iso) overlay row.
+        if "examples" in provided_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": (
+                        "examples patching is not supported when language_iso "
+                        "differs from the card's canonical source_language_iso "
+                        f"(canonical={card.source_language_iso!r}). Use "
+                        f"POST /v3/agent/lexeme-card/{card.id}/translation to "
+                        "rewrite the full overlay including example translations."
+                    ),
+                    "card_id": card.id,
+                    "overlay_post_url": (
+                        f"/v3/agent/lexeme-card/{card.id}/translation"
+                    ),
+                },
+            )
+
+        canonical_fields = provided_fields & _CANONICAL_PATCH_FIELDS
+        overlay_fields = provided_fields & _OVERLAY_PATCH_FIELDS
+        unknown_fields = (
+            provided_fields - canonical_fields - overlay_fields - {"examples"}
+        )
+        if unknown_fields:
+            # Defensive: a future patch model addition would route to neither
+            # destination. Fail loudly rather than silently dropping the edit.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Unsupported patch fields for overlay mode: "
+                    f"{sorted(unknown_fields)}"
+                ),
+            )
+
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        canonical_touched = False
+        overlay_touched = False
+
+        # --- Canonical-side patches ---------------------------------------
+        if "target_lemma" in canonical_fields:
+            # patch_data.target_lemma was NFC-lowercased by the validator on
+            # the way in, and the stored canonical column was likewise
+            # lowercased at write time. Compare directly.
+            new_target = patch_data.target_lemma
+            if new_target is None:
+                # Column is NOT NULL; reject explicit null with 400 rather
+                # than letting the DB raise an opaque 500 IntegrityError.
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "target_lemma cannot be null. To leave it unchanged, "
+                        "omit the field from the patch body."
+                    ),
+                )
+            if new_target != card.target_lemma:
+                # Uniqueness is enforced on (LOWER(target_lemma),
+                # source_version_id, target_version_id). Check before write
+                # to give a 409 instead of a 500 from the constraint.
+                dup = await db.scalar(
+                    select(AgentLexemeCard).where(
+                        sql_func.lower(AgentLexemeCard.target_lemma) == new_target,
+                        AgentLexemeCard.source_version_id == card.source_version_id,
+                        AgentLexemeCard.target_version_id == card.target_version_id,
+                        AgentLexemeCard.id != card.id,
+                    )
+                )
+                if dup is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "message": (
+                                f"Cannot change target_lemma to {new_target!r} — "
+                                "another card with this target_lemma already "
+                                "exists for this language pair."
+                            ),
+                            "existing_card_id": dup.id,
+                        },
+                    )
+            card.target_lemma = new_target
+            canonical_touched = True
+        if "pos" in canonical_fields:
+            card.pos = patch_data.pos
+            canonical_touched = True
+        if "confidence" in canonical_fields:
+            card.confidence = patch_data.confidence
+            canonical_touched = True
+        if "english_lemma" in canonical_fields:
+            card.english_lemma = patch_data.english_lemma
+            canonical_touched = True
+        if "build_version" in canonical_fields:
+            card.build_version = patch_data.build_version
+            canonical_touched = True
+        if "model" in canonical_fields:
+            card.model = patch_data.model
+            canonical_touched = True
+        if "alignment_scores" in canonical_fields:
+            if patch_data.alignment_scores is None:
+                card.alignment_scores = None
+            else:
+                existing_scores = (
+                    dict(card.alignment_scores) if card.alignment_scores else {}
+                )
+                for key, value in patch_data.alignment_scores.items():
+                    if value is None:
+                        existing_scores.pop(key, None)
+                    else:
+                        existing_scores[key] = value
+                if existing_scores:
+                    card.alignment_scores = dict(
+                        sorted(
+                            existing_scores.items(),
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )
+                    )
+                else:
+                    card.alignment_scores = None
+            canonical_touched = True
+        if "surface_forms" in canonical_fields:
+            if list_mode == ListMode.replace:
+                card.surface_forms = patch_data.surface_forms
+            elif list_mode == ListMode.merge:
+                card.surface_forms = _merge_lists_case_insensitive(
+                    card.surface_forms, patch_data.surface_forms
+                )
+            else:  # append
+                card.surface_forms = (card.surface_forms or []) + (
+                    patch_data.surface_forms or []
+                )
+            canonical_touched = True
+
+        if canonical_touched:
+            card.last_updated = now
+            if is_user_edit:
+                card.last_user_edit = now
+
+        # --- Overlay-side patches -----------------------------------------
+        # Build the overlay column values from the existing row (if any) so
+        # list-mode append/merge can see what's already stored. The upsert
+        # below writes back the full overlay row; conflict triggers DO UPDATE.
+        if overlay_fields:
+            existing_overlay = await db.scalar(
+                select(CardTranslation).where(
+                    CardTranslation.card_id == card.id,
+                    CardTranslation.language_iso == language_iso_lower,
+                )
+            )
+            new_source_lemma = (
+                patch_data.source_lemma
+                if "source_lemma" in overlay_fields
+                else (existing_overlay.source_lemma if existing_overlay else None)
+            )
+            if "source_surface_forms" in overlay_fields:
+                existing_ssf = (
+                    existing_overlay.source_surface_forms if existing_overlay else None
+                )
+                if list_mode == ListMode.replace:
+                    new_source_surface_forms = patch_data.source_surface_forms
+                elif list_mode == ListMode.merge:
+                    new_source_surface_forms = _merge_lists_case_insensitive(
+                        existing_ssf, patch_data.source_surface_forms
+                    )
+                else:  # append
+                    new_source_surface_forms = (existing_ssf or []) + (
+                        patch_data.source_surface_forms or []
+                    )
+            else:
+                new_source_surface_forms = (
+                    existing_overlay.source_surface_forms if existing_overlay else None
+                )
+            if "senses" in overlay_fields:
+                existing_senses = existing_overlay.senses if existing_overlay else None
+                if list_mode == ListMode.replace:
+                    new_senses = patch_data.senses
+                else:  # append/merge (dicts don't dedupe meaningfully)
+                    new_senses = (existing_senses or []) + (patch_data.senses or [])
+            else:
+                new_senses = existing_overlay.senses if existing_overlay else None
+
+            upsert_stmt = (
+                pg_insert(CardTranslation)
+                .values(
+                    card_id=card.id,
+                    language_iso=language_iso_lower,
+                    source_lemma=new_source_lemma,
+                    source_surface_forms=new_source_surface_forms,
+                    senses=new_senses,
+                    last_updated=now,
+                    last_user_edit=now if is_user_edit else None,
+                )
+                .on_conflict_do_update(
+                    index_elements=["card_id", "language_iso"],
+                    set_={
+                        "source_lemma": new_source_lemma,
+                        "source_surface_forms": new_source_surface_forms,
+                        "senses": new_senses,
+                        "last_updated": now,
+                        **({"last_user_edit": now} if is_user_edit else {}),
+                    },
+                )
+            )
+            await db.execute(upsert_stmt)
+            overlay_touched = True
+
+        await db.commit()
+        await db.refresh(card)
+
+        result_card = await _build_lexeme_card_out_for_lang(
+            card, language_iso_lower, current_user, db
+        )
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"patch_lexeme_card_translation completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/lexeme-card/translation",
+                "card_id": card.id,
+                "language_iso": language_iso_lower,
+                "canonical_match": False,
+                "overlay_written": overlay_touched,
+                "canonical_written": canonical_touched,
+                "duration_s": duration,
+            },
+        )
+        return result_card
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error in patch_lexeme_card_translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+async def _build_lexeme_card_out_for_lang(
+    card: AgentLexemeCard,
+    language_iso: str,
+    current_user: UserModel,
+    db: AsyncSession,
+) -> LexemeCardOut:
+    """Build LexemeCardOut for ``card`` in the requested ``language_iso`` view.
+
+    Mirrors the GET /agent/lexeme-card response shape: if ``language_iso``
+    matches the canonical, returns canonical fields verbatim; otherwise
+    merges the matching card_translations overlay and sets
+    ``has_translation_overlay`` accordingly. Examples are filtered to
+    revisions the current user has access to.
+    """
+    from sqlalchemy import select
+
+    requires_merge = language_iso != card.source_language_iso
+    overlay = None
+    overlay_examples: dict[int, str] = {}
+    if requires_merge:
+        overlay = await db.scalar(
+            select(CardTranslation).where(
+                CardTranslation.card_id == card.id,
+                CardTranslation.language_iso == language_iso,
+            )
+        )
+        if overlay is not None:
+            te_rows = (
+                await db.execute(
+                    select(
+                        CardTranslationExample.example_id,
+                        CardTranslationExample.source_text,
+                    ).where(CardTranslationExample.card_translation_id == overlay.id)
+                )
+            ).all()
+            overlay_examples = {row.example_id: row.source_text for row in te_rows}
+
+    examples_query = (
+        select(AgentLexemeCardExample)
+        .where(AgentLexemeCardExample.lexeme_card_id == card.id)
+        .order_by(AgentLexemeCardExample.id)
+    )
+    if not current_user.is_admin:
+        authorized_revisions_subq = (
+            select(BibleRevision.id)
+            .distinct()
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .join(
+                BibleVersionAccess,
+                BibleVersionAccess.bible_version_id == BibleVersion.id,
+            )
+            .join(UserGroup, UserGroup.group_id == BibleVersionAccess.group_id)
+            .where(
+                UserGroup.user_id == current_user.id,
+                BibleVersion.id.in_([card.source_version_id, card.target_version_id]),
+            )
+        )
+        examples_query = examples_query.where(
+            AgentLexemeCardExample.revision_id.in_(authorized_revisions_subq)
+        )
+    example_rows = (await db.execute(examples_query)).scalars().all()
+
+    if requires_merge and overlay is None:
+        # Same shape the bulk GET returns for missing overlays: null out
+        # source-side fields and example source text.
+        examples_out = [
+            {"id": ex.id, "source": None, "target": ex.target_text}
+            for ex in example_rows
+        ]
+        source_lemma = None
+        source_surface_forms = None
+        senses = None
+    elif requires_merge:
+        examples_out = [
+            {
+                "id": ex.id,
+                "source": overlay_examples.get(ex.id, ex.source_text),
+                "target": ex.target_text,
+            }
+            for ex in example_rows
+        ]
+        source_lemma = overlay.source_lemma
+        source_surface_forms = overlay.source_surface_forms
+        senses = overlay.senses
+    else:
+        examples_out = [
+            {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
+            for ex in example_rows
+        ]
+        source_lemma = card.source_lemma
+        source_surface_forms = card.source_surface_forms
+        senses = card.senses
+
+    # last_user_edit: surface the most recent of (canonical, overlay) so the
+    # UI's "edited recently" indicator catches source-only overlay edits.
+    # The bulk GET returns canonical's value only; matches that shape when no
+    # overlay exists, surfaces the overlay timestamp when one does.
+    effective_last_user_edit = card.last_user_edit
+    if overlay is not None and overlay.last_user_edit is not None:
+        if (
+            effective_last_user_edit is None
+            or overlay.last_user_edit > effective_last_user_edit
+        ):
+            effective_last_user_edit = overlay.last_user_edit
+
+    return LexemeCardOut.model_validate(
+        {
+            "id": card.id,
+            "source_lemma": source_lemma,
+            "target_lemma": card.target_lemma,
+            "source_version_id": card.source_version_id,
+            "target_version_id": card.target_version_id,
+            "pos": card.pos,
+            "surface_forms": card.surface_forms,
+            "source_surface_forms": source_surface_forms,
+            "senses": senses,
+            "confidence": card.confidence,
+            "english_lemma": card.english_lemma,
+            "alignment_scores": card.alignment_scores,
+            "build_version": card.build_version,
+            "model": card.model,
+            "created_at": card.created_at,
+            "last_updated": card.last_updated,
+            "last_user_edit": effective_last_user_edit,
+            "examples": examples_out,
+            "has_translation_overlay": (not requires_merge) or (overlay is not None),
+        }
+    )
 
 
 @router.patch("/agent/lexeme-card/{card_id}", response_model=LexemeCardOut)
@@ -1142,9 +1794,6 @@ async def patch_lexeme_card_by_id(
     try:
         from sqlalchemy import select
 
-        # Get authorized revision IDs for filtering examples
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
-
         # Fetch the card
         query = select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
         result = await db.execute(query)
@@ -1157,7 +1806,7 @@ async def patch_lexeme_card_by_id(
             )
 
         result_card = await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
+            card, patch_data, list_mode, current_user, db, is_user_edit
         )
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
@@ -1182,8 +1831,12 @@ async def patch_lexeme_card_by_id(
         ) from e
 
 
-@router.patch("/agent/lexeme-card", response_model=LexemeCardOut)
-async def patch_lexeme_card_by_lemma(
+@router.patch(
+    "/agent/lexeme-card",
+    response_model=LexemeCardOut,
+    deprecated=True,
+)
+async def patch_lexeme_card_by_lemma_DEPRECATED(
     patch_data: LexemeCardPatch,
     target_lemma: str,
     source_version_id: int,
@@ -1194,87 +1847,86 @@ async def patch_lexeme_card_by_lemma(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """
-    Partially update a lexeme card by lemma lookup.
+    """**DEPRECATED — internal callers only.** Use
+    ``PATCH /v3/agent/lexeme-card/translation`` instead.
+
+    Partially update a lexeme card by lemma lookup, writing directly to the
+    canonical ``agent_lexeme_cards`` row. This endpoint is **unsafe for UI
+    callers**: when the canonical's source language is the pivot (e.g. swh)
+    and the UI is viewing the card in another language (e.g. eng), a write
+    to ``source_lemma`` here will silently overwrite the pivot canonical
+    with the UI's language text and corrupt every other consumer's view.
+
+    The new ``/agent/lexeme-card/translation`` endpoint solves that by
+    routing source-side writes to the per-language ``card_translations``
+    overlay row. UI clients MUST migrate.
+
+    This endpoint is kept only because aqua-assessments' derivation pipeline
+    (``word_memory_builder.update_lexeme_by_lemma_api``) uses it as a
+    POST→409 fallback to patch ``surface_forms`` / ``source_surface_forms``
+    / ``alignment_scores`` on the canonical it just built. Those writes are
+    safe because the caller knows the canonical's source language matches
+    what it's writing. Once that pipeline migrates to the by-id PATCH or to
+    the new translation endpoint, this route should be removed.
 
     Query Parameters:
     - target_lemma: str (required) - The target language lemma
     - source_version_id: int (required) - Bible version ID for source
     - target_version_id: int (required) - Bible version ID for target
-    - source_lemma: str (optional) - The source language lemma
-    - list_mode: str (optional, default="append") - How to handle list fields:
-      - "append": Add new items to existing lists (no deduplication)
-      - "replace": Overwrite entire lists
-      - "merge": Append + deduplicate case-insensitively (for string lists like
-        surface_forms); preserves original casing of existing items
-    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
-      timestamp. Use for user-initiated writes to distinguish from automated updates.
+    - source_lemma: str (optional) - Disambiguates when multiple cards
+      share the same (target_lemma, source_version_id, target_version_id).
+    - list_mode: str (optional, default="append") - append / replace / merge.
+    - is_user_edit: bool (optional, default=False) - Sets last_user_edit.
 
-    Note: The POST endpoint's append behavior differs - it uses case-sensitive
-    deduplication via set(). Use list_mode="merge" here for smart deduplication.
-
-    Body:
-    - LexemeCardPatch: Partial update data. Only provided fields are updated.
-      - source_lemma, target_lemma, pos, confidence, english_lemma: Scalar fields
-      - surface_forms, source_surface_forms: String list fields
-      - senses: List of sense dictionaries
-      - examples: List of example dicts, each must include revision_id
-      - alignment_scores: Dict - keys merge with existing; null value removes key
-
-    Returns:
-    - LexemeCardOut: The updated lexeme card
+    Body: LexemeCardPatch (all fields optional, only provided fields update).
     """
     request_start = time.perf_counter()
     try:
         from sqlalchemy import select
-
-        # Get authorized revision IDs for filtering examples
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
-
-        # Fetch the card by lemma lookup (case-insensitive)
-        # Build query with required fields
         from sqlalchemy.sql import func as sql_func
 
         query = select(AgentLexemeCard).where(
-            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
+            sql_func.lower(AgentLexemeCard.target_lemma)
+            == unicodedata.normalize("NFC", target_lemma).lower(),
             AgentLexemeCard.source_version_id == source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
         )
-
-        # Only filter by source_lemma if explicitly provided
         if source_lemma is not None:
-            query = query.where(AgentLexemeCard.source_lemma == source_lemma)
-
-        result = await db.execute(query)
-        cards = result.scalars().all()
+            query = query.where(
+                sql_func.lower(AgentLexemeCard.source_lemma)
+                == unicodedata.normalize("NFC", source_lemma).lower()
+            )
+        cards = (await db.execute(query)).scalars().all()
 
         if not cards:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Lexeme card not found for target_lemma={target_lemma}, "
-                f"source_version_id={source_version_id}, "
-                f"target_version_id={target_version_id}"
-                + (f", source_lemma={source_lemma}" if source_lemma else ""),
+                detail=(
+                    f"Lexeme card not found for target_lemma={target_lemma}, "
+                    f"source_version_id={source_version_id}, "
+                    f"target_version_id={target_version_id}"
+                    + (f", source_lemma={source_lemma}" if source_lemma else "")
+                ),
             )
-
         if len(cards) > 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Multiple lexeme cards found ({len(cards)}). "
-                "Please provide source_lemma to disambiguate.",
+                detail=(
+                    f"Multiple lexeme cards found ({len(cards)}). "
+                    "Please provide source_lemma to disambiguate."
+                ),
             )
 
-        card = cards[0]
-
         result_card = await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
+            cards[0], patch_data, list_mode, current_user, db, is_user_edit
         )
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
-            f"patch_lexeme_card_by_lemma completed in {duration}s",
+            f"patch_lexeme_card_by_lemma (deprecated) completed in {duration}s",
             extra={
                 "method": "PATCH",
                 "path": "/agent/lexeme-card",
+                "deprecated": True,
                 "target_lemma": target_lemma,
                 "source_version_id": source_version_id,
                 "target_version_id": target_version_id,
@@ -1287,11 +1939,123 @@ async def patch_lexeme_card_by_lemma(
         raise
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Error patching lexeme card by lemma: {e}")
+        logger.error(f"Error patching lexeme card by lemma (deprecated): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         ) from e
+
+
+@router.delete(
+    "/agent/lexeme-card",
+    response_model=BulkLexemeCardDeleteResponse,
+)
+async def delete_lexeme_cards_for_target_version(
+    target_version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Wipe every lexeme card for a target_version_id, across all source pairs.
+
+    Cards for a given target_version_id can live at multiple source_version_ids
+    (current pivot, pre-pivot reference version, function-word extraction era).
+    The per-card DELETE plus a GET keyed on (source, target) misses cards at
+    other source pairs, leaving rebuilds dirty. This endpoint deletes by
+    target_version_id alone, regardless of source_version_id.
+
+    Deletes child rows explicitly in child-to-parent order so each row count
+    is authoritative (no pre-delete SELECT COUNTs that could drift under
+    concurrent writes). ``card_translation_examples`` rows are wiped via the
+    ``card_translations`` cascade — they share a parent and never escape it.
+
+    This is the bulk counterpart to ``DELETE /v3/agent/lexeme-card/{card_id}``
+    and the shape mirrors ``DELETE /v3/tokenizer/training-artifacts/{version_id}``
+    so aqua-assessments' Phase 4 rebuild can call them together.
+
+    Status codes:
+    - 200: returns row counts deleted (zeros if nothing existed — idempotent)
+    - 403: caller not authorized for this version — also returned for
+      non-existent version_ids when the caller is a regular user (no
+      enumeration leak)
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(
+        current_user.id, target_version_id, db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    from sqlalchemy import delete, select
+
+    version_lookup = await db.execute(
+        select(BibleVersion.id).where(BibleVersion.id == target_version_id)
+    )
+    if version_lookup.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {target_version_id}",
+        )
+
+    try:
+        card_ids_subquery = select(AgentLexemeCard.id).where(
+            AgentLexemeCard.target_version_id == target_version_id
+        )
+
+        # child → parent order so each rowcount reflects only that table's
+        # deletes; the parent DELETE's cascade then has nothing left to do.
+        # synchronize_session=False on the subquery-bearing deletes — SQLA
+        # can't evaluate a Select in Python, and we commit right after so
+        # in-session ORM state would be discarded anyway.
+        translations_delete = await db.execute(
+            delete(CardTranslation)
+            .where(CardTranslation.card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
+        )
+        examples_delete = await db.execute(
+            delete(AgentLexemeCardExample)
+            .where(AgentLexemeCardExample.lexeme_card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
+        )
+        cards_delete = await db.execute(
+            delete(AgentLexemeCard)
+            .where(AgentLexemeCard.target_version_id == target_version_id)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to bulk-delete lexeme cards", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    response = BulkLexemeCardDeleteResponse(
+        target_version_id=target_version_id,
+        lexeme_cards_deleted=cards_delete.rowcount or 0,
+        examples_deleted=examples_delete.rowcount or 0,
+        card_translations_deleted=translations_delete.rowcount or 0,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_lexeme_cards_for_target_version completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": "/agent/lexeme-card",
+            "target_version_id": target_version_id,
+            "username": current_user.username,
+            "lexeme_cards_deleted": response.lexeme_cards_deleted,
+            "examples_deleted": response.examples_deleted,
+            "card_translations_deleted": response.card_translations_deleted,
+            "duration_s": duration,
+        },
+    )
+    return response
 
 
 @router.delete("/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1479,9 +2243,10 @@ async def deduplicate_lexeme_cards(
                     if not winner.english_lemma and loser.english_lemma:
                         winner.english_lemma = loser.english_lemma
 
-                    # source_lemma: prefer winner's
+                    # source_lemma: prefer winner's. Lowercase on adopt so a
+                    # pre-backfill mixed-case loser doesn't re-introduce uppercase.
                     if not winner.source_lemma and loser.source_lemma:
-                        winner.source_lemma = loser.source_lemma
+                        winner.source_lemma = loser.source_lemma.lower()
 
                     # Timestamps: keep earliest created_at, latest last_updated, latest last_user_edit
                     if loser.created_at and (
@@ -1665,12 +2430,14 @@ async def get_word_alignments(
 
 @router.get("/agent/lexeme-card", response_model=list[LexemeCardOut])
 async def get_lexeme_cards(
-    source_version_id: int,
     target_version_id: int,
+    source_version_id: int | None = None,
     source_word: str = None,
     target_word: str = None,
     target_words: str = None,
     pos: str = None,
+    model: str | None = Query(default=None, min_length=1),
+    lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1681,8 +2448,14 @@ async def get_lexeme_cards(
     the current user has access to.
 
     Query Parameters:
-    - source_version_id: int (required) - Bible version ID for source
     - target_version_id: int (required) - Bible version ID for target
+    - source_version_id: int (optional) - Bible version ID for source. When
+      provided, the canonical source is resolved via pivot routing (the SQL
+      filter rewrites to the pivot bible_version registered for the target's
+      iso, falling back to the given value). Internal callers that target a
+      specific canonical pair (pivot picker, derive, consolidation) should
+      keep passing this. When omitted, cards are matched on target_version_id
+      alone, which is what a UI showing "cards for this revision" wants.
     - source_word: str (optional) - Filter by source_lemma or source_surface_forms
       (case-insensitive exact match)
     - target_word: str (optional) - Filter by target_lemma or surface_forms
@@ -1691,6 +2464,29 @@ async def get_lexeme_cards(
       cards where target_lemma or any surface_form matches any of the given words
       (case-insensitive, NFC-normalized). Cannot be used with target_word.
     - pos: str (optional) - Filter by part of speech
+    - model: str (optional) - Filter by the model id/name that built the card.
+      Lets harvesters fetch only cards built by a trusted model (e.g. Sonnet)
+      and exclude poisoned ones. Exact match; cards with NULL ``model`` are
+      excluded when this filter is set.
+    - lang: str (optional) - ISO 639-3 code for the desired source-side language.
+      When omitted or equal to the cards' canonical source_language_iso, returns
+      cards in their canonical shape (back-compat). When it differs, source-side
+      fields (source_lemma, source_surface_forms, senses, examples[].source)
+      are replaced by the matching card_translations row. Cards without a
+      translation in the requested language are still returned, with the
+      source-side overlay fields set to null, examples[].source set to null,
+      and ``has_translation_overlay=False``, so the UI can render the target
+      side and indicate the overlay is missing. (Note: the single-card by-id
+      endpoint returns 404 in that same situation — it's the derivation
+      trigger. Callers iterating the bulk list should check
+      ``has_translation_overlay`` before clicking through to by-id.)
+
+      When ``lang`` is omitted but a ``source_version_id`` is also provided and
+      pivot routing rewrites the source, ``lang`` is auto-derived from the
+      caller's ``source_version_id`` ISO so the pivot stays invisible. In that
+      case the overlay logic above applies as if ``lang`` had been passed
+      explicitly; the structured log payload includes ``lang_auto_derived=True``
+      so dashboards can distinguish UI-driven misses from pivot-driven ones.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
@@ -1712,15 +2508,34 @@ async def get_lexeme_cards(
 
         is_admin = current_user.is_admin
 
-        # Base conditions: language pair filter
+        # Base conditions: target version is always pinned. When the caller
+        # passes source_version_id, we additionally pin the source side via
+        # pivot routing (caller's value, rewritten to the pivot bible_version
+        # if one is registered for the target's iso). When it's omitted, we
+        # match on target_version_id alone — a target revision is typically
+        # built against a single pivot, so this returns the canonicals the UI
+        # wants. If a target_version_id ever accumulates canonicals from
+        # multiple pivots, the omitted-source query will return both sets
+        # rather than deduping; callers can pass source_version_id to pick.
         conditions = [
-            AgentLexemeCard.source_version_id == source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
         ]
+        if source_version_id is not None:
+            conditions.append(
+                AgentLexemeCard.source_version_id
+                == _effective_source_version_expr(source_version_id, target_version_id)
+            )
 
         # Add POS filter if provided
         if pos:
             conditions.append(AgentLexemeCard.pos == pos)
+
+        # Filter by build-provenance model when provided. Exact match — NULLs
+        # are excluded by SQL ``=`` semantics, which is what we want (the
+        # caller is asking for "cards built by model X", so unstamped cards
+        # don't qualify).
+        if model:
+            conditions.append(AgentLexemeCard.model == model)
 
         # Word filtering: both source_word and target_word search
         # lemma OR surface_forms (case-insensitive exact match, NFC-normalized)
@@ -1782,17 +2597,13 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        # Batch-load all examples for the returned cards in a single query
+        # Batch-load all examples for the returned cards in a single query.
+        # Include the row id so per-example translation overrides (keyed by
+        # example_id) can be applied when `lang` is non-canonical.
         card_ids = [card.id for card in cards]
         examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
 
         if card_ids:
-            from database.models import (
-                BibleVersion,
-                BibleVersionAccess,
-                UserGroup,
-            )
-
             examples_conditions = [
                 AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
             ]
@@ -1801,6 +2612,14 @@ async def get_lexeme_cards(
             # are always created from revisions in the card's language pair
             # (the POST endpoint requires a revision_id for the language).
             if not is_admin:
+                # Authorize examples against the actual canonical source
+                # versions of the loaded cards plus the target. When the
+                # caller passed source_version_id, all returned cards share
+                # the same (pivot-resolved) source, so this is a single id;
+                # when omitted, multi-pivot result sets fall out naturally.
+                source_versions_for_auth = list(
+                    {card.source_version_id for card in cards}
+                )
                 authorized_lang_revisions = (
                     select(BibleRevision.id)
                     .distinct()
@@ -1818,7 +2637,9 @@ async def get_lexeme_cards(
                     )
                     .where(
                         UserGroup.user_id == current_user.id,
-                        BibleVersion.id.in_([source_version_id, target_version_id]),
+                        BibleVersion.id.in_(
+                            source_versions_for_auth + [target_version_id]
+                        ),
                     )
                 )
                 examples_conditions.append(
@@ -1826,6 +2647,7 @@ async def get_lexeme_cards(
                 )
             examples_query = (
                 select(
+                    AgentLexemeCardExample.id,
                     AgentLexemeCardExample.lexeme_card_id,
                     AgentLexemeCardExample.source_text,
                     AgentLexemeCardExample.target_text,
@@ -1839,33 +2661,156 @@ async def get_lexeme_cards(
             examples_result = await db.execute(examples_query)
             for row in examples_result.all():
                 examples_by_card[row.lexeme_card_id].append(
-                    {"source": row.source_text, "target": row.target_text}
+                    {
+                        "id": row.id,
+                        "source": row.source_text,
+                        "target": row.target_text,
+                    }
                 )
 
-        # Build response cards
+        # Apply non-canonical language overlay when requested.
+        requested_lang = lang.lower() if lang else None
+        lang_auto_derived = False
+        # When pivot routing rewrote the source, default lang to the caller's
+        # source ISO so the pivot stays invisible. Only meaningful when the
+        # caller supplied a source_version_id to compare against.
+        if (
+            requested_lang is None
+            and source_version_id is not None
+            and cards
+            and cards[0].source_version_id != source_version_id
+        ):
+            source_iso_result = await db.execute(
+                select(BibleVersion.iso_language).where(
+                    BibleVersion.id == source_version_id
+                )
+            )
+            source_iso = source_iso_result.scalar_one_or_none()
+            if source_iso is not None:
+                requested_lang = source_iso.lower()
+                lang_auto_derived = True
+        # Per-card translation row (only loaded when needed)
+        translation_by_card: dict[int, CardTranslation] = {}
+        # Per-card map of example_id -> translated source_text
+        trans_source_by_card: dict[int, dict[int, str]] = {}
+        if card_ids and requested_lang is not None:
+            # Identify cards whose canonical source doesn't match the requested
+            # lang. Cards whose canonical already matches return canonical
+            # verbatim, no DB lookups needed.
+            needs_translation_card_ids = [
+                card.id for card in cards if card.source_language_iso != requested_lang
+            ]
+            if needs_translation_card_ids:
+                trans_result = await db.execute(
+                    select(CardTranslation).where(
+                        CardTranslation.card_id.in_(needs_translation_card_ids),
+                        CardTranslation.language_iso == requested_lang,
+                    )
+                )
+                for trans in trans_result.scalars().all():
+                    translation_by_card[trans.card_id] = trans
+
+                if translation_by_card:
+                    trans_ids = [t.id for t in translation_by_card.values()]
+                    # Map translation id -> card_id for the per-example reverse lookup
+                    card_id_by_trans = {
+                        t.id: t.card_id for t in translation_by_card.values()
+                    }
+                    te_result = await db.execute(
+                        select(
+                            CardTranslationExample.card_translation_id,
+                            CardTranslationExample.example_id,
+                            CardTranslationExample.source_text,
+                        ).where(
+                            CardTranslationExample.card_translation_id.in_(trans_ids)
+                        )
+                    )
+                    for row in te_result.all():
+                        cid = card_id_by_trans[row.card_translation_id]
+                        trans_source_by_card.setdefault(cid, {})[
+                            row.example_id
+                        ] = row.source_text
+
+        # Build response cards. When `lang` is requested and differs from a
+        # card's canonical source_language_iso, source-side fields are replaced
+        # by the card_translations row. If no translation row exists for the
+        # requested lang, the card is still returned with overlay fields null
+        # (and has_translation_overlay=False) so the UI can render the target
+        # side, signal the missing overlay, and suppress click-through to the
+        # by-id endpoint (which still 404s — that path is the derivation
+        # trigger).
         response_cards = []
+        missing_translation_overlay = 0
         for card in cards:
+            requires_merge = (
+                requested_lang is not None
+                and card.source_language_iso != requested_lang
+            )
+            trans = translation_by_card.get(card.id) if requires_merge else None
+            has_translation_overlay = not requires_merge or trans is not None
+
+            if requires_merge and trans is None:
+                # No overlay: null source-side fields and mask example source
+                # so we don't leak canonical (pivot-language) text into a
+                # response that asked for a different language.
+                missing_translation_overlay += 1
+                source_lemma = None
+                source_surface_forms = None
+                senses = None
+                examples_out = [
+                    {"id": ex["id"], "source": None, "target": ex["target"]}
+                    for ex in examples_by_card[card.id]
+                ]
+            elif requires_merge:
+                source_lemma = trans.source_lemma
+                source_surface_forms = trans.source_surface_forms
+                senses = trans.senses
+                override_map = trans_source_by_card.get(card.id, {})
+                examples_out = [
+                    {
+                        "id": ex["id"],
+                        "source": override_map.get(ex["id"], ex["source"]),
+                        "target": ex["target"],
+                    }
+                    for ex in examples_by_card[card.id]
+                ]
+            else:
+                source_lemma = card.source_lemma
+                source_surface_forms = card.source_surface_forms
+                senses = card.senses
+                examples_out = [
+                    {"id": ex["id"], "source": ex["source"], "target": ex["target"]}
+                    for ex in examples_by_card[card.id]
+                ]
+
             card_dict = {
                 "id": card.id,
-                "source_lemma": card.source_lemma,
+                "source_lemma": source_lemma,
                 "target_lemma": card.target_lemma,
                 "source_version_id": card.source_version_id,
                 "target_version_id": card.target_version_id,
                 "pos": card.pos,
                 "surface_forms": card.surface_forms,
-                "source_surface_forms": card.source_surface_forms,
-                "senses": card.senses,
+                "source_surface_forms": source_surface_forms,
+                "senses": senses,
                 "confidence": card.confidence,
                 "english_lemma": card.english_lemma,
                 "alignment_scores": card.alignment_scores,
+                "build_version": card.build_version,
+                "model": card.model,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
-                "examples": examples_by_card[card.id],
+                "examples": examples_out,
+                "has_translation_overlay": has_translation_overlay,
             }
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
         duration = round(time.perf_counter() - request_start, 2)
+        # Effective source can be observed from any returned card. If no
+        # cards came back we leave it unset rather than spending an extra
+        # round-trip just to log it.
+        effective_source_version_id = cards[0].source_version_id if cards else None
         logger.info(
             f"get_lexeme_cards completed in {duration}s",
             extra={
@@ -1873,10 +2818,19 @@ async def get_lexeme_cards(
                 "path": "/agent/lexeme-card",
                 "source_version_id": source_version_id,
                 "target_version_id": target_version_id,
+                "effective_source_version_id": effective_source_version_id,
+                "pivot_routed": (
+                    source_version_id is not None
+                    and effective_source_version_id is not None
+                    and effective_source_version_id != source_version_id
+                ),
                 "source_word": source_word,
                 "target_word": target_word,
                 "target_words": target_words,
                 "pos": pos,
+                "lang": requested_lang,
+                "lang_auto_derived": lang_auto_derived,
+                "missing_translation_overlay": missing_translation_overlay,
                 "duration_s": duration,
             },
         )
@@ -1913,12 +2867,18 @@ async def check_word_in_lexeme_cards(
     try:
         from sqlalchemy import func, select, text
 
-        # Normalize the word for case-insensitive comparison
-        word_lower = word.strip().lower()
+        # Normalize the word for case-insensitive comparison.
+        # NFC matches the storage normalization performed by LexemeCardIn so
+        # NFD-decomposed inputs find NFC-stored rows (see issue #779).
+        word_lower = unicodedata.normalize("NFC", word.strip()).lower()
+
+        effective_source_version = _effective_source_version_expr(
+            source_version_id, target_version_id
+        )
 
         # Query cards matching by target_lemma (case-insensitive)
         cards_by_lemma = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
             func.lower(AgentLexemeCard.target_lemma) == word_lower,
         )
@@ -1926,7 +2886,7 @@ async def check_word_in_lexeme_cards(
         # Query cards where word exists in surface_forms JSONB array (case-insensitive)
         # Use jsonb_typeof to check if it's an array, then jsonb_array_elements_text
         cards_by_surface = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
             AgentLexemeCard.surface_forms.isnot(None),
             text(
@@ -1966,6 +2926,379 @@ async def check_word_in_lexeme_cards(
         ) from e
 
 
+@router.post(
+    "/agent/lexeme-card/{card_id}/translation",
+    response_model=CardTranslationOut,
+)
+async def add_lexeme_card_translation(
+    card_id: int,
+    translation: CardTranslationIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Upsert a derived translation for a single lexeme card.
+
+    Stores the (card_id, language_iso) translation overlay and replaces
+    its associated example translations wholesale. Used by the derivation
+    pipeline in aqua-assessments to persist MT output for cards built
+    against a non-matching canonical pivot language.
+    """
+    request_start = time.perf_counter()
+    try:
+        from sqlalchemy import delete, select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.sql import func
+
+        card = await db.scalar(
+            select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
+        )
+        if card is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card with id {card_id} not found",
+            )
+
+        if translation.language_iso == card.source_language_iso:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"language_iso={translation.language_iso} matches the card's "
+                    f"canonical source_language_iso; translations are only stored "
+                    f"for non-canonical languages. Read the canonical fields "
+                    f"directly."
+                ),
+            )
+
+        if translation.examples:
+            example_ids = [e.example_id for e in translation.examples]
+            # Reject duplicate example_ids in the payload up front — otherwise
+            # the per-row INSERT would fail on the (card_translation_id,
+            # example_id) unique index with a less helpful IntegrityError.
+            counts = Counter(example_ids)
+            duplicate_ids = sorted(eid for eid, n in counts.items() if n > 1)
+            if duplicate_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"duplicate example_id(s) {duplicate_ids} in payload; "
+                        f"each example_id may appear at most once"
+                    ),
+                )
+            valid_ids_result = await db.scalars(
+                select(AgentLexemeCardExample.id).where(
+                    AgentLexemeCardExample.id.in_(example_ids),
+                    AgentLexemeCardExample.lexeme_card_id == card_id,
+                )
+            )
+            valid_ids = set(valid_ids_result.all())
+            invalid_ids = sorted({eid for eid in example_ids if eid not in valid_ids})
+            if invalid_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"example_id(s) {invalid_ids} do not belong to card "
+                        f"{card_id}"
+                    ),
+                )
+
+        # Atomic upsert: ON CONFLICT DO UPDATE avoids the TOCTOU race a
+        # SELECT-then-INSERT pattern would have under concurrent callers
+        # targeting the same (card_id, language_iso).
+        upsert_stmt = (
+            pg_insert(CardTranslation)
+            .values(
+                card_id=card_id,
+                language_iso=translation.language_iso,
+                source_lemma=translation.source_lemma,
+                source_surface_forms=translation.source_surface_forms,
+                senses=translation.senses,
+                parent_build_version=translation.parent_build_version,
+                build_version=translation.build_version,
+            )
+            .on_conflict_do_update(
+                index_elements=["card_id", "language_iso"],
+                set_={
+                    "source_lemma": translation.source_lemma,
+                    "source_surface_forms": translation.source_surface_forms,
+                    "senses": translation.senses,
+                    "parent_build_version": translation.parent_build_version,
+                    "build_version": translation.build_version,
+                    "last_updated": func.now(),
+                },
+            )
+            .returning(CardTranslation.id)
+        )
+        translation_id = await db.scalar(upsert_stmt)
+
+        # Replace example rows wholesale. DELETE-then-INSERT runs in the same
+        # transaction as the upsert above, so the row + examples land as a
+        # single atomic unit from the perspective of other transactions.
+        await db.execute(
+            delete(CardTranslationExample).where(
+                CardTranslationExample.card_translation_id == translation_id
+            )
+        )
+
+        for ex in translation.examples:
+            db.add(
+                CardTranslationExample(
+                    card_translation_id=translation_id,
+                    example_id=ex.example_id,
+                    source_text=ex.source_text,
+                )
+            )
+
+        await db.commit()
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error storing card translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Integrity error: {str(e.orig) if e.orig else str(e)}",
+        ) from e
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error storing card translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+    # Post-commit: fetch the row + examples to populate server-side timestamps
+    # in the response. Errors past this point must NOT rollback (the write
+    # already landed); they surface as a 500 to the caller.
+    try:
+        from sqlalchemy import select
+
+        translation_row = await db.scalar(
+            select(CardTranslation).where(CardTranslation.id == translation_id)
+        )
+        examples_result = await db.execute(
+            select(CardTranslationExample)
+            .where(CardTranslationExample.card_translation_id == translation_id)
+            .order_by(CardTranslationExample.id)
+        )
+        example_rows = examples_result.scalars().all()
+    except SQLAlchemyError as e:
+        logger.error(f"Post-commit fetch failed for card translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error fetching persisted translation: {str(e)}",
+        ) from e
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"add_lexeme_card_translation completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/agent/lexeme-card/{card_id}/translation",
+            "card_id": card_id,
+            "language_iso": translation.language_iso,
+            "example_count": len(translation.examples),
+            "duration_s": duration,
+        },
+    )
+
+    return CardTranslationOut(
+        id=translation_row.id,
+        card_id=translation_row.card_id,
+        language_iso=translation_row.language_iso,
+        source_lemma=translation_row.source_lemma,
+        source_surface_forms=translation_row.source_surface_forms,
+        senses=translation_row.senses,
+        parent_build_version=translation_row.parent_build_version,
+        build_version=translation_row.build_version,
+        created_at=translation_row.created_at,
+        last_updated=translation_row.last_updated,
+        last_user_edit=translation_row.last_user_edit,
+        examples=[
+            {
+                "id": e.id,
+                "example_id": e.example_id,
+                "source_text": e.source_text,
+                "created_at": e.created_at,
+            }
+            for e in example_rows
+        ],
+    )
+
+
+# Registration order matters: this parameterized GET must stay AFTER any
+# literal-path GETs on /agent/lexeme-card/<word> (e.g. /check-word). FastAPI
+# matches routes in declaration order, so reordering would shadow them.
+@router.get("/agent/lexeme-card/{card_id}", response_model=LexemeCardOut)
+async def get_lexeme_card_by_id(
+    card_id: int,
+    lang: str | None = Query(default=None, min_length=3, max_length=3),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Return a single lexeme card, optionally in a non-canonical language.
+
+    When ``lang`` is omitted or equals the card's canonical
+    ``source_language_iso``, returns the canonical card. Otherwise looks up
+    the ``card_translations`` row for that language and returns a
+    ``LexemeCardOut`` with translation-language source-side fields and
+    per-example translated source_text merged in. Returns 404 if the card
+    does not exist, or if a non-canonical ``lang`` is requested and no
+    translation row exists for it (the caller can then trigger derivation).
+    """
+    request_start = time.perf_counter()
+    try:
+        from sqlalchemy import select
+
+        card = await db.scalar(
+            select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
+        )
+        if card is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card with id {card_id} not found",
+            )
+
+        requested_lang = lang.lower() if lang else None
+        use_translation = (
+            requested_lang is not None and requested_lang != card.source_language_iso
+        )
+
+        translation = None
+        if use_translation:
+            translation = await db.scalar(
+                select(CardTranslation).where(
+                    CardTranslation.card_id == card_id,
+                    CardTranslation.language_iso == requested_lang,
+                )
+            )
+            if translation is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "message": f"no translation for language_iso={requested_lang}",
+                        "card_id": card_id,
+                        "source_language_iso": card.source_language_iso,
+                    },
+                )
+
+        is_admin = current_user.is_admin
+        examples_conditions = [AgentLexemeCardExample.lexeme_card_id == card_id]
+        if not is_admin:
+            authorized_lang_revisions = (
+                select(BibleRevision.id)
+                .distinct()
+                .join(
+                    BibleVersion,
+                    BibleVersion.id == BibleRevision.bible_version_id,
+                )
+                .join(
+                    BibleVersionAccess,
+                    BibleVersionAccess.bible_version_id == BibleVersion.id,
+                )
+                .join(
+                    UserGroup,
+                    UserGroup.group_id == BibleVersionAccess.group_id,
+                )
+                .where(
+                    UserGroup.user_id == current_user.id,
+                    BibleVersion.id.in_(
+                        [card.source_version_id, card.target_version_id]
+                    ),
+                )
+            )
+            examples_conditions.append(
+                AgentLexemeCardExample.revision_id.in_(authorized_lang_revisions)
+            )
+
+        examples_result = await db.execute(
+            select(
+                AgentLexemeCardExample.id,
+                AgentLexemeCardExample.source_text,
+                AgentLexemeCardExample.target_text,
+            )
+            .where(*examples_conditions)
+            .order_by(AgentLexemeCardExample.id)
+        )
+        example_rows = list(examples_result.all())
+
+        translated_source_by_example_id: dict[int, str] = {}
+        if translation is not None:
+            te_result = await db.execute(
+                select(
+                    CardTranslationExample.example_id,
+                    CardTranslationExample.source_text,
+                ).where(CardTranslationExample.card_translation_id == translation.id)
+            )
+            translated_source_by_example_id = {
+                row.example_id: row.source_text for row in te_result.all()
+            }
+
+        examples = [
+            {
+                "id": row.id,
+                "source": translated_source_by_example_id.get(row.id, row.source_text),
+                "target": row.target_text,
+            }
+            for row in example_rows
+        ]
+
+        if translation is not None:
+            source_lemma = translation.source_lemma
+            source_surface_forms = translation.source_surface_forms
+            senses = translation.senses
+        else:
+            source_lemma = card.source_lemma
+            source_surface_forms = card.source_surface_forms
+            senses = card.senses
+
+        card_dict = {
+            "id": card.id,
+            "source_lemma": source_lemma,
+            "target_lemma": card.target_lemma,
+            "source_version_id": card.source_version_id,
+            "target_version_id": card.target_version_id,
+            "pos": card.pos,
+            "surface_forms": card.surface_forms,
+            "source_surface_forms": source_surface_forms,
+            "senses": senses,
+            "confidence": card.confidence,
+            "english_lemma": card.english_lemma,
+            "alignment_scores": card.alignment_scores,
+            "build_version": card.build_version,
+            "model": card.model,
+            "created_at": card.created_at,
+            "last_updated": card.last_updated,
+            "last_user_edit": card.last_user_edit,
+            "examples": examples,
+        }
+
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_lexeme_card_by_id completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/lexeme-card/{card_id}",
+                "card_id": card_id,
+                "lang": requested_lang,
+                "merged": translation is not None,
+                "duration_s": duration,
+            },
+        )
+
+        return LexemeCardOut.model_validate(card_dict)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching lexeme card by id: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
 @router.get("/agent/critique", response_model=list[CritiqueIssueOut])
 async def get_critique_issues(
     assessment_id: int = None,
@@ -1975,7 +3308,8 @@ async def get_critique_issues(
     agent_translation_id: int = None,
     vref: str = None,
     book: str = None,
-    issue_type: str = None,
+    dimension: str = None,
+    subtype: str = None,
     min_severity: int = None,
     is_resolved: bool = None,
     db: AsyncSession = Depends(get_db),
@@ -1992,8 +3326,10 @@ async def get_critique_issues(
     - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
-    - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
-    - min_severity: int (optional) - Minimum severity level (0-5)
+    - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
+    - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
+    - min_severity: int (optional) - Minimum severity level (1-5). Issues with
+      severity=NULL are excluded by this filter (SQL three-valued logic).
     - is_resolved: bool (optional) - Filter by resolution status (true=resolved, false=unresolved)
 
     Returns:
@@ -2099,31 +3435,31 @@ async def get_critique_issues(
         if book:
             query = query.where(AgentCritiqueIssue.book == book)
 
-        if issue_type:
-            if issue_type not in ["omission", "addition", "replacement"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="issue_type must be 'omission', 'addition', or 'replacement'",
-                )
-            query = query.where(AgentCritiqueIssue.issue_type == issue_type)
+        if dimension:
+            query = query.where(AgentCritiqueIssue.dimension == dimension)
+
+        if subtype:
+            query = query.where(AgentCritiqueIssue.subtype == subtype)
 
         if min_severity is not None:
-            if min_severity < 0 or min_severity > 5:
+            if min_severity < 1 or min_severity > 5:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="min_severity must be between 0 and 5",
+                    detail="min_severity must be between 1 and 5",
                 )
             query = query.where(AgentCritiqueIssue.severity >= min_severity)
 
         if is_resolved is not None:
             query = query.where(AgentCritiqueIssue.is_resolved == is_resolved)
 
-        # Order by book, chapter, verse, and severity (descending)
+        # Order by book, chapter, verse, severity (desc, NULLs last so issues
+        # that omit severity sort to the bottom rather than to the top under
+        # PostgreSQL's default DESC-puts-NULLs-first behaviour).
         query = query.order_by(
             AgentCritiqueIssue.book,
             AgentCritiqueIssue.chapter,
             AgentCritiqueIssue.verse,
-            desc(AgentCritiqueIssue.severity),
+            desc(AgentCritiqueIssue.severity).nulls_last(),
         )
 
         # Execute query
@@ -2141,7 +3477,8 @@ async def get_critique_issues(
                 "reference_id": reference_id,
                 "vref": vref,
                 "book": book,
-                "issue_type": issue_type,
+                "dimension": dimension,
+                "subtype": subtype,
                 "duration_s": duration,
             },
         )
@@ -2405,6 +3742,7 @@ async def add_agent_translation(
         hyper_literal = sanitize_text(translation.hyper_literal_translation)
         literal = sanitize_text(translation.literal_translation)
         english = sanitize_text(translation.english_translation)
+        alternatives = sanitize_suggestion_items(translation.alternatives)
 
         # Create the translation record
         agent_translation = AgentTranslation(
@@ -2418,6 +3756,7 @@ async def add_agent_translation(
             hyper_literal_translation=hyper_literal,
             literal_translation=literal,
             english_translation=english,
+            alternatives=alternatives,
         )
 
         db.add(agent_translation)
@@ -2553,6 +3892,7 @@ async def add_agent_translations_bulk(
                 ),
                 literal_translation=sanitize_text(trans.literal_translation),
                 english_translation=sanitize_text(trans.english_translation),
+                alternatives=sanitize_suggestion_items(trans.alternatives),
             )
             for trans in request.translations
         ]

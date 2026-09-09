@@ -1,7 +1,7 @@
 """convert assessment and training_job timestamps to TIMESTAMP WITH TIME ZONE
 
 Revision ID: b720f1c8a4d2
-Revises: 1d460bf9ea55
+Revises: c8d3f5a1b2e4
 Create Date: 2026-05-20
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b720f1c8a4d2"
-down_revision: Union[str, None] = "1d460bf9ea55"
+down_revision: Union[str, None] = "c8d3f5a1b2e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

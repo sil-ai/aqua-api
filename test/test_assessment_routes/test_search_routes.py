@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 
 from database.models import (
     AlignmentTopSourceScores,
@@ -1603,6 +1603,139 @@ def test_search_comparison_drops_main_rows_with_no_comp_coverage(
     )
 
 
+def test_search_random_comparison_fills_to_limit_despite_sparse_coverage(
+    client, regular_token1, test_db_session
+):
+    """random=true + comparison must still fill to `limit` when the comparison
+    version covers only a small fraction of the main-side term matches.
+
+    Regression guard for the pool-exhaustion perf fix. The fix caps the random
+    draw on the *main* side (before the INNER comparison join) to bound the
+    per-row LATERAL. If that draw isn't restricted to comp-covered vrefs first,
+    a sparse comparison side drops most sampled rows *after* the cap, so the
+    result silently under-fills `limit` even though far more covered pairs
+    exist. Here M (matches) >> sql_limit and exactly `limit` vrefs are covered:
+    the query must return all `limit` covered pairs, every call.
+    """
+    import csv
+
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    if (
+        test_db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        test_db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        test_db_session.commit()
+
+    # 250 real GEN vrefs so main-side matches (M) far exceed sql_limit
+    # (limit*10 = 100); anything <= sql_limit wouldn't exercise the under-fill.
+    with open("fixtures/verse_reference.txt") as f:
+        gen_vrefs = [
+            row["full_verse_id"]
+            for row in csv.DictReader(f, delimiter="\t")
+            if row["full_verse_id"].startswith("GEN ")
+        ][:250]
+
+    def _parse(vref):
+        book, cv = vref.split(" ", 1)
+        chapter, verse = cv.split(":")
+        return book, int(chapter), int(verse)
+
+    eng_version = BibleVersion(
+        name="Sparse Coverage Eng",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="SCE",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    swh_version = BibleVersion(
+        name="Sparse Coverage Swh",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="SCS",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([eng_version, swh_version])
+    test_db_session.commit()
+    test_db_session.refresh(eng_version)
+    test_db_session.refresh(swh_version)
+
+    eng_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=eng_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    swh_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=swh_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([eng_rev, swh_rev])
+    test_db_session.commit()
+    test_db_session.refresh(eng_rev)
+    test_db_session.refresh(swh_rev)
+
+    # Every main verse matches "God"; the comparison side covers only the first
+    # 10 vrefs (C == limit), so a correct query returns exactly those 10.
+    for vref in gen_vrefs:
+        book, chapter, verse = _parse(vref)
+        test_db_session.add(
+            VerseText(
+                text="God is here.",
+                revision_id=eng_rev.id,
+                verse_reference=vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    covered = gen_vrefs[:10]
+    for vref in covered:
+        book, chapter, verse = _parse(vref)
+        test_db_session.add(
+            VerseText(
+                text="Mungu yuko hapa.",
+                revision_id=swh_rev.id,
+                verse_reference=vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    for version in (eng_version, swh_version):
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+        )
+    test_db_session.commit()
+
+    covered_refs = {_parse(v) for v in covered}
+    for _ in range(8):
+        response = client.get(
+            "/v3/textsearch",
+            params={
+                "version_id": eng_version.id,
+                "comparison_version_id": swh_version.id,
+                "term": "God",
+                "limit": 10,
+                "random": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert (
+            len(results) == 10
+        ), f"random+comparison under-filled: got {len(results)} of 10 covered pairs"
+        refs = {(r["book"], r["chapter"], r["verse"]) for r in results}
+        assert refs <= covered_refs, f"returned uncovered vrefs: {refs - covered_refs}"
+        assert all(r["comparison_text"] for r in results)
+
+
 def test_search_by_version_id_with_comparison_revision_id(
     client, regular_token1, test_db_session
 ):
@@ -2561,13 +2694,17 @@ def _setup_alignment_assessment(
     """Create a finished word-alignment assessment plus alignment rows.
 
     ``rows`` is a list of ``(vref, source, target, score)`` tuples. Returns
-    the assessment id.
+    the assessment id. As the only assessment for its pair it resolves under
+    the omitted default (most recent regardless of runner); it is stored as
+    eflomal (``kwargs={"use_eflomal": True}``) so explicit ``use_eflomal=true``
+    queries also match it. Runner-specific tests use ``_setup_runner_assessment``.
     """
     assessment = Assessment(
         revision_id=revision_id,
         reference_id=reference_id,
         type="word-alignment",
         status=status,
+        kwargs={"use_eflomal": True},
     )
     db_session.add(assessment)
     db_session.commit()
@@ -3151,3 +3288,208 @@ def test_search_include_alignments_empty_array_when_no_links_above_threshold(
     jhn = next(r for r in data["results"] if r["verse"] == 16)
     assert "alignments" in jhn
     assert jhn["alignments"] == []
+
+
+def _setup_runner_assessment(
+    db_session, revision_id, reference_id, *, use_eflomal, end_time, rows
+):
+    """Create a finished word-alignment assessment for a specific runner.
+
+    ``rows`` is a list of ``(vref, source, target, score)`` tuples.
+    """
+    assessment = Assessment(
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+        status="finished",
+        kwargs={"use_eflomal": True} if use_eflomal else None,
+        end_time=end_time,
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+    for vref, source, target, score in rows:
+        book, rest = vref.split(" ")
+        chapter, verse = rest.split(":")
+        db_session.add(
+            AlignmentTopSourceScores(
+                assessment_id=assessment.id,
+                vref=vref,
+                source=source,
+                target=target,
+                score=score,
+                book=book,
+                chapter=int(chapter),
+                verse=int(verse),
+                hide=False,
+                flag=False,
+            )
+        )
+    db_session.commit()
+    return assessment.id
+
+
+def test_search_include_alignments_use_eflomal_selects_runner(
+    client, regular_token1, test_db_session
+):
+    """include_alignments sources links from the runner chosen by use_eflomal,
+    even when the eflomal assessment for the pair finished more recently."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    assert _alignment_targets(True) == {"efltarget"}
+    # No runner given -> source from the most recent assessment regardless of
+    # runner; eflomal finished later here, so the default returns its links.
+    # See test_search_include_alignments_default_takes_most_recent for the
+    # inverse, which proves recency (not an eflomal default) decides.
+    assert _alignment_targets(None) == {"efltarget"}
+    assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_default_takes_most_recent(
+    client, regular_token1, test_db_session
+):
+    """With no use_eflomal given, include_alignments sources from the most
+    recent finished assessment regardless of runner. Here the fastalign
+    assessment finished more recently (2024-06-01) than the eflomal one
+    (2024-01-01), so the omitted default returns the fastalign links — the
+    inverse of test_search_include_alignments_use_eflomal_selects_runner,
+    proving recency (not an eflomal default) decides. Explicit use_eflomal=true
+    still selects the older eflomal assessment."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    # Fastalign is the most recent, so the omitted default sources from it.
+    assert _alignment_targets(None) == {"fasttarget"}
+    assert _alignment_targets(True) == {"efltarget"}
+    assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_explicit_id_runner_mismatch_drops_alignments(
+    client, regular_token1, test_db_session
+):
+    """Passing an explicit eflomal alignment_assessment_id while requesting the
+    fastalign runner (use_eflomal=false) makes the runner clause reject the
+    pinned id — the response is returned without the ``alignments`` field
+    rather than erroring. This is the documented behaviour from issue #661
+    extended to the runner mismatch case."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    eflomal_id = _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    base_params = {
+        "revision_id": main_revision_id,
+        "comparison_revision_id": comp_revision_id,
+        "term": "loved",
+        "include_alignments": True,
+        "alignment_assessment_id": eflomal_id,
+    }
+
+    # Pinned eflomal id + runner=eflomal -> alignments come through.
+    matched = client.get(
+        "/v3/textsearch",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert matched.status_code == 200, matched.text
+    jhn = next(
+        r
+        for r in matched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert {a["target"] for a in jhn["alignments"]} == {"efltarget"}
+
+    # Pinned eflomal id but fastalign runner (use_eflomal=false) -> clause
+    # rejects the pinned id, response carries no alignments key (silent fallback).
+    mismatched = client.get(
+        "/v3/textsearch",
+        params={**base_params, "use_eflomal": False},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert mismatched.status_code == 200, mismatched.text
+    jhn_mm = next(
+        r
+        for r in mismatched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert "alignments" not in jhn_mm

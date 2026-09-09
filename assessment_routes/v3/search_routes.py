@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 from sqlalchemy.sql.expression import literal_column
 
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
 from database.models import (
     AlignmentTopSourceScores,
@@ -227,12 +228,18 @@ async def _resolve_alignment_assessment_id(
     revision_id: Optional[int],
     comparison_revision_id: Optional[int],
     alignment_assessment_id: Optional[int],
+    use_eflomal: Optional[bool] = None,
 ) -> Optional[int]:
-    """Pick the eflomal assessment to source alignment links from.
+    """Pick the word-alignment assessment to source alignment links from.
 
     Explicit ``alignment_assessment_id`` wins; otherwise auto-pick the most
     recent finished ``word-alignment`` assessment whose
     ``(revision_id, reference_id)`` matches ``(revision_id, comparison_revision_id)``.
+    ``use_eflomal`` selects the runner: omitted imposes no runner preference, so
+    the most recent finished assessment is picked regardless of runner; ``true``
+    picks eflomal, ``false`` picks fastalign — applied to both the explicit-id
+    and auto-pick paths so the chosen assessment always matches the requested
+    runner.
     Returns ``None`` if no candidate exists or the user is not authorized to
     see the chosen assessment — callers should fall back to the unannotated
     response instead of erroring (per issue #661).
@@ -253,6 +260,7 @@ async def _resolve_alignment_assessment_id(
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
             Assessment.deleted.is_not(True),
+            eflomal_method_clause(use_eflomal),
         ]
         if revision_id is not None and comparison_revision_id is not None:
             conditions.extend(
@@ -279,6 +287,7 @@ async def _resolve_alignment_assessment_id(
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
             Assessment.deleted.is_not(True),
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
         .limit(1)
@@ -371,11 +380,12 @@ async def search_revision_text(
         default=False,
         description=(
             "If true, annotate each result with per-verse word alignments "
-            "from the most recent finished eflomal word-alignment assessment "
-            "for the (revision_id, comparison_revision_id) pair. Each result "
-            "gains an ``alignments`` array of ``{source, target, score}`` "
-            "objects. If no eflomal assessment exists for the pair, results "
-            "are returned without the ``alignments`` field (no error)."
+            "from the most recent finished word-alignment assessment for the "
+            "(revision_id, comparison_revision_id) pair (runner selected by "
+            "``use_eflomal``). Each result gains an ``alignments`` array of "
+            "``{source, target, score}`` objects. If no matching assessment "
+            "exists for the pair, results are returned without the "
+            "``alignments`` field (no error)."
         ),
     ),
     min_alignment_score: float = Query(
@@ -394,6 +404,16 @@ async def search_revision_text(
             "alignments from. When omitted, the latest finished "
             "word-alignment assessment for the "
             "(revision_id, comparison_revision_id) pair is used."
+        ),
+    ),
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to source alignments from "
+            "when ``include_alignments`` is true. Omitted sources from the most "
+            "recent finished assessment regardless of runner; ``true`` uses "
+            "eflomal, ``false`` uses fastalign. Applies to both the explicit "
+            "``alignment_assessment_id`` and the auto-pick path."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -525,29 +545,6 @@ async def search_revision_text(
     use_comparison = (
         comparison_revision_id is not None or comparison_version_id is not None
     )
-    if use_comparison:
-        comp_lat = _comp_lateral(
-            current_user,
-            version_id=comparison_version_id,
-            revision_id=comparison_revision_id,
-            main_vref_col=main_sub.c.verse_reference,
-        )
-        search_query = select(
-            main_sub.c.id.label("id"),
-            main_sub.c.book.label("book"),
-            main_sub.c.chapter.label("chapter"),
-            main_sub.c.verse.label("verse"),
-            main_sub.c.text.label("main_text"),
-            comp_lat.c.text.label("comparison_text"),
-        ).select_from(main_sub.join(comp_lat, true()))
-    else:
-        search_query = select(
-            main_sub.c.id.label("id"),
-            main_sub.c.book.label("book"),
-            main_sub.c.chapter.label("chapter"),
-            main_sub.c.verse.label("verse"),
-            main_sub.c.text.label("main_text"),
-        ).select_from(main_sub)
 
     # Cap the DB result set. The Python-side whole-word filter may discard
     # ilike matches that aren't whole words, so we overfetch to give enough
@@ -560,18 +557,96 @@ async def search_revision_text(
     # value so pathological `limit=1000` queries can't pull 50k rows.
     SQL_LIMIT_ABS_CAP = 10_000
     sql_limit = min(limit * 10 * len(pieces), SQL_LIMIT_ABS_CAP)
-    search_query = search_query.limit(sql_limit)
 
-    # Apply ordering on the outer query. Per-side dedup is already handled
-    # inside main_sub (and the comp lateral picks at most one row per main
-    # row), so the outer query is free to randomize without violating
-    # DISTINCT ON's leading-column rule.
+    # For random ordering, randomise + cap on the *main* side before the
+    # comparison lateral. `ORDER BY random()` can't be pushed below the join,
+    # so randomising the joined query would run the per-row comp lookup once
+    # per term match (thousands of LATERAL invocations for a common term) just
+    # to keep sql_limit of them. Capping the main side first bounds the lateral
+    # to sql_limit invocations.
+    #
+    # When a comparison side is present the join below is INNER — it drops main
+    # verses the comparison version doesn't cover. Sampling *before* that filter
+    # would let the cap under-fill: with sparse comparison coverage the
+    # sql_limit random draw could yield far fewer than `limit` covered rows even
+    # when plenty exist. So restrict the draw to covered vrefs first, via a
+    # semi-join against the set of vrefs the comparison side actually has (one
+    # covered-vref scan Postgres can hash, not a per-row probe). Existence is
+    # enough here — the per-row lateral below still fetches the latest
+    # comparison *text* for the already-covered, already-capped rows.
+    #
+    # The non-random path keeps its outer ORDER BY book/chapter/verse: main_sub
+    # already emits rows in that order, so the lateral early-stops at the LIMIT
+    # without a full materialise, and no under-fill is possible.
+    if random:
+        base_cols = [
+            main_sub.c.id.label("id"),
+            main_sub.c.book.label("book"),
+            main_sub.c.chapter.label("chapter"),
+            main_sub.c.verse.label("verse"),
+            main_sub.c.text.label("text"),
+        ]
+        if use_comparison:
+            base_cols.append(main_sub.c.verse_reference.label("verse_reference"))
+        base_select = select(*base_cols)
+        if use_comparison:
+            comp_auth = _authorized_revisions_select(
+                current_user,
+                version_id=comparison_version_id,
+                revision_id=comparison_revision_id,
+            )
+            covered_vrefs = (
+                select(VerseText.verse_reference)
+                .where(
+                    VerseText.revision_id.in_(comp_auth),
+                    VerseText.text != "",
+                    VerseText.verse_reference.is_not(None),
+                )
+                .distinct()
+            )
+            base_select = base_select.where(
+                main_sub.c.verse_reference.in_(covered_vrefs)
+            )
+        base = base_select.order_by(func.random()).limit(sql_limit).subquery()
+    else:
+        base = main_sub
+
+    if use_comparison:
+        comp_lat = _comp_lateral(
+            current_user,
+            version_id=comparison_version_id,
+            revision_id=comparison_revision_id,
+            main_vref_col=base.c.verse_reference,
+        )
+        search_query = select(
+            base.c.id.label("id"),
+            base.c.book.label("book"),
+            base.c.chapter.label("chapter"),
+            base.c.verse.label("verse"),
+            base.c.text.label("main_text"),
+            comp_lat.c.text.label("comparison_text"),
+        ).select_from(base.join(comp_lat, true()))
+    else:
+        search_query = select(
+            base.c.id.label("id"),
+            base.c.book.label("book"),
+            base.c.chapter.label("chapter"),
+            base.c.verse.label("verse"),
+            base.c.text.label("main_text"),
+        ).select_from(base)
+
+    # The random branch is already capped on the main side (and its comp join
+    # only ever removes rows), so it needs no outer LIMIT — but it does need an
+    # outer ORDER BY random(): the main-side cap picks *which* rows, and this
+    # shuffles the (<= sql_limit) survivors so the `limit` the Python filter
+    # keeps below is a random subset rather than planner order. It only sorts
+    # the already-capped set, so the comparison lateral stays bounded.
     if random:
         search_query = search_query.order_by(func.random())
     else:
         search_query = search_query.order_by(
-            main_sub.c.book, main_sub.c.chapter, main_sub.c.verse
-        )
+            base.c.book, base.c.chapter, base.c.verse
+        ).limit(sql_limit)
 
     main_auth_select = _authorized_revisions_select(
         current_user, version_id=version_id, revision_id=revision_id
@@ -602,6 +677,15 @@ async def search_revision_text(
         # query running in the same transaction, which AsyncSession does by
         # default; would silently no-op under autocommit-style execution.
         await db.execute(text("SET LOCAL enable_bitmapscan = off"))
+
+        # The DISTINCT ON dedup sorts the version's full verse set (~10 MB for
+        # a whole Bible), which spills to a temp file under the pooled default
+        # work_mem. During the overnight batch, dozens of concurrent searches
+        # spilling at once make temp-file I/O the bottleneck. Give the sort
+        # enough memory to stay in RAM. SET LOCAL scopes it to this
+        # transaction, so the pooled connection isn't left with a raised
+        # work_mem for other callers.
+        await db.execute(text("SET LOCAL work_mem = '32MB'"))
 
         result = await db.execute(search_query)
         rows = result.all()
@@ -701,6 +785,7 @@ async def search_revision_text(
                 revision_id=revision_id,
                 comparison_revision_id=comparison_revision_id,
                 alignment_assessment_id=alignment_assessment_id,
+                use_eflomal=use_eflomal,
             )
             if alignment_assessment_used is not None:
                 vrefs = [
