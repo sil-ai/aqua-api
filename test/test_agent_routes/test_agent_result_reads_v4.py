@@ -1791,6 +1791,26 @@ class TestResolveBody:
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
+    def test_the_response_carries_vrefs_for_a_merged_span(
+        self, client, regular_token1, db_session
+    ):
+        """The response is the read row, so it has to answer the coverage question too —
+        a client that resolves an issue and re-renders it from the response must not lose
+        which verses the issue covers."""
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "the whole span's text", "MAT 9:21": RANGE},
+        )
+        translation_id = _make_translation(db_session, run, "MAT 9:20")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 9:20")
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+
     def test_the_response_is_the_full_issue_in_the_read_shape(
         self, client, regular_token1, db_session, group1_version
     ):
