@@ -65,6 +65,7 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 
 import fastapi
 
+from agent_routes.v4.agent_routes import router as agent_router
 from api_v4.errors import (
     V4_ERROR_RESPONSES,
     V4_PUBLIC_ERROR_RESPONSES,
@@ -147,6 +148,12 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         # router can shadow the other's routes; registration order is not load-bearing.
         verse_router,
         assessment_router,
+        # Shares the ``/assessments`` prefix with the Assessments router on the same
+        # terms the Verses router shares ``/revisions``: it declares only sub-paths
+        # (``/{id}/critique-issues``, ``/{id}/translations``), which are distinct path
+        # patterns from ``/assessments/{id}``, so neither router can shadow the other and
+        # registration order is not load-bearing. See agent_routes/v4/agent_routes.py.
+        agent_router,
         user_router,
         group_router,
     ):

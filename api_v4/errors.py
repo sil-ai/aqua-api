@@ -241,9 +241,9 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 #: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
 #: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
 #: only "you can see this but may not modify it" — a *write-path* status. Counted over
-#: the surface, it is reachable on 9 of the 31 domain operations and unreachable on 22:
-#: every read, including all eleven non-delete assessment reads and all four verse
-#: reads. Publishing it on all 31 told clients that any v4 call can be forbidden, which
+#: the surface, it is reachable on 9 of the 33 domain operations and unreachable on 24:
+#: every read, including all thirteen non-delete assessment reads and all four verse
+#: reads. Publishing it on all 33 told clients that any v4 call can be forbidden, which
 #: is false for the large majority and is the sort of thing a generated client turns
 #: into dead error-handling. So the nine writes declare it themselves, via
 #: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
