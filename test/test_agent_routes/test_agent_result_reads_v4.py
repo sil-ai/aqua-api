@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 
 from api_v4.pagination import RESULT_DEFAULT_LIMIT, RESULT_MAX_LIMIT
 from api_v4.schemas.agent import MAX_SEVERITY, MIN_SEVERITY
+from bible_routes.v4 import verse_range_service
 from database.models import (
     AgentCritiqueIssue,
     AgentTranslation,
@@ -35,6 +36,9 @@ from database.models import (
     Group,
 )
 from database.models import UserDB as UserModel
+from database.models import (
+    VerseText,
+)
 from schemas.assessment import AssessmentStatus, AssessmentType
 
 PREFIX = "/v4"
@@ -137,6 +141,33 @@ def _set_deleted(db_session, model, row_id, deleted=True):
     assert row is not None
     row.deleted = deleted
     db_session.commit()
+
+
+def _make_verse_texts(db_session, revision_id, texts):
+    """Insert ``verse_text`` rows from a ``{vref: text}`` mapping.
+
+    Only the chapters under test are inserted — the span map reads the marked chapters,
+    not the whole revision. The memo is cleared afterwards because it is deliberately
+    permanent: a test that read the revision before these rows existed would otherwise
+    have pinned the empty map.
+    """
+    for vref, text in texts.items():
+        book, chapter, verse = _vref_parts(vref)
+        db_session.add(
+            VerseText(
+                revision_id=revision_id,
+                verse_reference=vref,
+                text=text,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    db_session.commit()
+    verse_range_service.clear_cache()
+
+
+RANGE = verse_range_service.VERSE_RANGE_MARKER
 
 
 def _vref_parts(vref):
@@ -617,17 +648,71 @@ class TestCritiqueIssuesRows:
             20,
         )
 
-    def test_there_is_no_vrefs_field(
+    def test_an_unmerged_verse_has_a_single_entry_vrefs(
         self, client, regular_token1, db_session, group1_version
     ):
-        """Absent on purpose. The sibling reads' ``vrefs`` claims each rest on a verified
-        fact about their own runner's handling of merged spans; no such check has been
-        made for the agent pipeline, so this read claims no coverage beyond the stored
-        location. Pinned so adding one is a deliberate act with evidence behind it."""
         run = _critiqued(db_session, group1_version, ["MAT 1:1"])
-        assert (
-            "vrefs" not in _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        row = _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        assert row["vrefs"] == ["MAT 1:1"]
+
+    def test_a_merged_span_reports_every_verse_it_covers(
+        self, client, regular_token1, db_session
+    ):
+        """The agent fetches text with ``GET /v3/texts`` at
+        ``include_verses=intersection``, and that endpoint runs ``merge_verse_ranges``
+        *before* filtering — so a revision publishing ``MAT 9:20-21`` as one verse is
+        critiqued once, under the anchor, and the continuation gets no row of its own.
+        ``vrefs`` is what says so; without it the continuation is indistinguishable from
+        a verse the agent had nothing to say about.
+        """
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "the whole span's text", "MAT 9:21": RANGE},
         )
+        translation_id = _make_translation(db_session, run, "MAT 9:20")
+        _make_issue(db_session, run, translation_id, "MAT 9:20")
+        row = _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        assert row["vref"] == "MAT 9:20"
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+
+    def test_the_span_map_is_the_revisions_not_the_references(
+        self, client, regular_token1, db_session
+    ):
+        """The correctness rule ``/results`` sets out: a verse marked ``<range>`` in the
+        revision is merged away and so can never also be returned as its own row, which
+        is what stops a verse being double-claimed. Unioning the reference's markers
+        would break that.
+
+        The cost is a *certain* rather than a possible under-report here, because the
+        agent always calls ``/v3/texts`` with both revisions and that endpoint merges on
+        any revision's marker. A span merged only in the reference therefore has no row
+        and is named by no ``vrefs`` — it reads as "not critiqued". That under-claims; it
+        cannot over-claim, and it is what v3 reports today.
+        """
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "verse twenty", "MAT 9:21": "verse twenty-one"},
+        )
+        reference_revision_id = _make_revision(db_session, version_id)
+        db_session.query(Assessment).filter_by(id=run.assessment_id).update(
+            {"reference_id": reference_revision_id}
+        )
+        db_session.commit()
+        _make_verse_texts(
+            db_session,
+            reference_revision_id,
+            {"MAT 9:20": "the reference's whole span", "MAT 9:21": RANGE},
+        )
+        translation_id = _make_translation(db_session, run, "MAT 9:20")
+        _make_issue(db_session, run, translation_id, "MAT 9:20")
+        row = _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        assert row["vrefs"] == ["MAT 9:20"]
 
     def test_evidence_and_suggestions_round_trip(
         self, client, regular_token1, db_session, group1_version
@@ -1084,13 +1169,46 @@ class TestTranslationsRows:
         ):
             assert row[field] is None, field
 
-    def test_there_is_no_vrefs_field(
+    def test_an_unmerged_verse_has_a_single_entry_vrefs(
         self, client, regular_token1, db_session, group1_version
     ):
         run = _agent_run(db_session, group1_version)
         _make_translation(db_session, run, "MAT 1:1")
         row = _rows(_translations(client, regular_token1, run.assessment_id))[0]
-        assert "vrefs" not in row
+        assert row["vrefs"] == ["MAT 1:1"]
+
+    def test_a_merged_span_reports_every_verse_it_covers(
+        self, client, regular_token1, db_session
+    ):
+        """This read is what tells a client which verses were critiqued at all, so the
+        union of ``vrefs`` across a page set is the assessed set. Without the field that
+        union would understate coverage by exactly the merged continuations."""
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "the whole span's text", "MAT 9:21": RANGE},
+        )
+        _make_translation(db_session, run, "MAT 9:20", draft_text="both verses")
+        row = _rows(_translations(client, regular_token1, run.assessment_id))[0]
+        assert row["vref"] == "MAT 9:20"
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert row["draft_text"] == "both verses"
+
+    def test_a_three_verse_span_lists_all_three_in_order(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "span", "MAT 9:21": RANGE, "MAT 9:22": RANGE},
+        )
+        _make_translation(db_session, run, "MAT 9:20")
+        row = _rows(_translations(client, regular_token1, run.assessment_id))[0]
+        assert row["vrefs"] == ["MAT 9:20", "MAT 9:21", "MAT 9:22"]
 
 
 class TestTranslationsOrdering:
@@ -1331,6 +1449,13 @@ class TestAgentReadsSchemaContract:
             "/assessments/{assessment_id}/translations",
         ):
             assert schema["paths"][path]["get"]["tags"] == ["Agent results"]
+
+    def test_both_rows_publish_vrefs(self, schema):
+        """Verified against the runner rather than assumed: the agent fetches text
+        through ``GET /v3/texts`` at ``include_verses=intersection``, which merges spans
+        before filtering, so an anchor row genuinely covers its continuations."""
+        for name in ("CritiqueIssueOut", "AgentTranslationOut"):
+            assert "vrefs" in self._row_schema(schema, name), name
 
     def test_the_issue_row_publishes_resolved_and_not_is_resolved(self, schema):
         properties = self._row_schema(schema, "CritiqueIssueOut")

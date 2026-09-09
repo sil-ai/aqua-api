@@ -144,17 +144,28 @@ class CritiqueIssueOut(V4BaseModel):
     :class:`~api_v4.schemas.assessment.AssessmentResultOut`, where one row per verse is
     the invariant.
 
-    **No ``vrefs``, and that absence is deliberate rather than an oversight.**
-    ``/results``, ``/text-lengths`` and the two alignment reads all carry a ``vrefs``
-    list naming every verse a row covers, because a revision that publishes
-    ``MAT 9:20-21`` as one verse gets one row for the span. Each of those claims rests on
-    a *verified* fact about its own runner — the ``text-lengths`` runner loads text
-    through ``GET /v3/text`` at ``include_verses=union``, so it never sees a continuation
-    and its anchor row measures the whole span. No equivalent check has been made for the
-    agent pipeline, which lives in another repository. Publishing a ``vrefs`` here would
-    be asserting coverage this API has not established, so the read reports the stored
-    location and claims nothing beyond it. If the check is made later, adding the field is
-    additive.
+    **``vrefs`` says which verses the issue's location covers**, and it is here on the
+    same footing as on ``/results`` — a verified fact about this runner, not an
+    assumption. ``aqua-assessments/assessments/agent/app.py`` fetches its text with
+    ``GET /v3/texts`` at ``include_verses=intersection`` over both revisions, and that
+    endpoint runs ``merge_verse_ranges`` **before** filtering, so a revision publishing
+    ``MAT 9:20-21`` as one verse yields one merged record whose ``vrefs`` is the whole
+    span. The agent therefore sees one verse where the text has one, critiques it once,
+    and the continuation gets no row of its own. Without this field a verse missing from
+    a result set would be ambiguous between "the agent flagged nothing here" and "this
+    verse is part of the span above", and those are very different facts.
+
+    **The map is the assessed revision's, never unioned with the reference's** — the
+    correctness argument :func:`assessment_routes.v4.assessment_service.get_results`
+    sets out, and it holds here for the same reason: a verse marked ``<range>`` in the
+    revision is merged away and so can never also be returned as its own row, which is
+    what stops a verse being double-claimed. There is one difference worth knowing, and
+    it makes this read's residual case *certain* rather than merely possible. ``/v3/texts``
+    checks every requested revision's text for markers, so a span merged only in the
+    **reference** is merged too — and the agent always calls it with both revisions. Such
+    a verse has no row of its own and is not named by any ``vrefs`` either, so it reads as
+    "not critiqued" rather than "covered above". That under-claims; it cannot
+    over-claim, and it is what v3 reports today.
 
     **The full location triple is stored on this table**, unlike
     ``text_lengths_table``, which holds only ``vref`` and has to reach ``verse_reference``
@@ -184,8 +195,18 @@ class CritiqueIssueOut(V4BaseModel):
     )
     vref: str = Field(
         description=(
-            "The verse the issue was found in (`JHN 1:1`). Served from the stored "
-            "column. See the class docstring for why there is no `vrefs` beside it."
+            "The verse the issue was found in (`JHN 1:1`) — the **first** verse of the "
+            "span where the revision merged several. Served from the stored column."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row's location covers, in canonical order and beginning "
+            "with `vref`. A single entry unless the revision merged verses into this one "
+            "(`<range>`), in which case the continuations follow. This is what tells a "
+            "verse the agent had nothing to say about apart from a verse that is part of "
+            "the span above — the two are otherwise both just absent. See the class "
+            "docstring for the one case it under-reports."
         ),
     )
     book: str = Field(
@@ -336,7 +357,14 @@ class AgentTranslationOut(V4BaseModel):
     ordinal is unanchored without them, and a client comparing attempts across two
     assessments of the same text needs to see that the triple matches.
 
-    No ``vrefs`` here either, for the reason :class:`CritiqueIssueOut` gives.
+    **``vrefs`` matters more on this read than on any other**, because this read is what
+    tells a client which verses were critiqued at all. The agent writes a translation row
+    for every verse it processed, so the row set *is* the assessed set — and where the
+    revision merges ``MAT 9:20-21``, one row under ``MAT 9:20`` holds the whole span's
+    draft and the continuation has no row. Without ``vrefs`` the union of this read's
+    verses would understate coverage by exactly the merged continuations.
+    :class:`CritiqueIssueOut` carries the argument, including the reference-side case
+    this under-reports.
     """
 
     id: int = Field(
@@ -370,7 +398,22 @@ class AgentTranslationOut(V4BaseModel):
             "it does on versions. Part of what `attempt` is counted within."
         ),
     )
-    vref: str = Field(description="The verse this row translates (`JHN 1:1`).")
+    vref: str = Field(
+        description=(
+            "The verse this row translates (`JHN 1:1`) — the **first** verse of the span "
+            "where the revision merged several, in which case `draft_text` and the "
+            "back-translations are the whole span's."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, in canonical order and beginning with `vref`. "
+            "A single entry unless the revision merged verses into this one (`<range>`). "
+            "The union of this field across a whole page set is the set of verses the "
+            "agent actually processed — which is why subtracting the verses you see from "
+            "the range you asked for does not give you the gaps."
+        ),
+    )
     attempt: int = Field(
         description=(
             "Which attempt at this text the row belongs to, counting from 1 within "

@@ -116,8 +116,8 @@ def _not_found_error(exc: Exception, assessment_id: int) -> V4APIError:
     )
 
 
-def _to_critique_issue_out(row) -> CritiqueIssueOut:
-    """Build one critique-issue row.
+def _to_critique_issue_out(row, continuations: dict) -> CritiqueIssueOut:
+    """Build one critique-issue row, deriving its ``vrefs`` from the span map.
 
     Constructed field by field rather than by ``model_validate`` on the ORM object,
     because two names differ from their columns: ``is_resolved`` is served as ``resolved``
@@ -140,6 +140,7 @@ def _to_critique_issue_out(row) -> CritiqueIssueOut:
         assessment_id=row.assessment_id,
         agent_translation_id=row.agent_translation_id,
         vref=row.vref,
+        vrefs=[row.vref, *continuations.get((row.book, row.chapter, row.verse), ())],
         book=row.book,
         chapter=row.chapter,
         verse=row.verse,
@@ -160,8 +161,8 @@ def _to_critique_issue_out(row) -> CritiqueIssueOut:
     )
 
 
-def _to_agent_translation_out(row) -> AgentTranslationOut:
-    """Build one agent-translation row.
+def _to_agent_translation_out(row, continuations: dict) -> AgentTranslationOut:
+    """Build one agent-translation row, deriving its ``vrefs`` from the span map.
 
     Field by field for the same reason as :func:`_to_critique_issue_out`, and here two
     names differ: the ``script`` column is served as ``iso_script`` (v4's spelling of that
@@ -177,6 +178,7 @@ def _to_agent_translation_out(row) -> AgentTranslationOut:
         reference_version_id=row.reference_version_id,
         iso_script=row.script,
         vref=row.vref,
+        vrefs=[row.vref, *continuations.get((row.book, row.chapter, row.verse), ())],
         attempt=row.version,
         draft_text=row.draft_text,
         hyper_literal_translation=row.hyper_literal_translation,
@@ -292,7 +294,7 @@ async def get_assessment_critique_issues(
     assessment for you on any read.
     """
     try:
-        rows, total = await agent_service.get_critique_issues(
+        rows, total, continuations = await agent_service.get_critique_issues(
             db,
             current_user,
             assessment_id,
@@ -308,7 +310,7 @@ async def get_assessment_critique_issues(
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
     return V4Page[CritiqueIssueOut].create(
-        items=[_to_critique_issue_out(row) for row in rows],
+        items=[_to_critique_issue_out(row, continuations) for row in rows],
         total=total,
         pagination=page,
     )
@@ -365,7 +367,7 @@ async def get_assessment_translations(
     no honest watermark to publish. The key is present and null.
     """
     try:
-        rows, total = await agent_service.get_translations(
+        rows, total, continuations = await agent_service.get_translations(
             db,
             current_user,
             assessment_id,
@@ -376,7 +378,7 @@ async def get_assessment_translations(
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
     return V4Page[AgentTranslationOut].create(
-        items=[_to_agent_translation_out(row) for row in rows],
+        items=[_to_agent_translation_out(row, continuations) for row in rows],
         total=total,
         pagination=page,
     )

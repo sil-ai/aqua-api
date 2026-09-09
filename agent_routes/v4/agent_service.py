@@ -88,6 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.schemas.assessment import VerseScope
 from assessment_routes.v4.assessment_service import get_assessment
+from bible_routes.v4 import verse_range_service
 from database.models import (
     AgentCritiqueIssue,
     AgentTranslation,
@@ -206,8 +207,8 @@ async def get_critique_issues(
     agent_translation_id: int | None = None,
     limit: int,
     offset: int,
-) -> tuple[list, int]:
-    """One page of an assessment's critique issues, plus the total ignoring the page.
+) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    """One page of an assessment's critique issues, the total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=AGENT_CRITIQUE_ASSESSMENT_TYPES``,
     so an assessment of a type this read does not serve is refused by the same clause as
@@ -232,7 +233,9 @@ async def get_critique_issues(
     worked while silently missing every resolution. ``resolved_at`` cannot stand in
     either: unresolving sets it back to null, and it says nothing about creation.
     """
-    await get_assessment(db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES)
+    assessment = await get_assessment(
+        db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES
+    )
     placed = _placed_critique_issues(
         assessment_id,
         scope,
@@ -257,7 +260,10 @@ async def get_critique_issues(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+    return list(rows), total or 0, continuations
 
 
 def _placed_translations(assessment_id: int, scope: VerseScope):
@@ -311,6 +317,7 @@ def _placed_translations(assessment_id: int, scope: VerseScope):
             AgentTranslation.alternatives,
             AgentTranslation.created_at,
             BookReference.number.label("book_number"),
+            VerseReference.book_reference.label("book"),
             ChapterReference.number.label("chapter"),
             VerseReference.number.label("verse"),
         )
@@ -336,8 +343,8 @@ async def get_translations(
     scope: VerseScope,
     limit: int,
     offset: int,
-) -> tuple[list, int]:
-    """One page of an assessment's agent translations, plus the total ignoring the page.
+) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    """One page of an assessment's agent translations, the total, and the span map.
 
     Authorized exactly as :func:`get_critique_issues` is, by the same call with the same
     type tuple — the two reads are indistinguishable from the outside on every refusal,
@@ -360,7 +367,9 @@ async def get_translations(
     No watermark, for the reason :func:`get_critique_issues` gives — minus the write path,
     since nothing in v4 mutates this table.
     """
-    await get_assessment(db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES)
+    assessment = await get_assessment(
+        db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES
+    )
     placed = _placed_translations(assessment_id, scope)
     total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
@@ -377,4 +386,7 @@ async def get_translations(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+    return list(rows), total or 0, continuations
