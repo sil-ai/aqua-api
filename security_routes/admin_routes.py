@@ -1,6 +1,6 @@
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,7 @@ async def get_current_admin(
                 detail="The user doesn't have enough privileges",
             )
         return user
-    except jwt.JWTError:
+    except jwt.PyJWTError:
         raise credentials_exception
 
 
