@@ -92,7 +92,7 @@ missing value, and this is v4 reporting a value v3 stored.
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -480,3 +480,85 @@ class AgentTranslationOut(V4BaseModel):
             "`next_updated_since`: the table carries no modification timestamp."
         ),
     )
+
+
+class CritiqueIssueResolution(V4BaseModel):
+    """Request body for ``PATCH /v4/assessments/{id}/critique-issues/{issue_id}``.
+
+    **One endpoint replaces v3's ``/resolve`` + ``/unresolve`` pair**, which is guide
+    §5's rule that the verb belongs to the HTTP method rather than the path. So
+    ``resolved`` is required: the body states which resolution you are asserting, and
+    there is no default that would let an empty body mean one of them.
+
+    **The body is the resolution you are asserting, and the server writes exactly that.**
+    ``resolved: true`` records *you* as the resolver, *now*, with the notes you sent —
+    and with no notes at all if you sent none, so a client preserving existing notes
+    re-sends them. ``resolved: false`` clears all four fields together. A request that
+    asserts precisely what is already stored writes nothing and does not move
+    ``resolved_at``, which is what makes a retried request genuinely idempotent rather
+    than merely harmless.
+
+    That is the substantive change from v3, which answers **400** for "already resolved"
+    and "not currently resolved". Refusing an assertion the row already satisfies is the
+    wrong answer for a ``PATCH``: a client whose ``200`` was lost cannot safely retry, and
+    the state it wanted is the state that exists. ``PATCH /v4/versions/{id}`` already
+    treats a no-op patch as a ``200`` that does not move ``updated_at``; this follows it.
+
+    **Closed allowlist** (``extra="forbid"``), as on every v4 request body. It matters
+    more than usual here because three of this table's four resolution columns are
+    **not** client-settable: ``resolved_by_id`` and ``resolved_at`` are stamped by the
+    server from the authenticated caller and the clock, and a client that could set them
+    could attribute a resolution to someone else. They are absent from this model, so
+    sending either is a 422 rather than something the handler has to strip.
+    """
+
+    resolved: bool = Field(
+        description=(
+            "The resolution to assert. `true` marks the issue dealt with, recording you "
+            "and the current time; `false` reopens it and clears the resolution "
+            "entirely. Required — this one endpoint replaces v3's `/resolve` and "
+            "`/unresolve` paths, so the body is what distinguishes them."
+        ),
+    )
+    resolution_notes: str | None = Field(
+        default=None,
+        description=(
+            "What you did about it. **Only accepted with `resolved: true`** — sending it "
+            "alongside `resolved: false` is a 422, not a silently dropped field, because "
+            "a note about how something was resolved has no meaning on an issue being "
+            "reopened. Omit it when resolving without a note; omitting it on an issue "
+            "that already has notes clears them, since the body is the whole resolution "
+            "being asserted."
+        ),
+    )
+
+    model_config = {
+        **V4BaseModel.model_config,
+        # Closed for the reason the class docstring gives: `resolved_by_id` and
+        # `resolved_at` are server-stamped, and a body that could carry them could
+        # attribute a resolution to another user.
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "resolved": True,
+                "resolution_notes": "Corrected the number in revision 512.",
+            }
+        },
+    }
+
+    @model_validator(mode="after")
+    def _notes_require_resolving(self) -> "CritiqueIssueResolution":
+        """Refuse ``resolution_notes`` alongside ``resolved: false``.
+
+        Checked here rather than in the handler so it is a ``422`` in the shared
+        validation envelope naming the field, and so ``/v4/openapi.json`` describes one
+        model rather than a handler-side rule a reader cannot see. The alternative —
+        accepting the notes and dropping them, since unresolving clears them anyway —
+        is the silent-ignore failure mode that closed request bodies exist to prevent.
+        """
+        if self.resolved is False and self.resolution_notes is not None:
+            raise ValueError(
+                "resolution_notes is only accepted with resolved: true — "
+                "unresolving clears the notes"
+            )
+        return self

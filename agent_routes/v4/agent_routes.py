@@ -3,21 +3,27 @@
 The slice that closes the one place v4 was **broken** rather than merely incomplete.
 Everywhere else v4 lacks something, frozen v3 still does that thing correctly; here v4
 half-did it — ``POST /v4/assessments {"options": {"type": "agent-critique", ...}}`` could
-start a run and nothing in v4 could read what came back. Two reads:
+start a run and nothing in v4 could read what came back. Two reads and one write:
 
-* ``GET /v4/assessments/{id}/critique-issues`` — the problems the agent found, paginated,
-  in canonical Bible order, worst-first within a verse.
-* ``GET /v4/assessments/{id}/translations``    — the text it produced for each verse, with
-  the back-translations explaining it.
+* ``GET   /v4/assessments/{id}/critique-issues`` — the problems the agent found,
+  paginated, in canonical Bible order, worst-first within a verse.
+* ``GET   /v4/assessments/{id}/translations``    — the text it produced for each verse,
+  with the back-translations explaining it.
+* ``PATCH /v4/assessments/{id}/critique-issues/{issue_id}`` — mark an issue resolved or
+  reopen it, replacing v3's ``/resolve`` + ``/unresolve`` pair with one endpoint taking
+  ``{"resolved": true|false}``.
 
 They are also what unblocks ``aqua-django-app`` finishing its move to v4: while agent
 results were v3-only it had to straddle both versions indefinitely.
 
-A third operation, ``PATCH /v4/assessments/{id}/critique-issues/{issue_id}``, replaces
-v3's ``/resolve`` + ``/unresolve`` pair and lands in the follow-up PR on this issue. It is
-separate because it is the slice's only write, it is the only part that has to answer
-"who may change this row", and it is the reason neither read here can offer a delta feed
-(see :func:`agent_routes.v4.agent_service.get_critique_issues`).
+**The write is why neither read offers a delta feed.** Resolving mutates a row without
+touching ``created_at``, and the table has no ``updated_at``, so an ``updated_since``
+built on the only timestamp available would look like it worked while missing every
+resolution — see :func:`agent_routes.v4.agent_service.get_critique_issues`.
+
+**The write is also the one v4 write that never answers 403**, because it authorizes by
+read access rather than ownership. That is a deliberate departure from the rest of the
+write surface and :func:`agent_routes.v4.agent_service.resolve_critique_issue` argues it.
 
 
 Why this is its own router on the ``/assessments`` prefix
@@ -42,8 +48,9 @@ assessment to nest under — a package to land in.
 
 **There is no ``/v4/agent/…`` namespace and no ``/v4/critiques`` collection**, which §15.7
 settled on 31 August 2026: "agent" names the process that produced a row rather than the
-thing the row is. Guide §5's table still shows the withdrawn
-``PATCH /v4/agent/critiques/{id}``; that row is stale and is corrected with the PATCH PR.
+thing the row is. Guide §5's table showed the withdrawn
+``PATCH /v4/agent/critiques/{id}`` for longer than that ruling stood; it is corrected to
+the nested path alongside this module.
 
 
 What a v3 caller will notice
@@ -63,6 +70,10 @@ calls instead of one, and the second one is reproducible.
 **``is_resolved`` is now ``resolved``**, and ``agent_translations.version`` is now
 ``attempt``. Both are guide §10, and :mod:`api_v4.schemas.agent` carries the arguments.
 
+**Re-resolving an already-resolved issue is a ``200``, not v3's ``400``.** Refusing an
+assertion the row already satisfies leaves a client whose response was lost unable to
+retry safely, which is the opposite of what a ``PATCH`` should offer.
+
 **Both reads paginate**, where v3 returned the whole filtered set and declared no page
 parameters at all. In practice this changes little: an ``agent-critique`` run is capped at
 one chapter by the runner repository, and the measured median run holds about 13 rows of
@@ -78,13 +89,14 @@ from fastapi import Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_routes.v4 import agent_service
-from api_v4.errors import V4APIError
+from api_v4.errors import V4APIError, error_responses
 from api_v4.pagination import ResultPaginationParams, V4Page
 from api_v4.schemas.agent import (
     MAX_SEVERITY,
     MIN_SEVERITY,
     AgentTranslationOut,
     CritiqueIssueOut,
+    CritiqueIssueResolution,
 )
 from assessment_routes.v4 import assessment_service
 from assessment_routes.v4.assessment_routes import VerseScopeParams
@@ -414,3 +426,81 @@ async def get_assessment_translations(
         total=total,
         pagination=page,
     )
+
+
+@router.patch(
+    "/{assessment_id}/critique-issues/{issue_id}",
+    response_model=CritiqueIssueOut,
+    # No 403, which makes this the one v4 write that declares none. It authorizes by
+    # read access rather than ownership (see the service for why), so a caller who
+    # cannot write also cannot see the resource and gets the family's 404 instead.
+    # Declaring a 403 here would put dead error-handling in every generated client.
+    responses=error_responses(fastapi.status.HTTP_404_NOT_FOUND),
+)
+async def resolve_critique_issue(
+    assessment_id: int,
+    issue_id: int,
+    data: CritiqueIssueResolution,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user_v4),
+) -> CritiqueIssueOut:
+    """Mark a critique issue resolved, or reopen it.
+
+    **One endpoint replaces v3's `PATCH /agent/critique/{id}/resolve` and
+    `/unresolve`**, taking `{"resolved": true}` or `{"resolved": false}`. The verb belongs
+    to the method, not the path (guide §5).
+
+    **The body is the resolution you are asserting.** `resolved: true` records you as the
+    resolver at the current time, with the `resolution_notes` you sent — and with none if
+    you sent none, so preserving existing notes means re-sending them. `resolved: false`
+    clears the flag, the resolver, the timestamp and the notes together, which keeps the
+    notes describing the resolution currently in force rather than a past one.
+
+    **`resolution_notes` is only accepted with `resolved: true`.** Sent alongside
+    `resolved: false` it is a `422` naming the field, rather than a value quietly dropped
+    because unresolving would have cleared it anyway.
+
+    **`resolved_by_id` and `resolved_at` are stamped by the server** and cannot be set:
+    they are absent from the request model, so sending either is a `422`. A client able
+    to set them could attribute a resolution to another user.
+
+    **Re-asserting what is already stored is a `200` that writes nothing** — no `UPDATE`,
+    so `resolved_at` does not move and a retried request cannot re-date a resolution.
+    This is a **deliberate change from v3**, which answers `400` for "already resolved"
+    and "not currently resolved"; refusing an assertion the row already satisfies leaves a
+    client whose response was lost unable to retry safely. One nuance: "already stored"
+    includes who stored it, so a *different* user asserting the same resolution does write
+    and takes over `resolved_by_id` — the field says who currently stands behind it.
+
+    **Anyone who can read the assessment can resolve its issues.** This is the one v4
+    write not gated on ownership, and so the one that never answers `403`. Resolving is
+    shared review work, and the row carries a `resolved_by_id` precisely because more
+    than one person can do it. v3 authorizes this write the same way.
+
+    An assessment you cannot reach — or one that is not an `agent-critique` run — is
+    `404 ASSESSMENT_NOT_FOUND`, exactly as on the two reads. An issue id that is not on
+    *this* assessment is `404 CRITIQUE_ISSUE_NOT_FOUND`, whether or not it exists
+    elsewhere, so the endpoint cannot be used to probe another assessment's issue ids.
+
+    The response is the full updated issue, in the same shape
+    `GET /v4/assessments/{id}/critique-issues` returns.
+    """
+    try:
+        issue, continuations = await agent_service.resolve_critique_issue(
+            db,
+            current_user,
+            assessment_id,
+            issue_id,
+            resolved=data.resolved,
+            resolution_notes=data.resolution_notes,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+    except agent_service.CritiqueIssueNotFound as exc:
+        raise V4APIError(
+            status_code=fastapi.status.HTTP_404_NOT_FOUND,
+            code="CRITIQUE_ISSUE_NOT_FOUND",
+            message=str(exc),
+            details={"assessment_id": assessment_id, "issue_id": issue_id},
+        ) from exc
+    return _to_critique_issue_out(issue, continuations)
