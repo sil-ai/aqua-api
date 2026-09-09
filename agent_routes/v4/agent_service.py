@@ -390,3 +390,171 @@ async def get_translations(
         db, assessment.revision_id
     )
     return list(rows), total or 0, continuations
+
+
+class CritiqueIssueNotFound(Exception):
+    """No such critique issue **on the assessment named in the path**.
+
+    Separate from :class:`~assessment_routes.v4.assessment_service.AssessmentNotFound`
+    because the two name different resources and the caller needs to know which of the
+    two path segments was wrong — the parent is refused before the child is looked up, so
+    the signals cannot be conflated.
+
+    It deliberately covers two cases: no row with that id anywhere, and a row that exists
+    but belongs to a different assessment. The lookup is one statement scoped to the path
+    assessment, so those are not distinguishable from the outside, and that is the point
+    — otherwise a caller who can read one assessment could probe which issue ids exist on
+    assessments they cannot.
+    """
+
+    def __init__(self, issue_id: int) -> None:
+        self.issue_id = issue_id
+        super().__init__(f"Critique issue {issue_id} not found on this assessment")
+
+
+async def resolve_critique_issue(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    issue_id: int,
+    *,
+    resolved: bool,
+    resolution_notes: str | None,
+) -> tuple[AgentCritiqueIssue, dict[tuple[str, int, int], list[str]]]:
+    """Assert an issue's resolution; return the row as it now stands, and the span map.
+
+    The slice's only write, and the one endpoint replacing v3's ``/resolve`` +
+    ``/unresolve`` pair.
+
+    **Authorized by read access, not ownership**, which is the one place this write
+    departs from the rest of the v4 write surface. Every other v4 write goes through an
+    owner-or-admin gate; this one calls the same
+    :func:`~assessment_routes.v4.assessment_service.get_assessment` predicate the two
+    reads call, with the same type tuple. Two reasons. Resolving a critique issue is
+    shared review work — a team works through a translation's issues together, and
+    restricting it to whoever submitted the run would leave a reviewer able to read an
+    issue and unable to act on it. And the row itself is built for that: it carries a
+    ``resolved_by_id`` at all *because* more than one person can resolve, which would be
+    a pointless column under an owner-only gate. It is also v3's rule, which authorizes
+    this write with exactly the read predicate.
+
+    The visible consequence is that this write answers **no 403**: a caller who cannot
+    reach the assessment gets the family's 404, and everyone who can reach it may write.
+    So it is a write that does not appear in ``V4_FORBIDDEN_RESPONSE``'s set, and
+    ``TestForbiddenIsWriteOnly`` should keep it out.
+
+    **The body is the resolution being asserted, and this writes exactly it.**
+    ``resolved=True`` sets the flag, stamps ``resolved_by_id`` from the authenticated
+    caller and ``resolved_at`` from the database clock, and sets the notes to what was
+    passed — ``None`` included, so omitting notes on an issue that has them clears them.
+    ``resolved=False`` clears all four together, which is v3's behaviour and keeps the
+    notes describing the resolution currently in force rather than a past one.
+
+    **A request asserting what is already stored writes nothing.** Not merely "commits
+    no change" — it issues no ``UPDATE``, so ``resolved_at`` does not move and a retried
+    request cannot silently re-date a resolution. That is what makes this idempotent in
+    the sense a client needs after a dropped response, and it is the same treatment
+    :func:`bible_routes.v4.version_service.update_version` gives an empty patch. v3
+    instead answers **400** for both re-assertions, which is the wrong answer for a
+    ``PATCH``: the state the client asked for is the state that exists.
+
+    Note "already stored" includes *who* stored it. A different user asserting the same
+    resolution with the same notes **does** write, taking over ``resolved_by_id`` and
+    ``resolved_at`` — because the row's job is to say who currently stands behind the
+    resolution, and after that request it is them.
+
+    The span map comes back alongside the row because the response is the *same* shape
+    the collection read returns, ``vrefs`` included — so the handler needs it to build a
+    row at all. Fetching it here rather than in the router keeps every database read in
+    this layer, and it is memoised per revision, so the write pays nothing the read has
+    not already paid.
+
+    **A soft-deleted parent makes an issue permanently unresolvable, including for an
+    admin**, and that is a deliberate narrowing rather than an oversight. The sibling
+    write gate
+    :func:`assessment_routes.v4.assessment_service._get_assessment_for_write` passes
+    ``include_deleted=True`` precisely so a deleted row stays writable — a delete has to
+    be idempotent, and a row whose revision was deleted still has to be deletable. That
+    argument does not transfer: resolving an issue on a run nobody can read accomplishes
+    nothing, and widening the gate here would let a caller write a resolution and then be
+    unable to read it back, since both reads answer 404 on the same row. So this write
+    uses the plain read predicate and refuses exactly what the reads refuse. Note the
+    filter cascades — soft-deleting a *version* or *revision* hides its assessments too —
+    but it is recoverable: undeleting restores resolution. Raised in review of #944.
+
+    Raises :class:`~assessment_routes.v4.assessment_service.AssessmentNotFound` for an
+    unreachable parent, and :class:`CritiqueIssueNotFound` for an issue that is not on
+    it.
+    """
+    assessment = await get_assessment(
+        db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES
+    )
+    issue = (
+        (
+            await db.execute(
+                select(AgentCritiqueIssue).where(
+                    AgentCritiqueIssue.id == issue_id,
+                    AgentCritiqueIssue.assessment_id == assessment_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if issue is None:
+        raise CritiqueIssueNotFound(issue_id)
+
+    # After the issue is found, not before: a request naming an issue that is not on
+    # this assessment needs no span map to be refused, and on a cold memo this is one
+    # or two statements. (Copilot review, PR #944.)
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+
+    if resolved:
+        # ``resolved_at is not None`` belongs in this predicate even though the
+        # endpoint always stamps it, because a row written outside this endpoint can
+        # hold ``is_resolved=True`` with a null timestamp. Without the clause such a
+        # row would be read as "already stored" and never repaired, leaving it
+        # permanently resolved-but-unstamped and contradicting the contract that
+        # ``resolved: true`` records the resolver *now*. With it, a properly stamped
+        # row still no-ops, so idempotency is unaffected. (Copilot review, PR #944.)
+        already = (
+            issue.is_resolved
+            and issue.resolved_at is not None
+            and issue.resolved_by_id == user.id
+            and issue.resolution_notes == resolution_notes
+        )
+        if already:
+            return issue, continuations
+        issue.is_resolved = True
+        issue.resolved_by_id = user.id
+        issue.resolved_at = func.now()
+        issue.resolution_notes = resolution_notes
+    else:
+        already = (
+            not issue.is_resolved
+            and issue.resolved_by_id is None
+            and issue.resolved_at is None
+            and issue.resolution_notes is None
+        )
+        if already:
+            return issue, continuations
+        issue.is_resolved = False
+        issue.resolved_by_id = None
+        issue.resolved_at = None
+        issue.resolution_notes = None
+
+    # Guarded exactly as the sibling v4 writes are (``version_service.update_version``,
+    # ``revision_service``, ``assessment_service.soft_delete_assessment``): a failing
+    # commit must leave the session usable rather than in a failed transaction until
+    # request teardown, and the pending attribute changes must not survive it. There is
+    # no domain error to translate here — no FK this write can point at a missing row —
+    # so the exception re-raises to the #828 catch-all as the 500 it is.
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    await db.refresh(issue)
+    return issue, continuations

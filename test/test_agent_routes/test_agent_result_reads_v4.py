@@ -1,7 +1,9 @@
-"""Tests for the v4 agent-result reads (issue #896, epic #842).
+"""Tests for the v4 agent-result slice (issue #896, epic #842).
 
-``GET /v4/assessments/{id}/critique-issues`` and ``GET /v4/assessments/{id}/translations``
-— the two reads that close the one place v4 was broken rather than incomplete.
+``GET /v4/assessments/{id}/critique-issues``, ``GET /v4/assessments/{id}/translations``
+and ``PATCH /v4/assessments/{id}/critique-issues/{issue_id}`` — the reads that close the
+one place v4 was broken rather than incomplete, plus the resolution write that replaces
+v3's ``/resolve`` + ``/unresolve`` pair.
 
 The row-building and fixture helpers below are near-copies of the ones in
 ``test/test_assessment_routes/test_assessment_routes_v4.py``. Deliberately copied rather
@@ -91,6 +93,22 @@ def _make_version(db_session, group_name):
     )
     db_session.commit()
     return version.id
+
+
+def _grant(db_session, version_id, group_name):
+    """Add a second group's access to an existing version.
+
+    Needed only where **two** callers must reach the same assessment: the conftest puts
+    testuser1 in Group1 and testuser2 in Group2 and nothing else, so a single-group
+    version can only ever be read by one of them.
+    """
+    db_session.add(
+        BibleVersionAccess(
+            bible_version_id=version_id, group_id=_group_id(db_session, group_name)
+        )
+    )
+    db_session.commit()
+    return version_id
 
 
 def _make_revision(db_session, version_id):
@@ -1559,3 +1577,570 @@ class TestAgentReadsSchemaContract:
             "script",
         ):
             assert dropped not in declared, dropped
+
+
+def _resolve(client, token, assessment_id, issue_id, **body):
+    return client.patch(
+        f"{PREFIX}/assessments/{assessment_id}/critique-issues/{issue_id}",
+        json=body,
+        headers=_auth(token),
+    )
+
+
+def _stored_issue(db_session, issue_id):
+    """Re-read a row the app just wrote, past this session's own snapshot."""
+    db_session.commit()
+    row = db_session.query(AgentCritiqueIssue).filter_by(id=issue_id).first()
+    assert row is not None
+    return row
+
+
+class TestResolveAuthorization:
+    """Read access is the gate, and the two path segments refuse separately."""
+
+    def test_anyone_who_can_read_the_assessment_can_resolve(
+        self, client, regular_token2, db_session
+    ):
+        """The one v4 write not gated on ownership. The run is owned by testuser1 and
+        resolved by testuser2, who only shares the group — which is the whole point:
+        resolving is shared review work, and ``resolved_by_id`` exists because more than
+        one person can do it. v3 authorizes this write with the read predicate too."""
+        version_id = _make_version(db_session, "Group2")
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        resp = _resolve(
+            client, regular_token2, run.assessment_id, issue_id, resolved=True
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["resolved"] is True
+        assert resp.json()["resolved_by_id"] == _user_id(db_session, "testuser2")
+
+    def test_a_caller_who_cannot_read_the_assessment_gets_the_familys_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        """Not a 403: this write answers none, because a caller who may not write also
+        may not see the resource."""
+        run = _agent_run(db_session, group2_version)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    @pytest.mark.parametrize("type_", UNSERVED_TYPES)
+    def test_an_assessment_of_another_type_is_the_familys_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        run = _agent_run(db_session, group1_version, type_=type_)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    @pytest.mark.parametrize("cascade", [None, BibleRevision])
+    def test_a_soft_deleted_parent_makes_the_issue_unresolvable(
+        self, client, regular_token1, db_session, cascade
+    ):
+        """Narrower than ``DELETE /v4/assessments/{id}``, deliberately. That gate passes
+        ``include_deleted=True`` so a delete stays idempotent; this one uses the plain
+        read predicate, because resolving an issue on a run nobody can read achieves
+        nothing and a wider gate would let a caller write a resolution and then be unable
+        to read it back. Checked for the assessment itself and for the revision cascade.
+        Raised in review of #944.
+        """
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        assert (
+            _resolve(
+                client, regular_token1, run.assessment_id, issue_id, resolved=True
+            ).status_code
+            == 200
+        )
+        if cascade is None:
+            db_session.query(Assessment).filter_by(id=run.assessment_id).update(
+                {"deleted": True}
+            )
+            db_session.commit()
+        else:
+            _set_deleted(db_session, cascade, run.revision_id)
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=False
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert _stored_issue(db_session, issue_id).is_resolved is True
+
+    def test_an_unknown_issue_id_is_its_own_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A distinct code from the parent's, because the caller needs to know which of
+        the two path segments was wrong."""
+        run = _critiqued(db_session, group1_version, ["MAT 1:1"])
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, 10**9, resolved=True
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "CRITIQUE_ISSUE_NOT_FOUND"
+        assert resp.json()["error"]["details"]["issue_id"] == 10**9
+
+    def test_an_issue_on_another_assessment_answers_the_same_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """It exists and the caller can even read it through its own assessment, but the
+        lookup is scoped to the path assessment — so "not here" and "no such id" are one
+        signal. Otherwise the endpoint would report which issue ids live elsewhere."""
+        mine = _critiqued(db_session, group1_version, ["MAT 1:1"])
+        theirs = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, theirs, "MAT 1:1")
+        elsewhere = _make_issue(db_session, theirs, translation_id, "MAT 1:1")
+        resp = _resolve(
+            client, regular_token1, mine.assessment_id, elsewhere, resolved=True
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "CRITIQUE_ISSUE_NOT_FOUND"
+        assert _stored_issue(db_session, elsewhere).is_resolved is False
+
+    def test_the_parent_is_refused_before_the_issue_is_looked_up(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        """An unreachable parent plus a nonexistent issue reports the *parent*, so a
+        caller cannot learn anything about issue ids on an assessment they cannot see.
+        """
+        run = _agent_run(db_session, group2_version)
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, 10**9, resolved=True
+        )
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_no_token_is_a_401(self, client, db_session, group1_version):
+        """Refused before either path segment is resolved, so the id used here need not
+        exist — auth is applied at the router level (#831)."""
+        run = _critiqued(db_session, group1_version, ["MAT 1:1"])
+        resp = client.patch(
+            f"{PREFIX}/assessments/{run.assessment_id}/critique-issues/1",
+            json={"resolved": True},
+        )
+        assert resp.status_code == 401, resp.text
+
+
+class TestResolveBody:
+    """What the body may say, and what the server stamps rather than accepting."""
+
+    def _one_issue(self, db_session, version_id, **columns):
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1", **columns)
+        return run, issue_id
+
+    def test_resolving_stamps_the_caller_and_the_clock(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._one_issue(db_session, group1_version)
+        body = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="Corrected the number in revision 512.",
+        ).json()
+        assert body["resolved"] is True
+        assert body["resolved_by_id"] == _user_id(db_session, "testuser1")
+        assert body["resolved_at"] is not None
+        assert body["resolution_notes"] == "Corrected the number in revision 512."
+
+    def test_resolved_is_required(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """One endpoint replaces v3's two paths, so the body is what distinguishes them
+        and an empty body cannot mean either."""
+        run, issue_id = self._one_issue(db_session, group1_version)
+        resp = _resolve(client, regular_token1, run.assessment_id, issue_id)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_resolving_without_notes_is_allowed(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._one_issue(db_session, group1_version)
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["resolved"] is True
+        assert body["resolution_notes"] is None
+
+    def test_notes_with_resolved_false_is_a_422(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Refused rather than accepted-and-dropped. Unresolving clears the notes anyway,
+        so silently ignoring them would be the exact silent-ignore failure mode closed
+        request bodies exist to prevent."""
+        run, issue_id = self._one_issue(db_session, group1_version, is_resolved=True)
+        resp = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=False,
+            resolution_notes="never mind",
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+        assert _stored_issue(db_session, issue_id).is_resolved is True
+
+    @pytest.mark.parametrize("field", ["resolved_by_id", "resolved_at"])
+    def test_a_server_stamped_field_cannot_be_set(
+        self, client, regular_token1, db_session, group1_version, field
+    ):
+        """A client able to set either could attribute a resolution to another user. They
+        are absent from the request model, so ``extra="forbid"`` refuses them."""
+        run, issue_id = self._one_issue(db_session, group1_version)
+        payload = {
+            "resolved": True,
+            field: 1 if field == "resolved_by_id" else "2020-01-01T00:00:00",
+        }
+        resp = _resolve(client, regular_token1, run.assessment_id, issue_id, **payload)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_an_unknown_field_is_a_422(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._one_issue(db_session, group1_version)
+        resp = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            is_resolved=True,
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_response_carries_vrefs_for_a_merged_span(
+        self, client, regular_token1, db_session
+    ):
+        """The response is the read row, so it has to answer the coverage question too —
+        a client that resolves an issue and re-renders it from the response must not lose
+        which verses the issue covers."""
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        _make_verse_texts(
+            db_session,
+            run.revision_id,
+            {"MAT 9:20": "the whole span's text", "MAT 9:21": RANGE},
+        )
+        translation_id = _make_translation(db_session, run, "MAT 9:20")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 9:20")
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+
+    def test_the_response_is_the_full_issue_in_the_read_shape(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Same shape as a row of the collection read, so a client can drop it straight
+        into whatever it already holds."""
+        run, issue_id = self._one_issue(db_session, group1_version)
+        patched = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        fetched = _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        assert patched == fetched
+
+
+class TestResolveStateTransitions:
+    """Unresolving clears the resolution, and re-asserting writes nothing."""
+
+    def _resolved_issue(self, client, token, db_session, version_id, notes=None):
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        body = {"resolved": True}
+        if notes is not None:
+            body["resolution_notes"] = notes
+        assert (
+            _resolve(client, token, run.assessment_id, issue_id, **body).status_code
+            == 200
+        )
+        return run, issue_id
+
+    def test_unresolving_clears_all_four_fields(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's behaviour kept, so the notes always describe the resolution currently in
+        force rather than a past one."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=False
+        ).json()
+        assert body["resolved"] is False
+        assert body["resolved_by_id"] is None
+        assert body["resolved_at"] is None
+        assert body["resolution_notes"] is None
+
+    def test_resolving_an_already_resolved_issue_is_a_200_not_v3s_400(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The substantive change from v3, which answers 400 for this. A client whose
+        response was lost has to be able to retry, and the state it asked for is the
+        state that exists."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        resp = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["resolved"] is True
+
+    def test_unresolving_an_unresolved_issue_is_a_200_not_v3s_400(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=False
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["resolved"] is False
+
+    def test_an_identical_re_assertion_does_not_move_resolved_at(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Idempotent in the sense a retrying client needs, not merely harmless: the
+        second request issues no ``UPDATE``, so the timestamp is untouched. This is the
+        treatment ``PATCH /v4/versions/{id}`` gives an empty patch."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        first = _stored_issue(db_session, issue_id).resolved_at
+        again = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        )
+        assert again.status_code == 200, again.text
+        assert _stored_issue(db_session, issue_id).resolved_at == first
+
+    def test_a_repeated_unresolve_leaves_the_row_cleared(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        _resolve(client, regular_token1, run.assessment_id, issue_id, resolved=False)
+        second = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=False
+        )
+        assert second.status_code == 200, second.text
+        stored = _stored_issue(db_session, issue_id)
+        assert stored.is_resolved is False
+        assert stored.resolved_by_id is None
+        assert stored.resolved_at is None
+        assert stored.resolution_notes is None
+
+    def test_changing_the_notes_rewrites_them(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="first"
+        )
+        body = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="second",
+        ).json()
+        assert body["resolution_notes"] == "second"
+
+    def test_omitting_notes_on_a_resolved_issue_clears_them(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The body is the whole resolution being asserted, so an omitted note means "no
+        note" rather than "leave whatever is there". A client preserving notes re-sends
+        them."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="first"
+        )
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["resolution_notes"] is None
+
+    def test_a_resolved_row_with_no_timestamp_gets_repaired(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A row can be resolved but unstamped if something outside this endpoint wrote
+        it — ``resolved_at`` is nullable. The no-op check therefore also asks whether the
+        timestamp is present: without that, such a row would read as "already stored" and
+        stay broken forever, contradicting the contract that ``resolved: true`` records
+        the resolver now. Raised by Copilot on #944.
+        """
+        run = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        db_session.query(AgentCritiqueIssue).filter_by(id=issue_id).update(
+            {
+                "is_resolved": True,
+                "resolved_by_id": _user_id(db_session, "testuser1"),
+                "resolved_at": None,
+                "resolution_notes": None,
+            }
+        )
+        db_session.commit()
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["resolved"] is True
+        assert body["resolved_at"] is not None
+        assert _stored_issue(db_session, issue_id).resolved_at is not None
+
+    def test_a_fully_stamped_row_still_no_ops(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The other half of the repair check: adding ``resolved_at is not None`` to the
+        predicate must not cost idempotency on a row that is properly stamped."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        first = _stored_issue(db_session, issue_id).resolved_at
+        _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        )
+        assert _stored_issue(db_session, issue_id).resolved_at == first
+
+    def test_a_second_user_asserting_the_same_resolution_takes_it_over(
+        self, client, regular_token1, regular_token2, db_session
+    ):
+        """ "Already stored" includes *who* stored it. The field says who currently stands
+        behind the resolution, and after this request it is the second user."""
+        version_id = _grant(db_session, _make_version(db_session, "Group1"), "Group2")
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        _resolve(
+            client,
+            regular_token2,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        )
+        first_at = _stored_issue(db_session, issue_id).resolved_at
+        body = _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        ).json()
+        assert body["resolved_by_id"] == _user_id(db_session, "testuser1")
+        assert _stored_issue(db_session, issue_id).resolved_at != first_at
+
+    def test_resolving_shows_up_on_the_collection_read_and_its_filter(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        assessment_id = run.assessment_id
+        assert [
+            row["id"]
+            for row in _rows(
+                _issues(client, regular_token1, assessment_id, resolved=True)
+            )
+        ] == [issue_id]
+        assert (
+            _rows(_issues(client, regular_token1, assessment_id, resolved=False)) == []
+        )
+
+    def test_only_the_named_issue_changes(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        run = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        target = _make_issue(db_session, run, translation_id, "MAT 1:1", severity=5)
+        bystander = _make_issue(db_session, run, translation_id, "MAT 1:1", severity=4)
+        _resolve(client, regular_token1, run.assessment_id, target, resolved=True)
+        assert _stored_issue(db_session, target).is_resolved is True
+        assert _stored_issue(db_session, bystander).is_resolved is False
+
+
+class TestResolveSchemaContract:
+    """What ``/v4/openapi.json`` publishes for the write."""
+
+    PATH = "/assessments/{assessment_id}/critique-issues/{issue_id}"
+
+    @pytest.fixture(scope="class")
+    def schema(self, client):
+        return client.get(f"{PREFIX}/openapi.json").json()
+
+    def test_the_write_is_published_under_the_agent_tag(self, schema):
+        assert schema["paths"][self.PATH]["patch"]["tags"] == ["Agent results"]
+
+    def test_the_request_body_is_closed(self, schema):
+        body = schema["components"]["schemas"]["CritiqueIssueResolution"]
+        assert body["additionalProperties"] is False
+        assert body["required"] == ["resolved"]
+        assert set(body["properties"]) == {"resolved", "resolution_notes"}
+
+    def test_the_server_stamped_fields_are_absent_from_the_request_body(self, schema):
+        body = schema["components"]["schemas"]["CritiqueIssueResolution"]
+        for field in ("resolved_by_id", "resolved_at", "is_resolved"):
+            assert field not in body["properties"], field
+
+    def test_the_response_is_the_read_row(self, schema):
+        content = schema["paths"][self.PATH]["patch"]["responses"]["200"]["content"]
+        assert (
+            content["application/json"]["schema"]["$ref"]
+            == "#/components/schemas/CritiqueIssueOut"
+        )
+
+    def test_the_write_declares_no_403(self, schema):
+        """The one v4 write that declares none, because it gates on read access. A 403
+        here would put dead error-handling in every generated client. ``api_v4.errors``
+        carries the argument, and ``TestForbiddenIsWriteOnly`` keeps this path out of the
+        forbidden set."""
+        assert "403" not in schema["paths"][self.PATH]["patch"]["responses"]
+
+    def test_the_write_declares_the_envelope_statuses(self, schema):
+        declared = set(schema["paths"][self.PATH]["patch"]["responses"])
+        assert {"401", "404", "422", "500"} <= declared
+
+    def test_the_path_is_nested_and_no_top_level_collection_exists(self, schema):
+        """Guide §15.7's ruling: no ``/v4/agent/…`` namespace and no ``/v4/critiques``
+        collection, because "agent" names the process that produced a row rather than the
+        thing the row is."""
+        assert self.PATH in schema["paths"]
+        for withdrawn in ("/agent/critiques/{id}", "/critique-issues/{issue_id}"):
+            assert withdrawn not in schema["paths"], withdrawn

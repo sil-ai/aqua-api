@@ -241,13 +241,20 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 #: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
 #: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
 #: only "you can see this but may not modify it" — a *write-path* status. Counted over
-#: the surface, it is reachable on 9 of the 33 domain operations and unreachable on 24:
+#: the surface, it is reachable on 9 of the 34 domain operations and unreachable on 25:
 #: every read, including all thirteen non-delete assessment reads and all four verse
-#: reads. Publishing it on all 33 told clients that any v4 call can be forbidden, which
+#: reads. Publishing it on all 34 told clients that any v4 call can be forbidden, which
 #: is false for the large majority and is the sort of thing a generated client turns
 #: into dead error-handling. So the nine writes declare it themselves, via
 #: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
 #: operations declaring it is exactly those nine.
+#:
+#: "Write-path status" is the right generalization but not a law: ``PATCH
+#: /v4/assessments/{id}/critique-issues/{issue_id}`` is a **write that declares no 403**,
+#: because it authorizes by read access rather than ownership (#896) — resolving a
+#: critique issue is shared review work, so everyone who can see the issue may resolve it
+#: and a caller who cannot gets the 404. So the nine are the writes that can raise it,
+#: not every write.
 #:
 #: The four that remain are all genuinely universal except ``404``, which is unreachable
 #: on the 6 operations that look nothing up (``GET /me``, ``GET /me/groups``,
