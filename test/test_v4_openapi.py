@@ -307,9 +307,9 @@ class TestForbiddenIsWriteOnly:
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 9 of the 31 domain operations, unreachable on 22.
+    write-path status: reachable on 9 of the 33 domain operations, unreachable on 24.
 
-    It briefly *was* in the shared set, which published it on all 31. This class is what
+    It briefly *was* in the shared set, which published it on all 33. This class is what
     keeps it out: a client generated from the schema would otherwise carry dead
     forbidden-handling on every read, and a reader of ``/v4/docs`` would conclude any
     v4 call can be refused.
