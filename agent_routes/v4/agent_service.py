@@ -469,6 +469,19 @@ async def resolve_critique_issue(
     this layer, and it is memoised per revision, so the write pays nothing the read has
     not already paid.
 
+    **A soft-deleted parent makes an issue permanently unresolvable, including for an
+    admin**, and that is a deliberate narrowing rather than an oversight. The sibling
+    write gate
+    :func:`assessment_routes.v4.assessment_service._get_assessment_for_write` passes
+    ``include_deleted=True`` precisely so a deleted row stays writable — a delete has to
+    be idempotent, and a row whose revision was deleted still has to be deletable. That
+    argument does not transfer: resolving an issue on a run nobody can read accomplishes
+    nothing, and widening the gate here would let a caller write a resolution and then be
+    unable to read it back, since both reads answer 404 on the same row. So this write
+    uses the plain read predicate and refuses exactly what the reads refuse. Note the
+    filter cascades — soft-deleting a *version* or *revision* hides its assessments too —
+    but it is recoverable: undeleting restores resolution. Raised in review of #944.
+
     Raises :class:`~assessment_routes.v4.assessment_service.AssessmentNotFound` for an
     unreachable parent, and :class:`CritiqueIssueNotFound` for an issue that is not on
     it.

@@ -477,8 +477,13 @@ async def resolve_critique_issue(
     shared review work, and the row carries a `resolved_by_id` precisely because more
     than one person can do it. v3 authorizes this write the same way.
 
-    An assessment you cannot reach — or one that is not an `agent-critique` run — is
-    `404 ASSESSMENT_NOT_FOUND`, exactly as on the two reads. An issue id that is not on
+    An assessment you cannot reach — or one that is not an `agent-critique` run, or one
+    that has been soft-deleted, or whose revision or version has — is
+    `404 ASSESSMENT_NOT_FOUND`, exactly as on the two reads. **A soft-deleted parent
+    therefore makes its issues unresolvable, for an admin too**, which is narrower than
+    `DELETE /v4/assessments/{id}`: resolving an issue on a run nobody can read achieves
+    nothing, and a wider gate would let you write a resolution you cannot read back.
+    Undeleting the parent restores resolution. An issue id that is not on
     *this* assessment is `404 CRITIQUE_ISSUE_NOT_FOUND`, whether or not it exists
     elsewhere, so the endpoint cannot be used to probe another assessment's issue ids.
 

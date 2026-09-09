@@ -1643,6 +1643,41 @@ class TestResolveAuthorization:
         assert resp.status_code == 404, resp.text
         assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
 
+    @pytest.mark.parametrize("cascade", [None, BibleRevision])
+    def test_a_soft_deleted_parent_makes_the_issue_unresolvable(
+        self, client, regular_token1, db_session, cascade
+    ):
+        """Narrower than ``DELETE /v4/assessments/{id}``, deliberately. That gate passes
+        ``include_deleted=True`` so a delete stays idempotent; this one uses the plain
+        read predicate, because resolving an issue on a run nobody can read achieves
+        nothing and a wider gate would let a caller write a resolution and then be unable
+        to read it back. Checked for the assessment itself and for the revision cascade.
+        Raised in review of #944.
+        """
+        version_id = _make_version(db_session, "Group1")
+        run = _agent_run(db_session, version_id)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        assert (
+            _resolve(
+                client, regular_token1, run.assessment_id, issue_id, resolved=True
+            ).status_code
+            == 200
+        )
+        if cascade is None:
+            db_session.query(Assessment).filter_by(id=run.assessment_id).update(
+                {"deleted": True}
+            )
+            db_session.commit()
+        else:
+            _set_deleted(db_session, cascade, run.revision_id)
+        resp = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=False
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert _stored_issue(db_session, issue_id).is_resolved is True
+
     def test_an_unknown_issue_id_is_its_own_404(
         self, client, regular_token1, db_session, group1_version
     ):
