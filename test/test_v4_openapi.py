@@ -33,7 +33,11 @@ import json
 
 import fastapi
 import pytest
-from fastapi.dependencies.models import Dependant, _get_security_scheme, _is_security_scheme
+from fastapi.dependencies.models import (
+    Dependant,
+    _get_security_scheme,
+    _is_security_scheme,
+)
 from fastapi.routing import APIRoute, iter_route_contexts
 from fastapi.testclient import TestClient
 
