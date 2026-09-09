@@ -64,7 +64,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 import fastapi
-from fastapi import Depends, Query, status
+from fastapi import Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_routes.v4 import lexeme_card_service
@@ -77,6 +77,43 @@ from database.models import UserDB as UserModel
 from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/lexeme-cards", tags=["Lexeme cards"])
+
+#: v3 query parameters this endpoint renamed, mapped to what replaced them.
+#:
+#: Sending one is a ``422`` rather than the silent ignore FastAPI would otherwise give an
+#: unrecognized query parameter, and the reason is that **all three are live in the one
+#: client today**. ``aqua-django-app`` sends ``lang`` on its per-word read and
+#: ``target_words`` on its bulk read. Pointed at v4 unchanged, neither would error: the
+#: bulk read would drop its word filter and page through the whole collection, and the
+#: per-word read would quietly serve the canonical source side — English text — to a
+#: translator who asked for their own language. Both are wrong answers wearing a ``200``.
+#:
+#: This is the query-string counterpart of the closed request bodies in guide §10: an
+#: unrecognized key is rejected, never dropped, because a request reporting success while
+#: doing something other than what it asked is the failure mode worth spending a check on.
+#: Scoped to this endpoint rather than the whole surface because this is where a rename
+#: collided with a live caller; a general rule is a bigger decision than this slice.
+WITHDRAWN_QUERY_PARAMS = {
+    "lang": "source_language_iso",
+    "target_words": "target_word",
+    "source_words": "source_word",
+}
+
+
+def _withdrawn_parameter_error(sent: list[str]) -> V4APIError:
+    """Name every withdrawn parameter in the request, and what to send instead."""
+    replacements = {name: WITHDRAWN_QUERY_PARAMS[name] for name in sent}
+    told = ", ".join(f"{old} is now {new}" for old, new in replacements.items())
+    return V4APIError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="WITHDRAWN_QUERY_PARAMETER",
+        message=(
+            f"This endpoint renamed {len(sent)} query parameter(s) from v3: {told}. "
+            "They are refused rather than ignored, so a request cannot succeed while "
+            "silently dropping a filter."
+        ),
+        details={"parameters": replacements},
+    )
 
 
 def _version_not_visible_error(
@@ -244,6 +281,7 @@ def _to_lexeme_card_out(view: LexemeCardView) -> LexemeCardOut:
     response_model=V4Page[LexemeCardOut],
 )
 async def list_lexeme_cards(
+    request: Request,
     target_version_id: int = Query(
         ...,
         description=(
@@ -364,7 +402,18 @@ async def list_lexeme_cards(
     `422 INVALID_WORD_FILTER` for a `source_word` or `target_word` sent with nothing but
     blanks in it — which is refused rather than dropped, since dropping it would answer a
     narrowed request with the whole collection.
+
+    Sending v3's `lang`, `target_words` or `source_words` is
+    `422 WITHDRAWN_QUERY_PARAMETER`, naming what replaced each. They are refused rather
+    than ignored so that a client mid-migration cannot get a `200` carrying a filter it
+    thinks it applied.
     """
+    withdrawn = [
+        name for name in WITHDRAWN_QUERY_PARAMS if name in request.query_params
+    ]
+    if withdrawn:
+        raise _withdrawn_parameter_error(withdrawn)
+
     try:
         views, total = await lexeme_card_service.list_lexeme_cards(
             db,

@@ -450,6 +450,53 @@ class TestExampleVisibility:
         assert set(cards) == {leaky_card, other_card}
         assert cards[leaky_card]["examples"] == []
 
+    def test_example_from_a_third_version_is_hidden_from_non_admins(
+        self, client, db_session, regular_token1, admin_token
+    ):
+        """The in-pair invariant is a write-path rule, not a database constraint.
+
+        v3's ``POST`` refuses an example whose revision belongs to neither the card's
+        source nor its target version, and the read filter leans on that. Nothing at the
+        database enforces it, so a direct write can produce such a row. Pinned here so the
+        behaviour is known rather than discovered: a non-admin does not see it, because
+        the filter asks about the card's own two versions and this revision is in neither.
+        An admin does, because admins bypass the filter entirely.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        third = _make_version(db_session, "Group1")
+        third_revision = _make_revision(db_session, third)
+        card_id = _make_card(db_session, source, target)
+        _make_example(db_session, card_id, third_revision, "out of pair", "nje")
+
+        as_user = _get(client, regular_token1, target_version_id=target)
+        as_admin = _get(client, admin_token, target_version_id=target)
+
+        assert as_user.status_code == 200
+        (user_card,) = as_user.json()["items"]
+        assert user_card["examples"] == []
+
+        (admin_card,) = as_admin.json()["items"]
+        assert [e["source"] for e in admin_card["examples"]] == ["out of pair"]
+
+    def test_admin_examples_stay_with_their_own_card_across_a_page(
+        self, client, db_session, admin_token
+    ):
+        """The admin path skips the auth filter but keeps the card join."""
+        source = _make_version(db_session, "Group2")
+        target = _make_version(db_session, "Group2")
+        revision = _make_revision(db_session, target)
+        first = _make_card(db_session, source, target, confidence=0.9)
+        second = _make_card(db_session, source, target, confidence=0.1)
+        _make_example(db_session, first, revision, "first card", "kwanza")
+        _make_example(db_session, second, revision, "second card", "pili")
+
+        response = _get(client, admin_token, target_version_id=target)
+
+        cards = {c["id"]: c for c in response.json()["items"]}
+        assert [e["source"] for e in cards[first]["examples"]] == ["first card"]
+        assert [e["source"] for e in cards[second]["examples"]] == ["second card"]
+
     def test_example_reports_its_revision(self, client, db_session, regular_token1):
         """v3 does not serve this, which left its client guessing on a round trip."""
         source = _make_version(db_session, "Group1")
@@ -634,6 +681,70 @@ class TestLanguageOverlay:
         (card,) = response.json()["items"]
         assert card["last_user_edit"].startswith("2026-06-01")
 
+    def test_an_overlay_in_a_different_language_is_not_served(
+        self, client, db_session, regular_token1
+    ):
+        """Having *an* overlay is not having *the* overlay.
+
+        A card with a Swahili translation, asked for in French, must come back with the
+        source side null — not with the Swahili text. This is the case that would catch a
+        lookup matching any overlay rather than the requested language.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, source_lemma="grace")
+        _make_overlay(
+            db_session,
+            card_id,
+            "swh",
+            source_lemma="rehema",
+            source_surface_forms=["rehema"],
+        )
+
+        response = _get(
+            client, regular_token1, target_version_id=target, source_language_iso="fra"
+        )
+
+        assert response.status_code == 200
+        (card,) = response.json()["items"]
+        assert card["source_language_iso"] is None
+        assert card["source_lemma"] is None
+        assert card["source_surface_forms"] is None
+
+    def test_overlays_resolve_on_a_later_page(self, client, db_session, regular_token1):
+        """Overlays are loaded per page, so page 2 must resolve its own.
+
+        The shape of the real bulk call: many words, many cards, paginated, read in the
+        translator's own language.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        # Descending confidence, so the order across pages is deterministic.
+        for index, confidence in enumerate([0.9, 0.7, 0.5, 0.3]):
+            card_id = _make_card(
+                db_session,
+                source,
+                target,
+                target_lemma=f"paged{index}",
+                confidence=confidence,
+            )
+            _make_overlay(db_session, card_id, "swh", source_lemma=f"rehema{index}")
+
+        second = _get(
+            client,
+            regular_token1,
+            target_version_id=target,
+            source_language_iso="swh",
+            limit=2,
+            offset=2,
+        )
+
+        assert second.status_code == 200
+        cards = second.json()["items"]
+        assert [c["target_lemma"] for c in cards] == ["paged2", "paged3"]
+        assert [c["source_lemma"] for c in cards] == ["rehema2", "rehema3"]
+        assert all(c["source_language_iso"] == "swh" for c in cards)
+
     def test_language_code_must_be_three_characters(
         self, client, db_session, regular_token1
     ):
@@ -762,6 +873,34 @@ class TestFilters:
 
         assert _ids(response.json()) == [swahili_grace]
 
+    def test_source_word_with_the_cards_own_language_requested(
+        self, client, db_session, regular_token1
+    ):
+        """The canonical branch of the source-word clause, which nothing else covers.
+
+        ``source_language_iso`` equal to the card's own language plus a ``source_word``
+        takes the first leg of the ``or_()``, where the same bound word array is reused.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        wanted = _make_card(
+            db_session, source, target, source_lemma="grace", target_lemma="neema"
+        )
+        _make_card(
+            db_session, source, target, source_lemma="peace", target_lemma="amani"
+        )
+
+        response = _get(
+            client,
+            regular_token1,
+            target_version_id=target,
+            source_language_iso="eng",
+            source_word="grace",
+        )
+
+        assert response.status_code == 200
+        assert _ids(response.json()) == [wanted]
+
     def test_source_version_id_is_matched_exactly(
         self, client, db_session, regular_token1
     ):
@@ -836,8 +975,15 @@ class TestFilters:
         )
 
         assert response.status_code == 200
-        assert response.json()["items"] == []
-        assert response.json()["total"] == 0
+        payload = response.json()
+        # The whole envelope, not just items: an empty page must still be a page.
+        assert payload == {
+            "items": [],
+            "total": 0,
+            "limit": RESULT_DEFAULT_LIMIT,
+            "offset": 0,
+            "next_updated_since": None,
+        }
 
     def test_too_many_words_is_422(self, client, db_session, regular_token1):
         target = _make_version(db_session, "Group1")
@@ -921,6 +1067,84 @@ class TestFilters:
 
         assert response.status_code == 200
         assert _ids(response.json()) == [both]
+
+    def test_v3_lang_is_refused_not_ignored(self, client, db_session, regular_token1):
+        """The worst silent failure of the three, so it gets its own test.
+
+        A translator's client sends ``?lang=swh`` asking for Swahili. FastAPI ignores an
+        unrecognized query parameter, so without this guard the response is a 200 full of
+        English — the canonical source side — and nothing anywhere says the request was
+        not honoured.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        _make_card(db_session, source, target)
+
+        response = _get(client, regular_token1, target_version_id=target, lang="swh")
+
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["code"] == "WITHDRAWN_QUERY_PARAMETER"
+        assert error["details"]["parameters"] == {"lang": "source_language_iso"}
+
+    def test_v3_target_words_is_refused_not_ignored(
+        self, client, db_session, regular_token1
+    ):
+        """The bulk read's parameter. Ignored, it would page the whole collection."""
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        _make_card(db_session, source, target)
+
+        response = _get(
+            client,
+            regular_token1,
+            target_version_id=target,
+            target_words="neema,amani",
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "WITHDRAWN_QUERY_PARAMETER"
+
+    def test_every_withdrawn_parameter_is_named_at_once(
+        self, client, db_session, regular_token1
+    ):
+        """A client mid-migration should learn all of its renames in one round trip."""
+        target = _make_version(db_session, "Group1")
+
+        response = _get(
+            client,
+            regular_token1,
+            target_version_id=target,
+            lang="swh",
+            target_words="neema",
+            source_words="grace",
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["details"]["parameters"] == {
+            "lang": "source_language_iso",
+            "target_words": "target_word",
+            "source_words": "source_word",
+        }
+
+    def test_an_unrelated_unknown_parameter_is_still_ignored(
+        self, client, db_session, regular_token1
+    ):
+        """Only the three renames are refused; this is not a closed query string.
+
+        Closing the whole query string is a surface-wide decision, not this slice's to
+        take, and the shipped v4 reads do not do it.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get(
+            client, regular_token1, target_version_id=target, not_a_parameter="x"
+        )
+
+        assert response.status_code == 200
+        assert _ids(response.json()) == [card_id]
 
     def test_target_version_id_is_required(self, client, regular_token1):
         response = client.get(PATH, headers=_auth(regular_token1))
@@ -1189,9 +1413,17 @@ class TestRowShape:
             alignment_scores={"grace": 0.9},
             english_lemma="grace",
         )
-        _make_example(db_session, card_id, revision, "by grace", "kwa neema")
+        example_id = _make_example(
+            db_session, card_id, revision, "by grace", "kwa neema"
+        )
 
         (card,) = _get(client, regular_token1, target_version_id=target).json()["items"]
+
+        # created_at/last_updated are server-stamped, so they are checked for shape
+        # rather than value — but checked, not compared against themselves.
+        for stamp in ("created_at", "last_updated"):
+            assert isinstance(card[stamp], str), f"{stamp} should be an ISO timestamp"
+            datetime.fromisoformat(card[stamp])
 
         assert card == {
             "id": card_id,
@@ -1206,7 +1438,7 @@ class TestRowShape:
             "senses": [{"definition": "favour", "examples": []}],
             "examples": [
                 {
-                    "id": card["examples"][0]["id"],
+                    "id": example_id,
                     "revision_id": revision,
                     "source": "by grace",
                     "target": "kwa neema",
