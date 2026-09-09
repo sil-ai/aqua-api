@@ -231,8 +231,12 @@ async def upload_revision(
 
     # Validate the upload up-front, before we touch the DB. Reject obviously
     # wrong content-types (415) and reject anything that already advertises a
-    # size over the cap (413). This guards against the Starlette multipart
-    # DoS where an authenticated user uploads a huge body to exhaust workers.
+    # size over the cap (413). Note this size check runs *after* Starlette has
+    # already fully parsed the multipart body -- it rejects an oversized file
+    # from being persisted, but it is not what protects this endpoint from the
+    # Starlette multipart-parsing DoS (CVE-2025-54121, fixed in starlette
+    # 0.47.2 and covered by the #937 bump): that DoS is in the parsing itself,
+    # which has already happened by the time `file.size` is available here.
     # Strip any media-type parameters (e.g. "text/plain; charset=utf-8") so
     # well-formed clients that include a charset aren't falsely rejected.
     # Treat a missing/empty per-part Content-Type as application/octet-stream:

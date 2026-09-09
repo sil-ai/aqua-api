@@ -795,6 +795,221 @@ def test_create_training_job_unauthenticated(
     assert response.status_code == 401
 
 
+# -- Atomic duplicate-detection tests (#722) --
+
+
+def test_dup_lock_key_is_stable_and_distinct_per_triple():
+    """The advisory-lock key must be deterministic, fit in signed int8, and
+    map different triples to different keys (#722). A collision would
+    silently serialize two unrelated triples — not a correctness bug, but
+    worth catching if the key derivation ever drifts."""
+    from train_routes.v3.train_routes import _training_job_dup_lock_key
+
+    # Stable across calls
+    k1 = _training_job_dup_lock_key(1, 2, "tfidf")
+    assert _training_job_dup_lock_key(1, 2, "tfidf") == k1
+
+    # Distinct per coordinate
+    assert _training_job_dup_lock_key(1, 2, "tfidf") != _training_job_dup_lock_key(
+        2, 1, "tfidf"
+    ), "swap of source/target must yield a different key"
+    assert _training_job_dup_lock_key(1, 2, "tfidf") != _training_job_dup_lock_key(
+        1, 2, "ngrams"
+    ), "different type must yield a different key"
+    assert _training_job_dup_lock_key(1, 2, "tfidf") != _training_job_dup_lock_key(
+        1, 3, "tfidf"
+    ), "different target must yield a different key"
+
+    # Postgres pg_advisory_xact_lock takes signed int8.
+    for k in [
+        _training_job_dup_lock_key(1, 2, "tfidf"),
+        _training_job_dup_lock_key(99999999, 99999999, "semantic-similarity"),
+        _training_job_dup_lock_key(0, 0, ""),
+    ]:
+        assert -(2**63) <= k < 2**63
+
+
+def test_create_training_job_acquires_advisory_lock_per_type_before_dup_check(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """POST /train must take a pg_advisory_xact_lock for every requested
+    type before running the duplicate-check SELECT (#722). Without the
+    lock the check-then-insert is non-atomic and two concurrent POSTs can
+    both insert. We wrap the helper with a spy that records calls and
+    asserts one lock per requested type, with the right triple."""
+    import train_routes.v3.train_routes as tr
+
+    lock_calls = []
+    real_helper = tr._acquire_training_job_dup_lock
+
+    async def _spy(db, src, tgt, training_type):
+        lock_calls.append((src, tgt, training_type))
+        return await real_helper(db, src, tgt, training_type)
+
+    apps = ["tfidf", "ngrams"]
+    with patch.object(tr, "_acquire_training_job_dup_lock", side_effect=_spy):
+        resp = _create_training_jobs_via_api(
+            client,
+            regular_token1,
+            test_revision_id,
+            test_revision_id_2,
+            options={"tag": "lock_spy_test"},
+            apps=apps,
+        )
+    assert resp.status_code == 200
+
+    # Exactly one lock per requested type, with the correct triple.
+    assert len(lock_calls) == len(apps)
+    seen_types = {t for _, _, t in lock_calls}
+    assert seen_types == set(apps)
+    for src, tgt, _ in lock_calls:
+        assert src == test_revision_id
+        assert tgt == test_revision_id_2
+
+    # Clean up so these queued jobs don't pollute later tests.
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .filter(Assessment.is_training.is_(True), Assessment.status == "queued")
+        .all()
+    )
+    for a in queued:
+        a.status = "failed"
+    db_session.commit()
+
+
+def test_advisory_lock_acquired_before_dup_check_and_insert(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """The advisory lock must be acquired *before* the duplicate-check SELECT
+    and the row insert — otherwise the race the lock is meant to prevent is
+    still possible. We assert ordering by making the lock helper raise on
+    the first call and verifying no Assessment row was created. If the lock
+    were taken after the insert, the assessment would already exist when
+    the exception fires (#722)."""
+    import train_routes.v3.train_routes as tr
+
+    apps = ["tfidf"]
+    options = {"tag": "lock_order_test"}
+
+    # Count active assessments matching the triple before the failing call.
+    db_session.expire_all()
+
+    def _count_active_tfidf():
+        return (
+            db_session.query(Assessment)
+            .filter(
+                Assessment.is_training.is_(True),
+                Assessment.type == "tfidf",
+                Assessment.revision_id == test_revision_id_2,
+                Assessment.reference_id == test_revision_id,
+                Assessment.kwargs == options,
+                Assessment.deleted.is_not(True),
+            )
+            .count()
+        )
+
+    before = _count_active_tfidf()
+
+    async def _raising_lock(*_args, **_kwargs):
+        raise RuntimeError("simulated advisory-lock acquire failure")
+
+    with patch.object(tr, "_acquire_training_job_dup_lock", side_effect=_raising_lock):
+        # The lock helper raises before any DB write; FastAPI surfaces the
+        # uncaught exception as a 500.
+        resp = client.post(
+            f"{prefix}/train",
+            json={
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id_2,
+                "apps": apps,
+                "options": options,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert resp.status_code == 500
+
+    # Crucial assertion: no Assessment row was created. If the lock were
+    # taken *after* the insert, the row would already exist by the time
+    # the exception fires (transaction would still roll back, but if a
+    # future refactor moved the lock acquire below db.commit() this
+    # check would fail).
+    db_session.expire_all()
+    after = _count_active_tfidf()
+    assert after == before, (
+        "Assessment was created despite the lock helper raising — the "
+        "lock must be acquired before the duplicate-check SELECT and "
+        "any insert."
+    )
+
+
+def test_advisory_lock_actually_blocks_concurrent_session_on_same_triple():
+    """End-to-end check that pg_advisory_xact_lock(K) on one connection
+    actually blocks pg_try_advisory_xact_lock(K) on another connection.
+    Guards against accidentally swapping in a non-locking primitive
+    (pg_advisory_unlock, pg_advisory_lock_shared, etc.) during a refactor."""
+    from sqlalchemy import create_engine
+    from sqlalchemy import text as _text
+
+    from train_routes.v3.train_routes import _training_job_dup_lock_key
+
+    sync_engine = create_engine(
+        "postgresql://dbuser:dbpassword@localhost:5432/dbname",
+        # Two distinct backend connections — required for advisory-lock
+        # contention to be observable.
+        pool_size=2,
+        max_overflow=0,
+    )
+    try:
+        key = _training_job_dup_lock_key(424242, 717171, "tfidf")
+
+        with sync_engine.connect() as c1:
+            # Open an explicit transaction so the xact lock survives until
+            # we commit/rollback.
+            tx1 = c1.begin()
+            c1.execute(_text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=key))
+
+            with sync_engine.connect() as c2:
+                tx2 = c2.begin()
+                # try_lock returns false because c1 holds the same key.
+                got = c2.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(k=key)
+                ).scalar()
+                assert got is False, (
+                    "pg_try_advisory_xact_lock unexpectedly succeeded — "
+                    "the primary lock is not actually held"
+                )
+
+                # Different key → no contention.
+                other_key = _training_job_dup_lock_key(424242, 717171, "ngrams")
+                got_other = c2.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(
+                        k=other_key
+                    )
+                ).scalar()
+                assert (
+                    got_other is True
+                ), "distinct triples should not contend on the same key"
+                tx2.rollback()
+
+            tx1.rollback()
+
+            # After rollback the key is free again.
+            with sync_engine.connect() as c3:
+                tx3 = c3.begin()
+                got = c3.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(k=key)
+                ).scalar()
+                assert got is True, "lock was not released on rollback"
+                tx3.rollback()
+    finally:
+        sync_engine.dispose()
+
+
 def test_list_training_jobs(
     client, regular_token1, admin_token, test_revision_id, test_revision_id_2
 ):

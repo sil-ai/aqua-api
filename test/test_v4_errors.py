@@ -13,13 +13,28 @@ abort the test — see api_v4/errors.py. test_v4_subapp.py covers the same 500 p
 end to end through the parent mount.
 """
 
+import contextlib
+import json
+import logging
+import math
+import sys
+
 import fastapi
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import Field, field_validator
 
 import app as app_module
 from api_v4.app import create_v4_app
-from api_v4.errors import V4APIError
+from api_v4.errors import (
+    _DETAILS_BUDGET,
+    _MAX_DETAILS_DEPTH,
+    _OMITTED_KEY,
+    V4APIError,
+    _bounded_details,
+    _bounded_json_safe,
+)
+from api_v4.schemas.assessment import SimilarVersesRequest
 from api_v4.schemas.base import V4BaseModel
 
 ENVELOPE_KEYS = {"code", "message", "details"}
@@ -27,6 +42,125 @@ ENVELOPE_KEYS = {"code", "message", "details"}
 
 class _ProbeBody(V4BaseModel):
     value: int
+
+
+class _ProbeFloats(V4BaseModel):
+    """A body whose rejection echoes the caller's floats back into ``details``.
+
+    The shape ``POST /v4/assessments/{id}/similar-verses`` has: a list of raw floats
+    with a validator that refuses non-finite ones. Pydantic puts the offending input
+    into the error, so the envelope has to survive carrying it.
+    """
+
+    values: list[float]
+
+    @field_validator("values")
+    @classmethod
+    def _finite(cls, value):
+        if any(not math.isfinite(number) for number in value):
+            raise ValueError("values must not contain inf or nan")
+        return value
+
+
+#: Max length of the probe body below, small enough that a test can breach it cheaply.
+_PROBE_TEXT_MAX = 64
+
+#: A value comfortably over the budget but cheap to send over the test client. 25x the
+#: budget is enough to prove the cut; the true reported magnitude (70 MB) is exercised
+#: against the walk directly, in test_the_reported_seventy_megabyte_echo_is_bounded.
+_LARGE = 200_000
+
+#: Enough entries that a container of *small* values still busts the budget on count
+#: alone — the case no per-value cap can catch.
+_MANY = 5_000
+
+#: The single-character key the sized probe route puts its value under. Short and known
+#: so a test can state the boundary exactly: the value gets the budget less its key.
+_SIZED_KEY = "v"
+
+
+class _ProbeText(V4BaseModel):
+    """The shape ``POST /v4/revisions`` has: one long string with a ``max_length``.
+
+    Pydantic attaches the value it rejected to the error, so an over-length body comes
+    straight back to the caller. That is #920's reported case, in miniature.
+    """
+
+    text: str = Field(max_length=_PROBE_TEXT_MAX)
+
+
+#: The depth #932 reported: 252 levels in a 1.5 KB body answered 500 where 251 answered
+#: 422, because pydantic-core's serializer gives up around 255. Far past
+#: :data:`_MAX_DETAILS_DEPTH`, so the walk now cuts it long before the serializer sees it.
+_REPORTED_DEPTH = 252
+
+#: Bytes that are not valid UTF-8, for #933. ``jsonable_encoder`` decodes ``bytes`` as
+#: UTF-8, so these are what makes it raise.
+_UNDECODABLE = b"\xff\xfe"
+
+
+def _nested_json(depth: int) -> bytes:
+    """A ``_ProbeBody`` body whose ``value`` is ``depth`` levels of nesting.
+
+    Assembled by concatenation rather than ``json.dumps`` on a nested dict, because
+    ``json.dumps`` recurses too and dies on its own stack well before the depths that
+    matter here — the failure would then be the test's, not the server's.
+    """
+    return ('{"value":' + '{"a":' * depth + "1" + "}" * depth + "}").encode()
+
+
+def _container_depth(value) -> int:
+    """How many containers deep ``value`` nests, counting itself.
+
+    ``{"a": 1}`` is 1 and ``{"a": {"b": 1}}`` is 2. Keys are measured as well as values,
+    because the walk bounds them the same way. Only ever applied to *bounded* output —
+    it recurses, so on a raw deep payload it would hit the same stack the cap exists to
+    protect.
+    """
+    if isinstance(value, dict):
+        below = [_container_depth(item) for item in value.values()]
+        below += [_container_depth(key) for key in value]
+        return 1 + max(below, default=0)
+    if isinstance(value, list):
+        return 1 + max([_container_depth(item) for item in value], default=0)
+    return 0
+
+
+@contextlib.contextmanager
+def _captured_error_logs(caplog):
+    """Records from ``api_v4.errors``, which does not reach ``caplog`` on its own.
+
+    ``setup_logger`` sets ``propagate = False`` so production does not get duplicate
+    lines through parent loggers, while ``caplog`` installs its handler on the root — so
+    the two never meet and ``caplog.records`` comes back empty even though the line was
+    written. Attaching the handler to this logger directly is what makes the records
+    visible. The alternative, flipping ``propagate`` for the test, would assert against
+    a logging configuration the app never actually runs with.
+    """
+    logger = logging.getLogger("api_v4.errors")
+    previous_level = logger.level
+    # Only detach what this block attached. ``addHandler`` is already idempotent — it
+    # is ``if not (hdlr in self.handlers)`` — so a second add cannot duplicate records.
+    # The *remove* is the unguarded half: nest this helper and the inner exit would
+    # detach the handler while the outer block was still using it, and the outer block
+    # would stop capturing silently rather than fail.
+    attached = caplog.handler not in logger.handlers
+    if attached:
+        logger.addHandler(caplog.handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield caplog
+    finally:
+        if attached:
+            logger.removeHandler(caplog.handler)
+        logger.setLevel(previous_level)
+
+
+def _chain_leaf(value):
+    """The leaf at the bottom of a single-key nesting chain, e.g. ``{"a": {"a": X}}``."""
+    while isinstance(value, dict):
+        (value,) = value.values()
+    return value
 
 
 @pytest.fixture
@@ -79,8 +213,119 @@ def error_app():
             details={"ids": {3, 1, 2}},
         )
 
+    @v4_app.get("/_raise_v4_api_error_non_finite")
+    async def _raise_v4_api_error_non_finite():
+        # details holds a nan. jsonable_encoder leaves it a float and
+        # JSONResponse dumps with allow_nan=False, so an unscrubbed envelope
+        # raises inside the handler and downgrades this 422 into a 500.
+        raise V4APIError(
+            status_code=422,
+            code="BAD_NUMBER",
+            message="Not a number.",
+            details={"values": [float("nan"), float("inf"), 1.5]},
+        )
+
+    @v4_app.get("/_raise_v4_api_error_sized")
+    async def _raise_v4_api_error_sized(chars: int):
+        # details sized by the caller, so one test can sit on either side of the
+        # budget and pin the boundary.
+        raise V4APIError(
+            status_code=409,
+            code="TOO_BIG",
+            message="Big.",
+            details={_SIZED_KEY: "x" * chars},
+        )
+
+    @v4_app.get("/_raise_v4_api_error_many_items")
+    async def _raise_v4_api_error_many_items():
+        # Every item is tiny; only the count is large. A per-value size cap would
+        # not touch this.
+        raise V4APIError(
+            status_code=409,
+            code="TOO_MANY",
+            message="Many.",
+            details={"ids": list(range(_MANY))},
+        )
+
+    @v4_app.get("/_raise_v4_api_error_many_keys")
+    async def _raise_v4_api_error_many_keys():
+        raise V4APIError(
+            status_code=409,
+            code="TOO_MANY",
+            message="Many.",
+            details={"fields": {f"k{index}": index for index in range(_MANY)}},
+        )
+
+    @v4_app.get("/_raise_v4_api_error_null_inside")
+    async def _raise_v4_api_error_null_inside():
+        # exclude_none drops an absent details *field*; a None *inside* details is
+        # data (Pydantic reports input: null for an unparseable form field) and must
+        # survive the walk.
+        raise V4APIError(
+            status_code=422,
+            code="NULL_INSIDE",
+            message="Null.",
+            details={"input": None, "loc": ["body", "x"]},
+        )
+
+    @v4_app.get("/_raise_v4_api_error_huge_key")
+    async def _raise_v4_api_error_huge_key():
+        # The shape POST /v4/assessments/{id}/similar-verses produces for a query
+        # point with no discriminator tag: union_tag_not_found, whose input is the
+        # caller's raw dict — so the oversized string arrives as a KEY, not a value.
+        raise V4APIError(
+            status_code=422,
+            code="BAD_QUERY",
+            message="Bad query.",
+            details={
+                "errors": [
+                    {
+                        "type": "union_tag_not_found",
+                        "loc": ["queries", 0],
+                        "input": {"K" * _LARGE: 1},
+                    }
+                ]
+            },
+        )
+
+    @v4_app.get("/_raise_http_large_detail")
+    async def _raise_http_large_detail():
+        # HTTPException permits a structured detail, and nothing bounds what an
+        # endpoint puts in one.
+        raise fastapi.HTTPException(status_code=400, detail={"blob": "x" * _LARGE})
+
+    @v4_app.get("/_raise_v4_api_error_undecodable_bytes")
+    async def _raise_v4_api_error_undecodable_bytes():
+        # details holds bytes that are not UTF-8. jsonable_encoder decodes bytes and
+        # raises on anything else, *before* the bounding walk runs — so an unguarded
+        # envelope downgrades this 409 into a generic 500. No endpoint takes bytes
+        # today, but V4APIError.details is a plain dict and nothing stops one arriving
+        # here (a blob column echoed on a failure), which is why this probe is a
+        # domain error rather than a request.
+        raise V4APIError(
+            status_code=409,
+            code="BAD_BLOB",
+            message="Bad blob.",
+            details={"loc": ["body", "blob"], "input": _UNDECODABLE},
+        )
+
     @v4_app.post("/_validate")
     async def _validate(body: _ProbeBody):
+        return {"ok": True}
+
+    @v4_app.post("/_validate_similar_verses")
+    async def _validate_similar_verses(body: SimilarVersesRequest):
+        # The real model, not a probe: the depth cap has to be checked against the most
+        # structured body on the v4 surface, or "the ceiling clears real payloads" is
+        # only an assertion about a toy.
+        return {"ok": True}
+
+    @v4_app.post("/_validate_text")
+    async def _validate_text(body: _ProbeText):
+        return {"ok": True}
+
+    @v4_app.post("/_validate_floats")
+    async def _validate_floats(body: _ProbeFloats):
         return {"ok": True}
 
     @v4_app.get("/_raise_bare_exception")
@@ -168,6 +413,37 @@ def test_v4_api_error_with_unserializable_details_does_not_downgrade(client):
     assert sorted(body["error"]["details"]["ids"]) == [1, 2, 3]
 
 
+def test_non_finite_details_do_not_downgrade_the_status(client):
+    """The sibling of the unserializable-``details`` test above, for the other half of
+    the same landmine. ``jsonable_encoder`` makes unknown *types* safe and leaves
+    ``nan``/``inf`` as floats, which ``JSONResponse`` then refuses — so without the
+    scrub this 422 arrives as a generic 500 with its code and message gone."""
+    resp = client.get("/_raise_v4_api_error_non_finite")
+    assert resp.status_code == 422, resp.text
+    _assert_envelope(resp.json())
+    error = resp.json()["error"]
+    assert error["code"] == "BAD_NUMBER"
+    # Named rather than dropped, so the error still shows what it objected to.
+    assert error["details"] == {"values": ["nan", "inf", 1.5]}
+
+
+def test_a_validation_error_echoing_a_nan_is_still_a_422(client):
+    """The reachable case, and the one that put the scrub here. Strict JSON has no
+    literal for ``nan``, but Python's own encoder emits one and its parser accepts one,
+    so a Python client can send it without noticing — and the validation error echoes
+    the input straight back into ``details``."""
+    resp = client.post(
+        "/_validate_floats",
+        content=json.dumps({"values": [float("nan"), 1.0]}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    _assert_envelope(resp.json())
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+    (error,) = resp.json()["error"]["details"]["errors"]
+    assert error["input"] == ["nan", 1.0]
+
+
 def test_validation_error_returns_422_envelope(client):
     response = client.post("/_validate", json={"value": "not-an-int"})
     assert response.status_code == 422
@@ -197,6 +473,527 @@ def test_unhandled_exception_returns_generic_500(client):
         "password",
     )
     assert not any(token in response.text for token in leaked), response.text
+
+
+# ---------------------------------------------------------------------------
+# Size bound on details (#920). All four handlers funnel through
+# _error_response, so the cap lives there; three of them can carry a large
+# details and are each covered below (the catch-all passes none at all, and
+# test_unhandled_exception_returns_generic_500 already asserts it stays empty).
+# ---------------------------------------------------------------------------
+
+
+def test_a_large_validation_input_is_replaced_and_the_response_is_small(client):
+    """#920's reported case through the handler that reports it.
+
+    The value the caller sent is echoed back under ``input``; ``loc`` and ``msg``
+    already say *where* and *what*, so the echo is what gets cut. The assertion that
+    matters is the last one — the point is bytes on the wire, not a marker.
+    """
+    response = client.post("/_validate_text", json={"text": "x" * _LARGE})
+    assert response.status_code == 422, response.text
+    body = response.json()
+    _assert_envelope(body)
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    (error,) = body["error"]["details"]["errors"]
+
+    # Where and what survive untouched. Only the echo goes.
+    assert error["loc"] == ["body", "text"]
+    assert "at most" in error["msg"]
+    assert error["input"] != "x" * _LARGE
+    # The marker says how big the value was and why it is gone — otherwise the next
+    # person reads the gap as "the field arrived empty".
+    assert f"{_LARGE:,}" in error["input"]
+    assert "omitted" in error["input"]
+
+    assert len(response.content) < _DETAILS_BUDGET, len(response.content)
+
+
+def test_the_budget_boundary_is_exact(client):
+    """Just under and just over, so an off-by-one in the comparison is visible.
+
+    A value is measured against what the budget has left, and the only thing charged
+    ahead of it here is its own one-character key — so these two sizes sit exactly
+    either side of the line.
+    """
+    headroom = _DETAILS_BUDGET - len(_SIZED_KEY)
+
+    kept = client.get("/_raise_v4_api_error_sized", params={"chars": headroom})
+    assert kept.status_code == 409, kept.text
+    assert kept.json()["error"]["details"][_SIZED_KEY] == "x" * headroom
+
+    cut = client.get("/_raise_v4_api_error_sized", params={"chars": headroom + 1})
+    assert cut.status_code == 409, cut.text
+    marker = cut.json()["error"]["details"][_SIZED_KEY]
+    assert marker.startswith("<") and marker.endswith(">"), marker
+    assert f"{headroom + 1:,}" in marker, marker
+
+
+def test_a_large_http_exception_detail_is_bounded(client):
+    """The third handler that can carry a large details: a structured ``exc.detail``.
+
+    A fix tested only through 422s would not prove this path is covered, and this one
+    is nested a level down (``details.detail.blob``) so a top-level-only cap misses it.
+    """
+    response = client.get("/_raise_http_large_detail")
+    assert response.status_code == 400, response.text
+    body = response.json()
+    _assert_envelope(body)
+    assert body["error"]["code"] == "BAD_REQUEST"
+    blob = body["error"]["details"]["detail"]["blob"]
+    assert "omitted" in blob and f"{_LARGE:,}" in blob
+    assert len(response.content) < _DETAILS_BUDGET, len(response.content)
+
+
+def test_a_long_list_keeps_what_fits_and_says_what_it_dropped(client):
+    """Many small items: the case no per-value size cap can catch.
+
+    Reachable on ``POST /v4/assessments/{id}/similar-verses``, whose combined-cap
+    validator runs at model level and so echoes the entire body — up to 500 query
+    points of 300 floats — as one ``input`` with no oversized value anywhere in it.
+    Truncating rather than dropping the whole list is what keeps a request with sixty
+    small validation errors readable.
+    """
+    response = client.get("/_raise_v4_api_error_many_items")
+    assert response.status_code == 409, response.text
+    ids = response.json()["error"]["details"]["ids"]
+
+    # The head survives, in order, and the tail says how much went.
+    assert ids[:3] == [0, 1, 2]
+    assert len(ids) < _MANY
+    assert "omitted" in ids[-1] and "item" in ids[-1]
+    assert f"{_MANY - (len(ids) - 1):,}" in ids[-1]
+    assert len(response.content) < 4 * _DETAILS_BUDGET, len(response.content)
+
+
+def test_a_wide_dict_keeps_what_fits_and_says_what_it_dropped(client):
+    response = client.get("/_raise_v4_api_error_many_keys")
+    assert response.status_code == 409, response.text
+    fields = response.json()["error"]["details"]["fields"]
+
+    assert fields["k0"] == 0
+    assert len(fields) < _MANY
+    dropped = fields[_OMITTED_KEY]
+    assert "omitted" in dropped and "key" in dropped
+    assert len(response.content) < 4 * _DETAILS_BUDGET, len(response.content)
+
+
+def test_an_oversized_dict_key_is_bounded_too(client):
+    """Keys, not just values.
+
+    ``POST /v4/assessments/{id}/similar-verses`` takes a discriminated union, and a
+    query point with no ``type`` produces ``union_tag_not_found`` — an error whose
+    ``input`` is the caller's raw dict. So the caller controls the *keys*, and a walk
+    that charges a key without bounding it emits it in full.
+    """
+    response = client.get("/_raise_v4_api_error_huge_key")
+    assert response.status_code == 422, response.text
+    (error,) = response.json()["error"]["details"]["errors"]
+    assert error["loc"] == ["queries", 0]
+    (key,) = error["input"]
+    assert "omitted" in key and f"{_LARGE:,}" in key
+    assert len(response.content) < _DETAILS_BUDGET, len(response.content)
+
+
+def test_a_marker_states_the_cap_not_that_the_value_exceeded_it():
+    """A value is replaced when it does not fit what is *left* of the budget, and that
+    is below the cap as soon as anything earlier in the payload has been charged. So the
+    marker names the cap and the size it dropped — it must not claim this value was over
+    the cap, which would be false for every medium-sized value cut at the tail."""
+    details = {"a": "x" * (_DETAILS_BUDGET - 100), "b": "y" * 300}
+    marker = _bounded_details(details)["b"]
+    assert "300 characters omitted" in marker, marker
+    assert f"capped at {_DETAILS_BUDGET:,}" in marker, marker
+
+
+def test_a_null_inside_details_survives_the_walk(client):
+    """``exclude_none`` drops an absent details *field*; a ``None`` *inside* details is
+    data. ``POST /v4/token`` is why it matters — FastAPI validates form fields
+    individually, so a malformed credential request reports ``input: null``, and a walk
+    that dropped nulls would turn that into a missing key."""
+    response = client.get("/_raise_v4_api_error_null_inside")
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["details"] == {"input": None, "loc": ["body", "x"]}
+
+
+def test_the_reported_seventy_megabyte_echo_is_bounded():
+    """The real magnitude from #920, against the walk rather than over the wire.
+
+    ``POST /v4/revisions`` takes a whole Bible as one base64 string and caps it at
+    69,905,068 characters; one character more came back as a 69.9 MB 422 body. Nested
+    at ``details.errors[0].input``, so a cap that only walks the top level of details
+    does not reach it.
+    """
+    reported = 69_905_069
+    details = {
+        "errors": [
+            {
+                "type": "string_too_long",
+                "loc": ["body", "text"],
+                "msg": "String should have at most 69905068 characters",
+                "input": "A" * reported,
+                "ctx": {"max_length": 69905068},
+            }
+        ]
+    }
+    bounded = _bounded_details(details)
+    (error,) = bounded["errors"]
+
+    assert error["loc"] == ["body", "text"]
+    assert error["ctx"] == {"max_length": 69905068}
+    assert f"{reported:,}" in error["input"]
+    assert len(json.dumps(bounded)) < _DETAILS_BUDGET
+
+
+def test_the_walk_stops_once_the_budget_is_spent():
+    """Bounded *work*, not just a bounded result.
+
+    Measuring a payload must not cost what the bound saves, so each container stops
+    iterating the moment the budget is spent. The tripwire raises if anything measures
+    it, and it sits past the point where the budget runs out — so reaching it at all is
+    the failure.
+    """
+
+    class _Tripwire(str):
+        def __len__(self):
+            raise AssertionError("the walk kept going after the budget ran out")
+
+    payload = ["y" * 100] * 200 + [_Tripwire("z")]
+    assert sum(len(item) for item in payload[:-1]) > _DETAILS_BUDGET
+
+    bounded, _cost = _bounded_json_safe(payload, _DETAILS_BUDGET)
+    assert "omitted" in bounded[-1]
+
+
+# ---------------------------------------------------------------------------
+# Depth bound on details (#932). Nesting is nearly free in characters, so the
+# size cap above never fires on a deeply nested payload and pydantic-core's
+# serializer raises instead — turning the caller's 4xx into a generic 500.
+# ---------------------------------------------------------------------------
+
+
+def test_a_deeply_nested_body_is_a_422_not_a_500(client):
+    """#932's reported case: 252 levels in a body of about 1.5 KB.
+
+    Half a kilobyte is three orders of magnitude under ``_DETAILS_BUDGET``, so the size
+    cap never fires; without a depth cap the value reaches ``model_dump`` intact and
+    pydantic-core refuses it, and the base-``Exception`` catch-all reshapes the 422 into
+    a 500 with the ``code`` and ``message`` gone.
+    """
+    response = client.post(
+        "/_validate",
+        content=_nested_json(_REPORTED_DEPTH),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    _assert_envelope(body)
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    (error,) = body["error"]["details"]["errors"]
+
+    # Where and what survive, as with the size cut. Only the echo is touched.
+    assert error["loc"] == ["body", "value"]
+    assert error["msg"]
+
+    # The marker names the cut and says why. A marker that did not would read as "the
+    # field arrived empty", and one quoting the character budget would send the reader
+    # hunting a large payload that was never there.
+    marker = _chain_leaf(error["input"])
+    assert "omitted" in marker and "nesting" in marker, marker
+    assert f"{_MAX_DETAILS_DEPTH} levels" in marker, marker
+    assert f"{_DETAILS_BUDGET:,}" not in marker, marker
+
+    # And the cut lands exactly on the ceiling, so an off-by-one is visible.
+    assert _container_depth(body["error"]["details"]) == _MAX_DETAILS_DEPTH
+
+
+def test_the_depth_cap_clears_the_most_nested_real_request_body(client):
+    """The other half of the cap: it must not clip an ordinary payload.
+
+    ``POST /v4/assessments/{id}/similar-verses`` takes the most structured body on the
+    surface — a discriminated union of query points, one carrying 300 floats — so its
+    validation failures are the deepest ``details`` v4 really produces. They come to 6
+    levels at most, against a ceiling of 24. If that stopped being true the ceiling
+    would be wrong, which is what this asserts rather than assumes.
+    """
+    bodies = {
+        "no discriminator": {"queries": [{"text": "in the beginning"}], "limit": 10},
+        "unknown discriminator": {"queries": [{"type": "nope"}], "limit": 10},
+        "wrong vector length": {
+            "queries": [{"type": "vector", "vector": [0.1, 0.2]}],
+            "limit": 10,
+        },
+        "non-finite vector": {
+            "queries": [{"type": "vector", "vector": [float("nan")] * 300}],
+            "limit": 10,
+        },
+        # The model-level combined cap, which rejects after parsing and so echoes the
+        # whole body back — the deepest real shape of the four.
+        "combined cap": {
+            "queries": [{"type": "vref", "vref": "MAT 9:20"}] * 251,
+            "limit": 100,
+        },
+    }
+
+    for label, body in bodies.items():
+        response = client.post(
+            "/_validate_similar_verses",
+            content=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 422, f"{label}: {response.text}"
+        details = response.json()["error"]["details"]
+        depth = _container_depth(details)
+        # Well clear, not barely clear: the ceiling has to leave room for a request
+        # shape nobody has written yet.
+        assert depth <= _MAX_DETAILS_DEPTH // 3, f"{label}: {depth} levels"
+        assert "levels of nesting" not in response.text, label
+
+
+def test_the_depth_and_size_caps_both_apply_to_one_payload():
+    """A payload that is both deep and large gets both treatments.
+
+    They measure different quantities and neither subsumes the other, so a payload that
+    breaches both has to come back with one marker of each kind — and still inside the
+    character budget, since the depth cut charges only its own marker.
+    """
+    deep = "unreachable"
+    for _ in range(_MAX_DETAILS_DEPTH * 2):
+        deep = {"a": deep}
+    details = {"deep": deep, "big": "x" * _LARGE}
+
+    bounded = _bounded_details(details)
+
+    assert "levels of nesting" in _chain_leaf(bounded["deep"])
+    assert f"{_LARGE:,} characters omitted" in bounded["big"]
+    assert _container_depth(bounded) == _MAX_DETAILS_DEPTH
+    assert len(json.dumps(bounded)) < _DETAILS_BUDGET, len(json.dumps(bounded))
+
+
+def test_a_payload_too_deep_for_the_encoder_degrades_to_a_marker():
+    """The other end of #932, and the reason the fix is two-sided.
+
+    ``jsonable_encoder`` recurses once per level and runs *before* the bounding walk, so
+    a payload deep enough to exhaust the interpreter's stack exhausts it there, where
+    ``_MAX_DETAILS_DEPTH`` cannot reach. Found by sweeping every depth for the cap above:
+    with the cap in place the only depths still answering 500 were the last few that
+    Python's JSON parser accepts at all — one level higher and the body is refused up
+    front with a clean 400.
+
+    Asserted against the walk rather than over the wire on purpose. The exact depth where
+    the encoder gives out depends on how many frames the ASGI stack has already spent, so
+    a test that sent a body of exactly that depth would be pinning the test runner's
+    stack, not the server's behaviour.
+    """
+    deep = "unreachable"
+    for _ in range(sys.getrecursionlimit() * 2):
+        deep = {"a": deep}
+
+    bounded = _bounded_details({"errors": [{"loc": ["body", "value"], "input": deep}]})
+
+    # Coarse, unlike the in-place cut: the encoder raised with the walk never having
+    # run, so there is no partial result and no sibling to keep.
+    assert set(bounded) == {_OMITTED_KEY}
+    assert "nest too deeply" in bounded[_OMITTED_KEY], bounded
+    # It must not quote the ceiling. This payload never reached it — the stack ran out
+    # several hundred levels above — and naming it would misdescribe the failure.
+    assert str(_MAX_DETAILS_DEPTH) not in bounded[_OMITTED_KEY], bounded
+
+
+def test_a_circular_details_degrades_to_a_marker_rather_than_a_500():
+    """A cycle exhausts the encoder's stack the same way sheer depth does, so it takes
+    the same path out.
+
+    Pinned because it is the one case where that path carries a *server* bug: the
+    endpoint built a self-referential ``details``. The exception is consumed rather than
+    raised, so the log line asserted in the next test is the only trace it leaves
+    besides this marker. Telling a cycle from a deep payload would need cycle detection,
+    a visited set and a second walk; pydantic does not bother either, and reports
+    merely-deep data as ``Circular reference detected``.
+    """
+    cyclic = {}
+    cyclic["self"] = cyclic
+
+    bounded = _bounded_details({"input": cyclic})
+
+    assert set(bounded) == {_OMITTED_KEY}
+    assert "nest too deeply" in bounded[_OMITTED_KEY], bounded
+
+
+def test_a_swallowed_cycle_still_reaches_the_logs(caplog):
+    """The consumed exception must leave a traceback behind.
+
+    This is the guard on the trade the depth fix makes. Both ``except`` branches in
+    ``_bounded_details`` turn a raised exception into a marker, which is right for the
+    client — the 4xx survives — but it also means the base-``Exception`` handler never
+    runs, so ``ServerErrorMiddleware`` never re-raises and the parent
+    ``LoggingMiddleware`` never writes the traceback. A cyclic ``details`` is a server
+    bug; without this line it would leave no trace outside the response body.
+
+    ``warning`` rather than ``error`` on purpose: a body nested past roughly 965 levels
+    reaches this same branch, and a client can send one. Alerting on it would hand
+    anyone a way to page the on-call with a single request.
+    """
+    cyclic = {}
+    cyclic["self"] = cyclic
+
+    with _captured_error_logs(caplog):
+        _bounded_details({"input": cyclic})
+
+    (record,) = [r for r in caplog.records if r.name == "api_v4.errors"]
+    assert record.levelno == logging.WARNING, record.levelname
+    assert "too deeply nested" in record.getMessage()
+    # exc_info is the point: the message alone does not say which bug this was.
+    assert record.exc_info is not None
+
+
+def test_undecodable_details_are_logged_at_error(caplog):
+    """The ``bytes`` branch logs at ``error``, unlike its sibling above.
+
+    Nothing a client sends can reach it: it fires only when server code puts
+    undecodable ``bytes`` in ``details``, so there is no client-triggered noise to
+    worry about and the louder level is free. The asymmetry is the assertion — collapse
+    both branches to one level and either a cycle stops being visible or a deep body
+    starts paging someone.
+    """
+
+    class _WithBytes(V4BaseModel):
+        blob: bytes
+
+    with _captured_error_logs(caplog):
+        bounded = _bounded_details({"m": _WithBytes(blob=_UNDECODABLE)})
+
+    assert "not UTF-8 text" in bounded[_OMITTED_KEY], bounded
+    (record,) = [r for r in caplog.records if r.name == "api_v4.errors"]
+    assert record.levelno == logging.ERROR, record.levelname
+    assert record.exc_info is not None
+
+
+def test_the_float_scrub_still_runs_at_the_depth_ceiling():
+    """The depth cut replaces *containers* only, so a scalar sitting at the ceiling
+    falls through to the rest of the walk — and must still be scrubbed.
+
+    The interaction is worth holding down: move the depth guard ahead of the scrub, or
+    widen it to replace every value rather than every container, and #828 regresses at
+    exactly this depth, where ``JSONResponse`` refuses the body and the 4xx becomes the
+    500 both fixes exist to remove.
+    """
+    value = float("nan")
+    for _ in range(_MAX_DETAILS_DEPTH):
+        value = {"a": value}
+
+    bounded = _bounded_details(value)
+
+    assert _chain_leaf(bounded) == "nan"
+    # allow_nan=False is what Starlette's JSONResponse dumps with. Plain json.dumps
+    # emits NaN happily and would prove nothing.
+    json.dumps(bounded, allow_nan=False)
+
+
+def test_many_deep_branches_cannot_inflate_the_response():
+    """The depth marker trades a whole branch for about 70 characters, and the budget
+    still stops the walk — but the nesting left standing above each cut is JSON
+    punctuation, which the cost model does not charge (see ``_DETAILS_BUDGET``).
+
+    So the guarantee here is the one that data structure can actually offer: a small
+    multiple of the budget, the same bound the wide-container tests above assert, rather
+    than an amplifier that grows with how many deep branches the caller sends.
+    """
+    deep = 1
+    for _ in range(_MAX_DETAILS_DEPTH * 2):
+        deep = [deep]
+
+    bounded = _bounded_details({f"k{index}": deep for index in range(500)})
+    encoded = json.dumps(bounded)
+
+    assert "levels of nesting" in encoded
+    assert _container_depth(bounded) == _MAX_DETAILS_DEPTH
+    # The budget stopped the walk long before the 500th branch, and said so.
+    assert len(bounded) < 500
+    assert _OMITTED_KEY in bounded
+    assert len(encoded) < 4 * _DETAILS_BUDGET, len(encoded)
+
+
+# ---------------------------------------------------------------------------
+# Undecodable bytes in details (#933). jsonable_encoder decodes bytes as UTF-8
+# and raises on anything else, and it runs *before* the walk above — so neither
+# the size cap nor the float scrub gets a chance to help. Latent rather than
+# reachable: nothing on the v4 surface puts bytes in details today.
+# ---------------------------------------------------------------------------
+
+
+def test_undecodable_bytes_do_not_downgrade_the_status(client):
+    """The sibling of the ``nan`` and unserializable-``details`` tests, for the third
+    thing that can raise while the envelope is being built. Without the guard this 409
+    arrives as a generic 500 with its code and message gone."""
+    response = client.get("/_raise_v4_api_error_undecodable_bytes")
+    assert response.status_code == 409, response.text
+    body = response.json()
+    _assert_envelope(body)
+    assert body["error"]["code"] == "BAD_BLOB"
+    assert "undecodable" in body["error"]["details"]["input"]
+
+
+def test_undecodable_bytes_are_named_and_their_siblings_survive():
+    """Named rather than dropped, and replaced *in place*.
+
+    The precedent is the non-finite float, which is named so the error still shows what
+    it objected to. Doing it per value rather than replacing the whole ``details`` is
+    the same call ``_bounded_json_safe`` makes for containers: the ``loc`` and ``msg``
+    of every sibling error are worth keeping, and one bad value is no reason to lose
+    them.
+    """
+    details = {
+        "errors": [
+            {"type": "bytes_type", "loc": ["body", "a"], "msg": "bad", "input": b"ok"},
+            {
+                "type": "bytes_type",
+                "loc": ["body", "b"],
+                "msg": "worse",
+                "input": _UNDECODABLE,
+            },
+        ]
+    }
+
+    first, second = _bounded_details(details)["errors"]
+
+    # The sibling error is untouched, and so is everything beside the bad value.
+    assert first == {
+        "type": "bytes_type",
+        "loc": ["body", "a"],
+        "msg": "bad",
+        "input": "ok",
+    }
+    assert second["loc"] == ["body", "b"] and second["msg"] == "worse"
+    assert f"{len(_UNDECODABLE):,} undecodable bytes" in second["input"]
+    assert "UTF-8" in second["input"]
+
+
+def test_valid_utf8_bytes_still_decode():
+    """The guard must not change the case that already worked: ``jsonable_encoder``
+    decodes valid UTF-8 bytes to a ``str``, and the hook's success path is the same
+    ``bytes.decode()`` call, so this is unchanged behaviour held in place."""
+    assert _bounded_details({"raw": "héllo".encode()}) == {"raw": "héllo"}
+
+
+def test_a_model_carrying_undecodable_bytes_falls_back_to_a_whole_details_marker():
+    """The one position the per-value hook cannot reach.
+
+    FastAPI merges ``custom_encoder`` into a model's own encoders on Pydantic v1 only,
+    so under v2 a model in ``details`` is dumped by ``model_dump(mode="json")`` before
+    the hook is consulted, and that raises. There is no path to the offending field in
+    the exception, so nothing finer than the whole ``details`` is available — this pins
+    that it degrades to a marker rather than a 500.
+    """
+
+    class _WithBytes(V4BaseModel):
+        raw: bytes
+
+    bounded = _bounded_details({"m": _WithBytes(raw=_UNDECODABLE), "loc": ["body"]})
+
+    assert set(bounded) == {_OMITTED_KEY}
+    assert "UTF-8" in bounded[_OMITTED_KEY]
+    assert "omitted" in bounded[_OMITTED_KEY]
 
 
 def test_v3_error_shape_unchanged_freeze_regression():

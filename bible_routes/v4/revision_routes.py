@@ -42,14 +42,14 @@ from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
-from api_v4.errors import V4APIError
+from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import RevisionCreate, RevisionOut, RevisionPatch
 from bible_routes.v4 import revision_service
 from database.dependencies import get_db
 from database.models import BibleRevision, BibleVersion
 from database.models import UserDB as UserModel
-from security_routes.auth_routes import get_current_user
+from security_routes.v4.dependencies import get_current_user_v4
 
 router = fastapi.APIRouter(prefix="/revisions", tags=["Revisions"])
 
@@ -59,14 +59,16 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
 
     Built from **named columns**, not from ``revision.__dict__`` — the first of the
     three v3 behaviors #891 says not to port (see :class:`RevisionOut`). This is also
-    the one place the wire names are bridged to the ORM spellings
-    (``bible_version_id`` -> ``version_id``, ``back_translation_id`` ->
-    ``back_translation``) and the two denormalized parent fields are attached.
+    the one place ORM attribute names are bridged to their wire spellings, and where
+    the two denormalized parent fields are attached. Two bridges are left after #925
+    gave ``back_translation_id`` the same spelling on both sides: the column
+    ``bible_version_id`` becomes ``version_id``, and the column ``date`` becomes
+    ``uploaded_date``.
 
     Booleans are coerced with ``bool(...)`` because their columns are nullable and
     legacy rows may hold NULL (mirroring v3's null-to-false coercion for ``deleted``).
 
-    ``date`` is narrowed to a date here rather than by Pydantic coercion, which *raises*
+    ``uploaded_date`` is narrowed to a date here rather than by Pydantic coercion, which *raises*
     on a datetime whose time component is not midnight — and the column is a DateTime,
     so a legacy row is not guaranteed to be. The ``isinstance`` check is what makes this
     total over both shapes the attribute can hold: a row read back from Postgres carries
@@ -82,9 +84,9 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
         id=revision.id,
         version_id=revision.bible_version_id,
         name=revision.name,
-        date=revision_date,
+        uploaded_date=revision_date,
         published=bool(revision.published),
-        back_translation=revision.back_translation_id,
+        back_translation_id=revision.back_translation_id,
         machine_translation=bool(revision.machine_translation),
         deleted=bool(revision.deleted),
         version_abbreviation=version.abbreviation if version else None,
@@ -125,7 +127,7 @@ def _version_not_visible_error(exc, version_id: int) -> V4APIError:
 def _invalid_reference_error(exc) -> V4APIError:
     """Map :class:`revision_service.InvalidReference` onto its V4APIError.
 
-    Shared by create and patch: a ``back_translation`` id that does not exist is the
+    Shared by create and patch: a ``back_translation_id`` that does not exist is the
     same client mistake on either verb, and the #828 point is that it gets a stable 4xx
     code rather than falling through to the catch-all 500.
     """
@@ -134,7 +136,7 @@ def _invalid_reference_error(exc) -> V4APIError:
         code="INVALID_REFERENCE",
         message=(
             "A referenced value does not exist. Check the FK-backed fields: "
-            "back_translation."
+            "back_translation_id."
         ),
         details={"fields": list(revision_service.InvalidReference.FIELDS)},
     )
@@ -204,7 +206,7 @@ async def list_revisions(
         ),
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[RevisionOut]:
     """List revisions the caller may access, lowest id first, paginated.
 
@@ -244,7 +246,7 @@ async def list_revisions(
 async def get_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Fetch a single revision by id, scoped to what the caller may see.
 
@@ -263,11 +265,18 @@ async def get_revision(
     return await _out_for(db, revision)
 
 
-@router.post("", response_model=RevisionOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=RevisionOut,
+    status_code=status.HTTP_201_CREATED,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    responses=error_responses(status.HTTP_400_BAD_REQUEST),
+)
 async def create_revision(
     data: RevisionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Create a revision and load its verse text, in one JSON request.
 
@@ -308,19 +317,31 @@ async def create_revision(
     return await _out_for(db, revision)
 
 
-@router.patch("/{revision_id}", response_model=RevisionOut)
+@router.patch(
+    "/{revision_id}",
+    response_model=RevisionOut,
+    # 400 is reachable here but not on most of the surface, so it is declared on the
+    # route rather than in the shared set: an unresolvable foreign key in the body.
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses={
+        **error_responses(status.HTTP_400_BAD_REQUEST),
+        **V4_FORBIDDEN_RESPONSE,
+    },
+)
 async def update_revision(
     revision_id: int,
     data: RevisionPatch,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> RevisionOut:
     """Partially update a revision (parent version's owner, or an admin).
 
     Replaces v3's ``PUT /revision?id=&new_name=``: the new name is a body field rather
     than a query parameter, the response is the updated resource rather than a prose
     ``{"detail": ...}`` message, and the same closed allowlist covers the other mutable
-    fields (``published``, ``back_translation``, ``machine_translation``). A
+    fields (``published``, ``back_translation_id``, ``machine_translation``). A
     non-patchable field such as ``version_id`` or ``deleted`` is a 422 from the
     ``RevisionPatch`` allowlist rather than something this handler has to strip.
     """
@@ -335,11 +356,18 @@ async def update_revision(
     return await _out_for(db, revision)
 
 
-@router.delete("/{revision_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{revision_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # 403 is declared per write rather than shared: v4 answers 404 for a resource
+    # the caller cannot see, so 403 only ever means "visible, but not yours".
+    # See V4_ERROR_RESPONSES.
+    responses=V4_FORBIDDEN_RESPONSE,
+)
 async def delete_revision(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user_v4),
 ) -> Response:
     """Soft-delete a revision (parent version's owner, or an admin).
 

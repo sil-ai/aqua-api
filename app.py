@@ -4,8 +4,8 @@ import logging
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
@@ -33,37 +33,54 @@ from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
 from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
+from security_routes.rate_limiting import (
+    limiter,
+    rate_limit_exceeded_handler,
+    v4_rate_limit_exceeded_handler,
+)
 from train_routes.v3.train_routes import router as train_router_v3
 
 logger = logging.getLogger(__name__)
 
-app = fastapi.FastAPI()
+# Custom docs metadata used to live in a `my_schema()` helper that called
+# `get_openapi()` once and poked the result directly into `app.openapi_schema`,
+# bypassing FastAPI's own `.openapi()` caching. Since fastapi 0.137.0,
+# `.openapi()` invalidates that cache whenever it detects the route table's
+# version has changed (`self._openapi_routes_version != routes_version`,
+# tracked internally) and regenerates from the app's own `title`/`version`/
+# `description`/`contact`/`license_info` attributes (#937) -- which
+# `my_schema()` never set, so the very first real regeneration silently
+# replaced the custom info block with FastAPI's defaults ("FastAPI"/"0.1.0").
+# Passing the metadata to the constructor instead means every regeneration,
+# cached or not, produces the same `info` block through FastAPI's own
+# supported mechanism.
+#
+# Doing so also routes `contact`/`license_info` through fastapi's own
+# `OpenAPI(**output)` schema validation (new since this same bump), which
+# rejects a malformed `email` outright instead of passing it through as an
+# opaque string -- surfacing a pre-existing typo (missing "@") that the old
+# dict-poking path never validated. Corrected below; this is not a behavior
+# change for any client, since the old value was never a deliverable address.
+app = fastapi.FastAPI(
+    title="AQuA API",
+    version="0.2.0",
+    description="Augmented Quality Assessment API",
+    contact={
+        "name": "Get Help with this API",
+        "url": "http://ai.sil.org",
+        "email": "mark_woodward@sil.org",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/license/mit/",
+    },
+)
 
-
-def my_schema():
-    DOCS_TITLE = "AQuA API"
-    DOCS_VERSION = "0.2.0"
-    openapi_schema = get_openapi(
-        title=DOCS_TITLE,
-        version=DOCS_VERSION,
-        routes=app.routes,
-    )
-    openapi_schema["info"] = {
-        "title": DOCS_TITLE,
-        "version": DOCS_VERSION,
-        "description": "Augmented Quality Assessment API",
-        "contact": {
-            "name": "Get Help with this API",
-            "url": "http://ai.sil.org",
-            "email": "mark_woodwardsil.org",
-        },
-        "license": {
-            "name": "MIT License",
-            "url": "https://opensource.org/license/mit/",
-        },
-    }
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
+# Wire slowapi limiter so per-endpoint @limiter.limit decorators on
+# /token, /users, and /change-password throttle brute-force attempts by IP
+# (issue #713).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 # Origins that are always allowed regardless of ALLOWED_ORIGINS. These are the
@@ -218,7 +235,13 @@ def configure_routing(app):
     async def v4_root_bare():
         return v4_status_payload()
 
-    app.mount("/v4", create_v4_app(configure_cors=configure_cors))
+    # The v4 sub-app needs its own limiter state and 429 handler: exception
+    # handlers do not inherit across a mount, and v4 answers errors in its own
+    # envelope rather than v3's {"detail": ...} shape (#713, #828).
+    v4_app = create_v4_app(configure_cors=configure_cors)
+    v4_app.state.limiter = limiter
+    v4_app.add_exception_handler(RateLimitExceeded, v4_rate_limit_exceeded_handler)
+    app.mount("/v4", v4_app)
 
     @app.get("/")
     async def read_root():
@@ -257,4 +280,3 @@ if __name__ == "__main__":
     uvicorn.run(app, port=8000, host="0.0.0.0")
 else:
     configure(app)
-    my_schema()
