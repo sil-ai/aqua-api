@@ -50,7 +50,7 @@ __version__ = "v4"
 from datetime import timedelta
 
 import fastapi
-from fastapi import Depends, status
+from fastapi import Depends, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +58,11 @@ from api_v4.errors import V4APIError, V4ErrorResponse
 from api_v4.schemas.security import TokenOut
 from database.dependencies import get_db
 from security_routes.auth_routes import authenticate_user, create_access_token
+from security_routes.rate_limiting import (
+    TOKEN_LIMIT_SCOPE,
+    TOKEN_RATE_LIMIT,
+    limiter,
+)
 from security_routes.utilities import ACCESS_TOKEN_EXPIRE_MINUTES
 
 router = fastapi.APIRouter(tags=["Auth"])
@@ -78,10 +83,23 @@ router = fastapi.APIRouter(tags=["Auth"])
                 "(``INVALID_CREDENTIALS``) covers both, so an unauthenticated caller "
                 "cannot enumerate valid usernames."
             ),
-        }
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "model": V4ErrorResponse,
+            "description": (
+                "Too many token requests from this IP. The per-IP budget is shared "
+                "with v3's ``/latest/token`` — the limiter keys on the client address, "
+                "not the API version, so an attacker cannot double their attempts by "
+                "alternating between the two surfaces. ``code`` is "
+                "``TOO_MANY_REQUESTS`` and ``Retry-After`` carries the back-off in "
+                "seconds."
+            ),
+        },
     },
 )
+@limiter.shared_limit(TOKEN_RATE_LIMIT, scope=TOKEN_LIMIT_SCOPE)
 async def login_for_access_token(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> TokenOut:

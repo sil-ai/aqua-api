@@ -285,19 +285,28 @@ class TestPublishedErrorContract:
         """
         assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "500"}
 
-    def test_the_token_endpoint_documents_its_own_401(self, schema):
+    def test_the_token_endpoint_documents_its_own_401_and_429(self, schema):
         """``POST /v4/token`` answers 401, but for bad credentials, not a bad token.
 
         It is declared on the route so it can say ``INVALID_CREDENTIALS`` rather than
         inheriting the protected-route wording about a missing bearer token.
+
+        The 429 is declared here for the same reason the class exists — v4 documents
+        the errors an operation can actually return, and this operation is the only
+        rate-limited one on the surface (#713). It is per-IP and shared with v3's
+        ``/latest/token``, so a caller has to know it can arrive.
         """
         responses = schema["paths"]["/token"]["post"]["responses"]
-        assert set(responses) == {"200", "401", "422", "500"}
+        assert set(responses) == {"200", "401", "422", "429", "500"}
         assert (
             responses["401"]["content"]["application/json"]["schema"]["$ref"]
             == V4_ERROR_REF
         )
         assert "INVALID_CREDENTIALS" in responses["401"]["description"]
+        assert (
+            responses["429"]["content"]["application/json"]["schema"]["$ref"]
+            == V4_ERROR_REF
+        )
         # No 403: nothing here can be forbidden, because nothing is authenticated.
         assert "403" not in responses
 

@@ -6,6 +6,7 @@ import fastapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
@@ -33,11 +34,22 @@ from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
 from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
+from security_routes.rate_limiting import (
+    limiter,
+    rate_limit_exceeded_handler,
+    v4_rate_limit_exceeded_handler,
+)
 from train_routes.v3.train_routes import router as train_router_v3
 
 logger = logging.getLogger(__name__)
 
 app = fastapi.FastAPI()
+
+# Wire slowapi limiter so per-endpoint @limiter.limit decorators on
+# /token, /users, and /change-password throttle brute-force attempts by IP
+# (issue #713).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 def my_schema():
@@ -218,7 +230,13 @@ def configure_routing(app):
     async def v4_root_bare():
         return v4_status_payload()
 
-    app.mount("/v4", create_v4_app(configure_cors=configure_cors))
+    # The v4 sub-app needs its own limiter state and 429 handler: exception
+    # handlers do not inherit across a mount, and v4 answers errors in its own
+    # envelope rather than v3's {"detail": ...} shape (#713, #828).
+    v4_app = create_v4_app(configure_cors=configure_cors)
+    v4_app.state.limiter = limiter
+    v4_app.add_exception_handler(RateLimitExceeded, v4_rate_limit_exceeded_handler)
+    app.mount("/v4", v4_app)
 
     @app.get("/")
     async def read_root():
