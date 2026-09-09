@@ -455,3 +455,261 @@ def test_upload_revision_blank_lines_not_inserted(client, regular_token1, db_ses
     )
     assert [r.verse_reference for r in rows] == ["GEN 1:1", "GEN 1:2", "GEN 1:3"]
     assert [r.text for r in rows] == real_text
+
+
+def test_upload_revision_rejects_oversized_file(
+    client, regular_token1, db_session, monkeypatch
+):
+    """An upload larger than MAX_UPLOAD_BYTES must be rejected with 413
+    before any DB rows are written. Monkeypatch the cap down to a small
+    value so the test doesn't have to allocate / POST a 50MB body."""
+    from bible_routes.v3 import revision_routes
+
+    # Temporarily lower the cap to 1KB; payload of 1KB + 1 byte triggers 413
+    # without bloating the test suite's memory footprint.
+    monkeypatch.setattr(revision_routes, "MAX_UPLOAD_BYTES", 1024)
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    payload = b"x" * (1024 + 1)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {"version_id": version_id, "name": "Oversized Revision"}
+    files = {"file": ("upload.txt", payload, "text/plain")}
+    response = client.post(
+        f"{prefix}/revision", params=test_revision, files=files, headers=headers
+    )
+    assert response.status_code == 413
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "oversized upload must not create a revision row"
+
+
+def test_upload_revision_rejects_disallowed_content_type(
+    client, regular_token1, db_session
+):
+    """An upload with a non-allowlisted content-type must 415 and never
+    touch the DB."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {"version_id": version_id, "name": "Bad Content-Type"}
+    # image/png is well outside the allowlist
+    files = {"file": ("upload.png", b"\x89PNG\r\n\x1a\n", "image/png")}
+    response = client.post(
+        f"{prefix}/revision", params=test_revision, files=files, headers=headers
+    )
+    assert response.status_code == 415
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "rejected content-type must not create a revision row"
+
+
+def test_upload_revision_accepts_text_plain_with_charset(
+    client, regular_token1, db_session
+):
+    """Clients that include charset parameters on text/plain
+    (e.g. "text/plain; charset=utf-8") must still be accepted; we only
+    match against the bare media type."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {"version_id": version_id, "name": "Charset Revision"}
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    with open(test_upload_file, "rb") as fh:
+        files = {"file": ("uploadtest.txt", fh, "text/plain; charset=utf-8")}
+        response = client.post(
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
+        )
+
+    assert response.status_code == 200
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
+
+
+def test_upload_revision_accepts_octet_stream(client, regular_token1, db_session):
+    """Generic clients (curl, etc.) often send application/octet-stream for
+    plaintext uploads — that must still be accepted."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {"version_id": version_id, "name": "Octet Stream Revision"}
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    with open(test_upload_file, "rb") as fh:
+        files = {"file": ("uploadtest.txt", fh, "application/octet-stream")}
+        response = client.post(
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
+        )
+
+    assert response.status_code == 200
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
+
+
+def test_upload_revision_accepts_missing_content_type(
+    client, regular_token1, db_session
+):
+    """A multipart part with no Content-Type header must be accepted:
+    `requests` (used by aqua-django-app's upload proxy) and other generic
+    HTTP clients omit the per-part Content-Type when files are passed as a
+    `(filename, fileobj)` 2-tuple. The body is hand-crafted here so the
+    "no per-part Content-Type" case is exercised deterministically rather
+    than depending on `httpx`'s mime-guessing behavior."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file_bytes = test_upload_file.read_bytes()
+
+    boundary = "----testboundary801"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="uploadtest.txt"\r\n'
+            "\r\n"
+        ).encode()
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+
+    headers = {
+        "Authorization": f"Bearer {regular_token1}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+    test_revision = {"version_id": version_id, "name": "No Content-Type Revision"}
+    response = client.post(
+        f"{prefix}/revision", params=test_revision, content=body, headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
+
+
+@pytest.mark.asyncio
+async def test_read_upload_with_limit_streams_oversize_when_size_unknown():
+    """When the client doesn't advertise a size (file.size is None), the
+    streaming chunk loop must still abort once cumulative bytes exceed the
+    cap. This is the path that defends against chunked-encoded bodies that
+    bypass the fast file.size pre-check.
+    """
+    from fastapi import HTTPException
+
+    from bible_routes.v3.revision_routes import read_upload_with_limit
+
+    class FakeUploadFile:
+        """Mimics the subset of UploadFile.read(n) we depend on, while
+        leaving .size unset to force the streaming branch."""
+
+        def __init__(self, payload: bytes):
+            self._buf = payload
+            self.size = None
+            self.content_type = "text/plain"
+
+        async def read(self, n: int) -> bytes:
+            chunk, self._buf = self._buf[:n], self._buf[n:]
+            return chunk
+
+    # 6 bytes of payload, cap at 4: must trigger 413 mid-stream.
+    fake = FakeUploadFile(b"abcdef")
+    with pytest.raises(HTTPException) as exc_info:
+        await read_upload_with_limit(fake, max_bytes=4)
+    assert exc_info.value.status_code == 413
+
+    # Under the cap returns the full payload.
+    fake_ok = FakeUploadFile(b"abc")
+    assert await read_upload_with_limit(fake_ok, max_bytes=4) == b"abc"
+
+
+def test_list_revisions_updated_since_includes_soft_deleted(
+    client, regular_token1, admin_token, db_session
+):
+    """updated_since returns only revisions modified after the timestamp,
+    including soft-deleted ones, so downstream mirrors can sync deltas (#887).
+    """
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    version_id = create_bible_version(client, regular_token1, db_session)
+    kept_id = upload_revision(client, regular_token1, version_id)
+    deleted_id = upload_revision(client, regular_token1, version_id)
+
+    list_response = client.get(f"{prefix}/revision", headers=admin_headers)
+    assert list_response.status_code == 200
+    by_id = {r["id"]: r for r in list_response.json()}
+    assert by_id[kept_id]["updated_at"] is not None
+    watermark = max(r["updated_at"] for r in list_response.json())
+
+    assert delete_revision(client, regular_token1, deleted_id) == 200
+
+    delta_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": watermark},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {r["id"]: r for r in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Scoped to a version_id it behaves the same way
+    delta_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": watermark, "version_id": version_id},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {r["id"]: r for r in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Nothing changed since the delta → empty response
+    new_watermark = max(r["updated_at"] for r in delta_response.json())
+    empty_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": new_watermark},
+        headers=admin_headers,
+    )
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []
+
+
+def test_list_revisions_includes_null_deleted_rows(
+    client, regular_token1, admin_token, db_session
+):
+    """The default listing must not drop legacy NULL-deleted rows: the filter
+    is deleted.is_not(True), not deleted.is_(False)."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    row = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id)
+        .first()
+    )
+    row.deleted = None
+    db_session.commit()
+
+    for token in (admin_token, regular_token1):
+        status_code, listed = list_revision(client, token, version_id)
+        assert status_code == 200
+        assert revision_id in {r["id"] for r in listed}
+        status_code, listed = list_revision(client, token)
+        assert status_code == 200
+        assert revision_id in {r["id"] for r in listed}

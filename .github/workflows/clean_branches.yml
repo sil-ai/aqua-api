@@ -2,7 +2,17 @@ name: delete-stale-branches
 
 on:
   schedule:
-    - cron: '0 0 1 */2 *'  # This means to execute at 00:00 the first day every two months
+    - cron: '0 0 1 */2 *'  # day 1, every two months, 00:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (only list what would be deleted)'
+        type: boolean
+        default: true
+      date:
+        description: 'Age threshold for stale branches (e.g. "3 months ago", "1 second ago" to test)'
+        type: string
+        default: '3 months ago'
 
 jobs:
   cleaning:
@@ -15,10 +25,12 @@ jobs:
         uses: beatlabs/delete-old-branches-action@v0.0.10
         with:
           repo_token: ${{ github.token }}
-          date: '3 months ago'
-          dry_run: false
+          # On cron (schedule) uses the default 3 months; on manual run honors the date input
+          date: ${{ github.event_name == 'workflow_dispatch' && inputs.date || '3 months ago' }}
+          # On cron (schedule) it deletes for real; on manual run it honors the checkbox (default: dry run)
+          dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           delete_tags: true
           minimum_tags: 5
-          extra_protected_branch_regex: ^(main|master|development|release)$
+          extra_protected_branch_regex: ^(main|release|develop)$
           extra_protected_tag_regex: '^v.*'
           exclude_open_pr_branches: true

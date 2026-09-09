@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 Base = declarative_base()
 
@@ -148,6 +148,20 @@ class Assessment(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
+    attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
+    # Delta-sync watermark (#887). onupdate covers ORM/Core writes; the
+    # set_updated_at() BEFORE UPDATE trigger (installed by the DDL events
+    # below / migration c8d3f5a1b2e4) covers raw SQL so no write path can
+    # skip it. clock_timestamp(), not now(): now() is transaction-start
+    # time, so a long transaction would stamp rows earlier than watermarks
+    # handed out to mirrors mid-transaction, permanently hiding the change.
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
+        index=True,
+    )
 
     results = relationship(
         "AssessmentResult", cascade="all, delete", back_populates="assessment"
@@ -244,7 +258,6 @@ class AssessmentResult(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
 
     __table_args__ = (
@@ -275,6 +288,14 @@ class BibleRevision(Base):
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+    # See Assessment.updated_at for the trigger/clock_timestamp rationale.
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
+        index=True,
+    )
 
     back_translation = relationship("BibleRevision", remote_side=[id])
     bible_version = relationship("BibleVersion", back_populates="revisions")
@@ -315,9 +336,20 @@ class BibleVersion(Base):
     )
     machine_translation = Column(Boolean)
     is_reference = Column(Boolean)
+    transcribed_audio = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
+    # See Assessment.updated_at for the trigger/clock_timestamp rationale.
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
+        index=True,
+    )
 
     owner = relationship("UserDB", backref=backref("bible_versions"))
     back_translation = relationship("BibleVersion", remote_side=[id])
@@ -329,6 +361,46 @@ class BibleVersion(Base):
     )
 
     __table_args__ = (Index("ix_bible_version_deleted", "deleted"),)
+
+
+# updated_at maintenance for delta sync (#887): a BEFORE UPDATE trigger owns
+# the column so no write path (bulk update, raw SQL, soft-delete) can skip
+# bumping it. Installed here for create_all schemas (tests) and by migration
+# c8d3f5a1b2e4 for alembic-managed databases — keep the two definitions in
+# sync. The function is shared by the three triggers; a manual backfill of
+# updated_at must ALTER TABLE ... DISABLE TRIGGER first or the trigger will
+# clobber the supplied values.
+_SET_UPDATED_AT_FN = DDL(
+    """
+    CREATE OR REPLACE FUNCTION set_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at := clock_timestamp();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+
+for _table in (BibleVersion.__table__, BibleRevision.__table__, Assessment.__table__):
+    event.listen(_table, "after_create", _SET_UPDATED_AT_FN)
+    event.listen(
+        _table,
+        "after_create",
+        DDL(
+            f"DROP TRIGGER IF EXISTS trg_{_table.name}_set_updated_at "
+            f"ON {_table.name}"
+        ),
+    )
+    event.listen(
+        _table,
+        "after_create",
+        DDL(
+            f"CREATE TRIGGER trg_{_table.name}_set_updated_at "
+            f"BEFORE UPDATE ON {_table.name} "
+            f"FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
+        ),
+    )
 
 
 class BibleVersionAccess(Base):
@@ -469,6 +541,9 @@ class AgentLexemeCard(Base):
     # Opaque token bumped when the canonical card-builder rebuilds the card.
     # Nullable forever; only the most recent build sets it.
     build_version = Column(Text, nullable=True)
+    # Provenance: model id/name that built this card (e.g. "claude-sonnet-...",
+    # "gpt-oss-..."). Nullable forever; older/back-filled cards stay NULL.
+    model = Column(Text, nullable=True)
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
@@ -769,16 +844,18 @@ class AgentCritiqueIssue(Base):
     chapter = Column(Integer, nullable=False)
     verse = Column(Integer, nullable=False)
 
-    # Issue classification
-    issue_type = Column(
-        String(15), nullable=False
-    )  # 'omission', 'addition', or 'replacement'
+    # MQM classification
+    dimension = Column(String(50), nullable=False)
+    subtype = Column(String(100), nullable=False)
+    detector = Column(String(50), nullable=True)
 
     # Issue details
-    source_text = Column(Text, nullable=True)  # The source text (omission/replacement)
-    draft_text = Column(Text, nullable=True)  # The draft text (addition/replacement)
-    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
-    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+    source_text = Column(Text, nullable=True)
+    draft_text = Column(Text, nullable=True)
+    comments = Column(Text, nullable=True)
+    severity = Column(Integer, nullable=True)  # 1..5, NULL when the agent omits it
+    evidence = Column(JSONB, nullable=True)  # list[str]
+    suggestions = Column(JSONB, nullable=True)  # list[{text, note?}]
 
     # Resolution tracking
     is_resolved = Column(Boolean, default=False, nullable=False)
@@ -805,23 +882,12 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_assessment", "assessment_id"),
         Index("ix_agent_critique_issue_vref", "vref"),
         Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
-        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_dimension", "dimension"),
+        Index("ix_agent_critique_issue_subtype", "subtype"),
         Index("ix_agent_critique_issue_severity", "severity"),
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
         Index("ix_agent_critique_issue_translation", "agent_translation_id"),
-        # The both-NULL clause permits legacy rows that existed before this
-        # migration with no text fields set.  New rows always satisfy the
-        # type-specific requirements via Pydantic validation.
-        CheckConstraint(
-            """
-            (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR
-            (issue_type = 'addition'    AND source_text IS NULL     AND draft_text IS NOT NULL) OR
-            (issue_type = 'replacement' AND source_text IS NOT NULL AND draft_text IS NOT NULL) OR
-            (source_text IS NULL AND draft_text IS NULL)
-            """,
-            name="ck_critique_issue_text_fields",
-        ),
     )
 
 
@@ -845,6 +911,7 @@ class AgentTranslation(Base):
     hyper_literal_translation = Column(Text, nullable=True)
     literal_translation = Column(Text, nullable=True)
     english_translation = Column(Text, nullable=True)
+    alternatives = Column(JSONB, nullable=True)  # list[{text, note?}]
     created_at = Column(TIMESTAMP, default=func.now())
 
     assessment = relationship("Assessment")
@@ -943,43 +1010,6 @@ class EflomalDictionary(Base):
     )
 
 
-class EflomalCooccurrence(Base):
-    """Verse-level co-occurrence statistics for word pairs.
-
-    Separate from EflomalDictionary because the key space differs:
-    - Dictionary contains only pairs the model actually aligned.
-    - This table contains ALL word pairs that co-occurred in any verse,
-      including pairs that were never aligned (co_occur > 0, aligned = 0).
-    Words are stored in normalized form (lowercase, alphanumeric only).
-
-    - co_occur_count: number of verses where both words appear.
-    - aligned_count: number of those verses where the model aligned them.
-
-    The ratio aligned/co_occur is used as a co-occurrence consistency signal
-    in the scoring formula (weighted geometric mean with dictionary probability).
-    """
-
-    __tablename__ = "eflomal_cooccurrence"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    assessment_id = Column(
-        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
-    )
-    source_word = Column(String, nullable=False)
-    target_word = Column(String, nullable=False)
-    co_occur_count = Column(Integer, nullable=False)
-    aligned_count = Column(Integer, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_eflomal_cooccurrence_lookup",
-            "assessment_id",
-            "source_word",
-            "target_word",
-        ),
-    )
-
-
 class EflomalTargetWordCount(Base):
     """Corpus-wide frequency of each target-language word.
 
@@ -989,8 +1019,8 @@ class EflomalTargetWordCount(Base):
 
     Used as the denominator in missing-word detection: a word that appears
     500 times but is only aligned 10 times behaves very differently from one
-    that appears and is aligned 10 times.  Neither EflomalDictionary nor
-    EflomalCooccurrence captures this marginal frequency.
+    that appears and is aligned 10 times.  EflomalDictionary does not
+    capture this marginal frequency.
     """
 
     __tablename__ = "eflomal_target_word_count"
@@ -1173,19 +1203,20 @@ class LanguageAffix(Base):
         ),
         CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
         Index(
-            "ux_language_affixes_iso_form_position",
+            "ux_language_affixes_version_form_position",
+            "target_version_id",
+            "form",
+            "position",
+            unique=True,
+            postgresql_where=text("target_version_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_language_affixes_iso_form_position_legacy",
             "iso_639_3",
             "form",
             "position",
             unique=True,
-        ),
-        Index(
-            "ux_language_affixes_version_form_position_gloss",
-            "target_version_id",
-            "form",
-            "position",
-            "gloss",
-            unique=True,
+            postgresql_where=text("target_version_id IS NULL"),
         ),
         Index("ix_language_affixes_iso", "iso_639_3"),
         Index("ix_language_affixes_iso_position", "iso_639_3", "position"),

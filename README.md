@@ -35,10 +35,11 @@ To run the API locally while developing:
     $ cd aqua-api
     ```
 
-3. Install the requirements:
+3. Install dependencies with [uv](https://docs.astral.sh/uv/) (creates `.venv` with the runtime + dev groups from `pyproject.toml`/`uv.lock`), then activate the virtualenv so `make`, `python`, `pytest`, `alembic`, etc. resolve to it (the Makefile targets call these tools directly). Without activating, run each command through `uv run` (e.g. `uv run make project-up`) instead.
 
     ```
-    $ pip install -r requirements.txt
+    $ uv sync
+    $ source .venv/bin/activate
     ```
 
 4. In case you face an error on the previous point regarding a postgres package.
@@ -59,30 +60,26 @@ To run the API locally while developing:
 
 ## Environment file
 
-The environment file should have the following variables:
+Copy [`.env.example`](.env.example) to `.env` and fill in real values:
 
-- IMAGENAME
-- REGISTRY
-- AQUA_DB
-- AQUA_DB_SYNC
-- AQUA_URL
-- GRAPHQL_SECRET
-- GRAPHQL_URL
-- AQUA_API_KEY
-- API_KEY
-- KEY_VAULT
-- AWS_ACCESS_KEY
-- AWS_SECRET_KEY
-- TEST_KEY
-- MODAL_WEBHOOK_TOKEN
-- ADMIN_PASSWORD
-- TEST_USER
-- TEST_PASSWORD
-- LOKI_ENABLED (optional, default: false)
-- LOKI_URL (optional)
-- LOKI_AUTH_TOKEN (optional)
-- PROJECT_NAME (optional, default: aqua-api)
-- ENVIRONMENT_LOKI (optional, default: local)
+```bash
+cp .env.example .env
+```
+
+`.env.example` is the authoritative list of every variable the API reads,
+with safe placeholder values and inline documentation. The application
+configuration (database, auth, CORS, Modal, thresholds, and Loki) is loaded
+and type-validated at startup by the typed settings object in
+[`config.py`](config.py) (`config.Settings`). `AQUA_DB` is a required field on
+`config.Settings`, so a missing or empty value fails validation at boot (the
+value's shape as a DB URL is not checked here — that surfaces when the engine
+connects). `SECRET_KEY` is optional on `config.Settings` (so config-only consumers
+like Alembic can import it) and its non-empty requirement is enforced at import
+in [`security_routes/utilities.py`](security_routes/utilities.py) — also
+fail-fast at boot, just in the security layer rather than in `config.Settings`
+itself. Either way, a missing required variable makes the app fail fast at boot
+instead of surfacing as a subtle runtime bug. See `.env.example` for the full
+set of optional variables and their defaults.
 
 ## Swagger
 
@@ -134,14 +131,10 @@ to the runners, but this are used automatically when you push to main.
 ## Pre-commit
 This project uses `pre-commit` to ensure code quality before commits. It automatically runs checks like `black` and `isort`.
 ### First-time Setup
-Before you commit for the first time, you need to install `pre-commit` and set it up:
-1.  Install `pre-commit`:
+`pre-commit` is installed as part of the dev dependencies by `uv sync`. Before you commit for the first time, set up the git hooks:
+1.  Set up the git hooks:
     ```bash
-    pip install pre-commit
-    ```
-2.  Set up the git hooks:
-    ```bash
-    pre-commit install
+    uv run pre-commit install
     ```
 ### How it works
 Now, `pre-commit` will run automatically on `git commit`. If any of the checks fail, the commit will be aborted. You will see the files that were modified by the hooks.

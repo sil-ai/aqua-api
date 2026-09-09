@@ -216,14 +216,16 @@ def test_predict_authorized_revision_fans_out(client, regular_token1, test_revis
 
 
 def test_predict_defaults_to_all_registered_apps(client, regular_token1):
-    """Omitting apps fans out to every registered app."""
+    """Omitting apps fans out to every registered app. Since
+    include_translation/include_critique default to True, the pure-default
+    call also spawns the slow agent path and returns a job handle."""
     results = {
         modal_app: {"app": modal_app}
         for modal_app in predict_routes.PREDICT_APPS.values()
     }
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
-        _make_modal_mock(results),
+        _make_modal_mock(results, spawn_id_by_app={"agent-critique": "fc-defaults"}),
     ):
         response = client.post(
             f"/{prefix}/predict",
@@ -232,7 +234,10 @@ def test_predict_defaults_to_all_registered_apps(client, regular_token1):
         )
 
     assert response.status_code == 200
-    assert set(response.json()["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    body = response.json()
+    assert set(body["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    assert body["job"]["status"] == "running"
+    assert body["job"]["includes"] == ["translation", "critique"]
 
 
 def test_predict_missing_pairs_returns_422(client, regular_token1):
@@ -303,18 +308,23 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
             True,
         ),
         ("include_critique", {"include_critique": False}, False),
-        ("include_critique", {}, False),
+        ("include_critique", {}, True),
         ("include_translation", {"include_translation": True}, True),
         ("include_translation", {"include_translation": False}, False),
-        ("include_translation", {}, False),
+        ("include_translation", {}, True),
+        # Translation explicitly off + critique unset: the unset critique
+        # default is coerced off rather than 422ing (see PredictInput's
+        # cross-flag validator).
+        ("include_critique", {"include_translation": False}, False),
     ],
     ids=[
         "critique_explicit_true",
         "critique_explicit_false",
-        "critique_omitted_defaults_false",
+        "critique_omitted_defaults_true",
         "translation_explicit_true",
         "translation_explicit_false",
-        "translation_omitted_defaults_false",
+        "translation_omitted_defaults_true",
+        "critique_coerced_off_with_translation_off",
     ],
 )
 def test_predict_forwards_include_flags_to_modal(
@@ -322,9 +332,8 @@ def test_predict_forwards_include_flags_to_modal(
 ):
     """`include_translation` and `include_critique` both survive
     `model_dump(exclude={"apps"})` and reach Modal — regression guard for
-    the bug where a missing field is silently stripped (predict's agent
-    side defaults both to False, so a dropped True flag silently disables
-    the feature)."""
+    the bug where a missing field is silently stripped. Both flags default
+    to True, so omitted flags forward as True."""
     captured = {}
 
     async def capture(payload):
@@ -346,11 +355,178 @@ def test_predict_forwards_include_flags_to_modal(
     assert captured["payload"][field] is expected
 
 
-def test_predict_forwards_model_override_to_agent_only(client, regular_token1):
-    """`model` is an agent-only knob — it must reach the agent's payload and
-    must NOT appear in non-agent app payloads (which may not accept the
-    field on their input model).
-    """
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"bt_pivot": True}, True),
+        ({"bt_pivot": False}, False),
+        ({"bt_pivot": None}, None),
+        ({}, None),
+    ],
+    ids=[
+        "pivot_on",
+        "pivot_off",
+        "pivot_explicit_null",
+        "pivot_omitted_defaults_null",
+    ],
+)
+def test_predict_forwards_bt_pivot_to_modal(client, regular_token1, extra, expected):
+    """`bt_pivot` must survive `model_dump(exclude={"apps"})` and reach the
+    app payload. It used to be dropped by PredictInput's fixed field set
+    (issue #911), which silently downgraded a pivot-on request to the
+    agent's deployment default. Omitting it forwards null, which the agent
+    reads as "use the deployment default" — as does sending null explicitly,
+    the likelier shape from a client working around the old drop."""
+    captured = {}
+
+    async def capture(payload):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"ngrams": capture}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"], **extra),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "bt_pivot" in captured["payload"]
+    assert captured["payload"]["bt_pivot"] is expected
+
+
+def test_predict_forwards_bt_pivot_to_spawned_agent(client, regular_token1):
+    """`bt_pivot` must reach the *spawned* slow-agent payload, not just the
+    synchronous fan-out. Back-translation runs on the slow path only, so
+    the spawn is the leg the flag actually steers — the sync call has
+    translation suppressed and never pivots."""
+    spawn_payloads: list[dict] = []
+
+    async def capture_spawn(payload):
+        spawn_payloads.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-test-bt-pivot"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True, bt_pivot=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert len(spawn_payloads) == 1
+    assert "bt_pivot" in spawn_payloads[0]
+    assert spawn_payloads[0]["bt_pivot"] is True
+
+
+def test_predict_bt_pivot_alone_does_not_spawn_slow_agent(client, regular_token1):
+    """`bt_pivot` steers the back-translation but must not itself trigger
+    the slow path. `spawn_slow_agent` keys off include_translation /
+    include_critique only, so a pivot-on request that opted out of
+    translation stays a fast-only call with no job handle — pinned here
+    against a future "bt_pivot implies translation" shortcut."""
+    spawn_calls: list[dict] = []
+
+    async def capture_spawn(payload):
+        spawn_calls.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-should-not-happen"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=False, bt_pivot=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "job" not in response.json()
+    assert spawn_calls == []
+
+
+def test_predict_bt_pivot_survives_flag_suppression_for_all_apps(
+    client, regular_token1
+):
+    """The slow-spawn path rewrites include_translation/include_critique on
+    the synchronous payload for *every* app (see
+    test_predict_non_agent_apps_get_suppressed_flags_when_agent_co_selected).
+    `bt_pivot` is not part of that suppression, so it must still reach each
+    app's sync payload unchanged — the shallow `dict(input_payload)` copy
+    only overrides the two include flags."""
+    captured: dict[str, dict] = {}
+
+    async def spawn(_payload):
+        fc = AsyncMock()
+        fc.object_id = "fc-x"
+        return fc
+
+    def from_name(app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured[app_name] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        mock_fn.spawn.aio = AsyncMock(side_effect=spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(
+                apps=["ngrams", "agent"], include_translation=True, bt_pivot=True
+            ),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    for app_name in ("ngrams", "agent-critique"):
+        assert captured[app_name]["include_translation"] is False
+        assert captured[app_name]["bt_pivot"] is True
+
+
+def test_predict_rejects_non_boolean_bt_pivot(client, regular_token1):
+    """`bt_pivot` is typed, so a bad value is a 422 at the boundary rather
+    than a silently-dropped field (the failure mode issue #911 is about)."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["ngrams"], bt_pivot="telugu"),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422, response.text
+    assert "bt_pivot" in response.text
+
+
+def test_predict_ignores_model_override(client, regular_token1):
+    """The per-call `model` override is no longer offered — the LLM is fixed
+    by the agent's deploy config. A client that still sends `model` must not
+    break: the request succeeds and the field reaches no app's payload (the
+    agent falls back to its deploy-time model via its own default)."""
     captured: dict[str, dict] = {}
 
     def from_name(app_name, fn_name, environment_name=None):
@@ -368,47 +544,17 @@ def test_predict_forwards_model_override_to_agent_only(client, regular_token1):
     with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent", "ngrams"], model="claude-opus-4-7"),
+            json=_body(
+                apps=["agent", "ngrams"],
+                model="claude-opus-4-7",
+                include_translation=False,
+            ),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
     assert response.status_code == 200, response.text
-    # The agent app receives the field; ngrams does not.
-    agent_payloads = [v for k, v in captured.items() if "agent" in k]
-    assert agent_payloads, captured
-    assert all(p.get("model") == "claude-opus-4-7" for p in agent_payloads)
-    assert "model" not in captured["ngrams"]
-
-
-def test_predict_omitted_model_round_trips_as_none(client, regular_token1):
-    """When the caller omits `model`, the agent payload still carries
-    `model: None` (round-trip default), letting the agent fall back to its
-    deploy-time PREDICT_MODEL without a presence check."""
-    captured: dict[str, dict] = {}
-
-    def from_name(app_name, fn_name, environment_name=None):
-        mock_fn = AsyncMock()
-
-        async def capture(payload):
-            captured[app_name] = payload
-            return {"ok": True}
-
-        mock_fn.remote.aio = AsyncMock(side_effect=capture)
-        return mock_fn
-
-    mock_cls = AsyncMock()
-    mock_cls.from_name = from_name
-    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
-        response = client.post(
-            f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-
-    assert response.status_code == 200, response.text
-    agent_payloads = [v for k, v in captured.items() if "agent" in k]
-    assert agent_payloads, captured
-    assert all(p.get("model") is None for p in agent_payloads)
+    assert captured
+    assert all("model" not in payload for payload in captured.values())
 
 
 def test_predict_rejects_critique_without_translation(client, regular_token1):
@@ -454,7 +600,7 @@ def test_predict_agent_fast_slice_round_trips(client, regular_token1):
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -523,17 +669,18 @@ def test_predict_spawns_slow_agent_when_translation_requested(client, regular_to
 
 def test_predict_no_job_when_translation_not_requested(client, regular_token1):
     """`include_translation=False` must skip the spawn entirely — clients
-    that aren't paying the LLM-latency cost get the existing zero-job
+    that opt out of the LLM-latency cost get the existing zero-job
     response shape unchanged. The `job` key must be absent from the
     response (not present-but-null), so existing callers that didn't
-    know about `job` see a byte-identical response shape."""
+    know about `job` see a byte-identical response shape. Opting out now
+    requires the explicit False since the flags default to True."""
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
         _make_modal_mock({"agent-critique": {"pairs": []}}),
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -693,8 +840,12 @@ def test_predict_unauthorized_assessment_returns_403(
 
 
 def _spawn_agent_and_get_job(client, token, body_overrides=None):
-    """Helper: POST a slow-path predict request and return the job_id."""
-    overrides = body_overrides or {}
+    """Helper: POST a slow-path predict request and return the job_id.
+
+    Defaults to a translation-only job (critique explicitly off, since it
+    defaults to True on the wire); pass include_critique=True in
+    body_overrides for a critique job."""
+    overrides = {"include_critique": False, **(body_overrides or {})}
 
     async def fast_resp(_payload):
         return {"pairs": []}
@@ -842,6 +993,92 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
         assert out["target_text"] == submitted["target_text"]
         # translation: positional from the agent (one per submitted pair)
         assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
+
+
+def test_predict_job_complete_forwards_critique_issues(client, regular_token1):
+    """Predict poll surfaces the MQM critique payload with the documented
+    `issues` shape, preserves unknown agent fields (extra="allow"), and
+    accepts dimensions / severities outside the documented set so a future
+    agent change can't 500 the poll endpoint."""
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={
+            "pairs": submitted_pairs,
+            "include_critique": True,
+        },
+    )
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            "dimension": "accuracy",
+                            "subtype": "mistranslation/hallucination-numbers",
+                            "source_text": "forty days",
+                            "draft_text": "fourteen days",
+                            "comments": "Number mistranslated",
+                            "severity": 4,
+                            "detector": "number_diff",
+                            "evidence": ["source: 40", "draft: 14"],
+                        }
+                    ],
+                    "agent_run_id": "abc123",  # extra="allow" must keep this
+                },
+            },
+            {
+                "translation": {"literal": "B-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            # An unrecognised dimension and an out-of-typical-range
+                            # severity must pass through, not 500 the poll.
+                            "dimension": "fluency",
+                            "subtype": "x" * 200,  # > 100 chars
+                            "severity": 9,
+                        }
+                    ]
+                },
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "complete"
+
+    pair_a = body["pairs"][0]
+    assert pair_a["critique"]["issues"][0]["dimension"] == "accuracy"
+    assert (
+        pair_a["critique"]["issues"][0]["subtype"]
+        == "mistranslation/hallucination-numbers"
+    )
+    assert pair_a["critique"]["issues"][0]["severity"] == 4
+    assert pair_a["critique"]["issues"][0]["detector"] == "number_diff"
+    assert pair_a["critique"]["issues"][0]["evidence"] == ["source: 40", "draft: 14"]
+    # extra="allow" preserves auxiliary keys
+    assert pair_a["critique"]["agent_run_id"] == "abc123"
+
+    pair_b = body["pairs"][1]
+    assert pair_b["critique"]["issues"][0]["dimension"] == "fluency"
+    assert pair_b["critique"]["issues"][0]["subtype"] == "x" * 200
+    assert pair_b["critique"]["issues"][0]["severity"] == 9
 
 
 def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
@@ -1103,6 +1340,43 @@ def test_predict_job_failed_records_error(client, regular_token1):
     body = response.json()
     assert body["status"] == "failed"
     assert body["error"] == "RuntimeError"
+
+
+@pytest.mark.parametrize(
+    "exc_name",
+    ["FunctionTimeoutError", "OutputExpiredError"],
+)
+def test_predict_job_modal_container_timeout_marks_failed(
+    client, regular_token1, exc_name
+):
+    """When Modal kills the container at its timeout (or the result expires),
+    `fc.get.aio(...)` raises `modal.exception.FunctionTimeoutError` /
+    `OutputExpiredError`. Both subclass `modal.exception.TimeoutError`, so
+    they have to be caught BEFORE the bare `TimeoutError` block — otherwise
+    they're silently treated as "still running" (that block catches
+    `modal.exception.TimeoutError` too) and the DB row never flips to
+    `failed`. Regression for a job that sat in `running` indefinitely
+    after its container timed out."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    exc_cls = getattr(modal.exception, exc_name)
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(side_effect=exc_cls("container hit timeout"))
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert exc_name in body["error"]
+    assert "container hit timeout" in body["error"]
+    # No Retry-After — the caller should stop polling.
+    assert "Retry-After" not in response.headers
 
 
 def test_predict_job_unknown_returns_404(client, regular_token1):

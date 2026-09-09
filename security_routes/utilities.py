@@ -1,12 +1,11 @@
 # utilities.py
-import os
-
 import bcrypt
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 
+from config import Settings
 from database.models import (  # Your SQLAlchemy model
     Assessment,
     BibleRevision,
@@ -16,7 +15,16 @@ from database.models import (  # Your SQLAlchemy model
     UserGroup,
 )
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+# Read a fresh Settings() (rather than the shared `settings` singleton) so the
+# fail-fast check re-evaluates the *current* environment every time this module
+# is imported. Making SECRET_KEY required on the shared singleton would break
+# Alembic, which imports database.database and only sets AQUA_DB; keeping the
+# enforcement here — where the key is actually used — is what lets the rest of
+# the app import config without a SECRET_KEY.
+SECRET_KEY = Settings().secret_key
+# Treat whitespace-only values as missing — they're a config typo, not a key.
+if SECRET_KEY is None or not SECRET_KEY.strip():
+    raise ValueError("SECRET_KEY environment variable is required for JWT signing")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

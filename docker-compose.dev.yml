@@ -14,3 +14,5 @@ services:
       - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
       - SECRET_KEY=${SECRET_KEY}
       - MODAL_ENV=${MODAL_ENV}
+      # Comma-separated list of allowed CORS origins; empty / unset blocks all.
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
