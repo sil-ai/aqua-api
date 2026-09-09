@@ -4,7 +4,6 @@ import logging
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -37,33 +36,39 @@ from train_routes.v3.train_routes import router as train_router_v3
 
 logger = logging.getLogger(__name__)
 
-app = fastapi.FastAPI()
-
-
-def my_schema():
-    DOCS_TITLE = "AQuA API"
-    DOCS_VERSION = "0.2.0"
-    openapi_schema = get_openapi(
-        title=DOCS_TITLE,
-        version=DOCS_VERSION,
-        routes=app.routes,
-    )
-    openapi_schema["info"] = {
-        "title": DOCS_TITLE,
-        "version": DOCS_VERSION,
-        "description": "Augmented Quality Assessment API",
-        "contact": {
-            "name": "Get Help with this API",
-            "url": "http://ai.sil.org",
-            "email": "mark_woodwardsil.org",
-        },
-        "license": {
-            "name": "MIT License",
-            "url": "https://opensource.org/license/mit/",
-        },
-    }
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
+# Custom docs metadata used to live in a `my_schema()` helper that called
+# `get_openapi()` once and poked the result directly into `app.openapi_schema`,
+# bypassing FastAPI's own `.openapi()` caching. Since fastapi 0.137.0,
+# `.openapi()` invalidates that cache whenever it detects the route table's
+# version has changed (`self._openapi_routes_version != routes_version`,
+# tracked internally) and regenerates from the app's own `title`/`version`/
+# `description`/`contact`/`license_info` attributes (#937) -- which
+# `my_schema()` never set, so the very first real regeneration silently
+# replaced the custom info block with FastAPI's defaults ("FastAPI"/"0.1.0").
+# Passing the metadata to the constructor instead means every regeneration,
+# cached or not, produces the same `info` block through FastAPI's own
+# supported mechanism.
+#
+# Doing so also routes `contact`/`license_info` through fastapi's own
+# `OpenAPI(**output)` schema validation (new since this same bump), which
+# rejects a malformed `email` outright instead of passing it through as an
+# opaque string -- surfacing a pre-existing typo (missing "@") that the old
+# dict-poking path never validated. Corrected below; this is not a behavior
+# change for any client, since the old value was never a deliverable address.
+app = fastapi.FastAPI(
+    title="AQuA API",
+    version="0.2.0",
+    description="Augmented Quality Assessment API",
+    contact={
+        "name": "Get Help with this API",
+        "url": "http://ai.sil.org",
+        "email": "mark_woodward@sil.org",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/license/mit/",
+    },
+)
 
 
 # Origins that are always allowed regardless of ALLOWED_ORIGINS. These are the
@@ -257,4 +262,3 @@ if __name__ == "__main__":
     uvicorn.run(app, port=8000, host="0.0.0.0")
 else:
     configure(app)
-    my_schema()

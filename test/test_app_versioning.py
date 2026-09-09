@@ -10,9 +10,16 @@ are mounted only under /latest), so the check is one-directional: v3 ⊆ latest.
 This introspects the actual FastAPI route table rather than scanning app.py
 source, so it stays correct regardless of how routers get registered — loops,
 variable prefixes, or reformatted include_router calls.
+
+Since fastapi 0.137.0, ``router.routes`` is no longer a flat list of route
+objects: ``include_router()`` now stores an ``_IncludedRouter`` wrapper instead
+of cloning the included routes, so the tree must be walked with
+``fastapi.routing.iter_route_contexts()`` to see the effective (path, methods)
+of every route, including ones nested behind an included router.
 """
 
 import fastapi
+from fastapi.routing import iter_route_contexts
 from starlette.routing import Mount
 
 import app
@@ -22,9 +29,9 @@ def _routes_under(configured_app, prefix):
     """Set of (method, sub_path) for every route mounted under `prefix`, with
     the prefix stripped so /v3 and /latest routes are directly comparable."""
     found = set()
-    for route in configured_app.routes:
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None)
+    for route_context in iter_route_contexts(configured_app.routes):
+        path = route_context.path
+        methods = route_context.methods
         if path is None or methods is None:
             continue
         if path == prefix or path.startswith(prefix + "/"):
@@ -76,9 +83,9 @@ def test_v4_surface_is_mounted():
     # The discovery root must exist inside the mounted sub-app. Its path is "/"
     # on the sub-app (it becomes /v4/ externally).
     sub_routes = {
-        (method, getattr(route, "path", None))
-        for route in v4_mount.routes
-        for method in (getattr(route, "methods", None) or [])
+        (method, route_context.path)
+        for route_context in iter_route_contexts(v4_mount.routes)
+        for method in (route_context.methods or [])
     }
     assert (
         "GET",

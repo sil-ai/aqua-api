@@ -2941,7 +2941,10 @@ class TestReadSchemaContract:
             for p in _route("list_assessments").dependant.query_params
             if p.alias == "type"
         )
-        assert AssessmentType in get_args(param.type_)
+        # fastapi's ModelField wraps a pydantic FieldInfo rather than exposing a
+        # v1-style `.type_` since fastapi 0.137 (#937); the annotation lives on
+        # `field_info` now.
+        assert AssessmentType in get_args(param.field_info.annotation)
 
 
 SERVED_TYPES = ("word-alignment", "semantic-similarity", "sentence-length")
@@ -11407,7 +11410,9 @@ class TestScoreComparisonContract:
         against = next(
             param for param in route.dependant.query_params if param.name == "against"
         )
-        assert against.required is True
+        # fastapi's ModelField no longer exposes a v1-style `.required` since
+        # fastapi 0.137 (#937); ask the wrapped FieldInfo instead.
+        assert against.field_info.is_required() is True
         assert _against_bounds("get_assessment_score_comparison")["min_length"] == 1
 
     def test_the_route_uses_the_result_pagination_dependency(self):
