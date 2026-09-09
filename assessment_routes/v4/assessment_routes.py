@@ -633,7 +633,7 @@ async def list_assessments(
       keeps listing assessments of deleted revisions.
 
     Ordered by id rather than v3's newest-requested-first: offset pagination needs a
-    total order on a column that cannot tie or move, and ``requested_at`` is nullable.
+    total order on a field that cannot tie or move, and ``requested_at`` is nullable.
 
     ``updated_since`` turns the same list into a delta feed, and every response carries
     ``next_updated_since`` — the caller's next watermark, lapped server-side by
