@@ -233,6 +233,30 @@ class TestLexemeCardAuthorization:
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "VERSION_NOT_FOUND"
 
+    def test_source_access_alone_does_not_grant_the_cards(
+        self, client, db_session, regular_token1, regular_token2
+    ):
+        """The rule that matters: cards follow the local-language translation, only.
+
+        Running an agent assessment needs access to both sides. Reading the cards it
+        produced needs access to the **target** — the local-language translation the
+        cards describe. This pins the inverse, which is the case worth being sure about:
+        a caller who holds the majority-language source and nothing else gets nothing,
+        even though the card names their version.
+        """
+        source = _make_version(db_session, "Group2")  # testuser2 only
+        target = _make_version(db_session, "Group1")  # testuser1 only
+        card_id = _make_card(db_session, source, target)
+
+        source_only = _get(client, regular_token2, target_version_id=target)
+        target_only = _get(client, regular_token1, target_version_id=target)
+
+        assert source_only.status_code == 404
+        assert source_only.json()["error"]["code"] == "VERSION_NOT_FOUND"
+
+        assert target_only.status_code == 200
+        assert _ids(target_only.json()) == [card_id]
+
     def test_unknown_target_version_is_the_same_404(
         self, client, db_session, regular_token1
     ):
