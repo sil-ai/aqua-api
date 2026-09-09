@@ -13153,17 +13153,21 @@
           {
             "in": "query",
             "name": "username",
-            "required": false,
+            "required": true,
             "schema": {
-              "title": "Username"
+              "minLength": 1,
+              "title": "Username",
+              "type": "string"
             }
           },
           {
             "in": "query",
             "name": "groupname",
-            "required": false,
+            "required": true,
             "schema": {
-              "title": "Groupname"
+              "minLength": 1,
+              "title": "Groupname",
+              "type": "string"
             }
           }
         ],
@@ -16519,17 +16523,21 @@
           {
             "in": "query",
             "name": "username",
-            "required": false,
+            "required": true,
             "schema": {
-              "title": "Username"
+              "minLength": 1,
+              "title": "Username",
+              "type": "string"
             }
           },
           {
             "in": "query",
             "name": "groupname",
-            "required": false,
+            "required": true,
             "schema": {
-              "title": "Groupname"
+              "minLength": 1,
+              "title": "Groupname",
+              "type": "string"
             }
           }
         ],
