@@ -94,7 +94,7 @@ def _create_version(client, token, db_session, *, abbreviation, group_name="Grou
     body = {
         **BASE_VERSION,
         "abbreviation": abbreviation,
-        "add_to_groups": [_group_id(db_session, group_name)],
+        "group_ids": [_group_id(db_session, group_name)],
     }
     resp = client.post(f"{PREFIX}/versions", json=body, headers=_auth(token))
     assert resp.status_code == 201, resp.text
@@ -1260,6 +1260,13 @@ class TestWireNaming:
     and passthrough behaviour lives in ``TestCreate``/``TestPatch``; what this class
     covers is *why* the suffix had to exist and that the date narrowing survived the
     rename.
+
+    A second wave then moved the three assessment timestamps onto the ``_at`` canon
+    and ``VersionCreate``'s group list onto ``group_ids``. Those are pinned by
+    :meth:`test_openapi_publishes_the_settled_field_names`, which asserts on schema
+    *properties* rather than on the document text: unlike the four camelCase
+    spellings, ``end_time`` legitimately appears in prose describing v3's own SQL, so
+    a substring guard would be wrong for it.
     """
 
     def test_openapi_never_republishes_a_withdrawn_spelling(self, client):
@@ -1297,8 +1304,36 @@ class TestWireNaming:
             "back_translation_id",
             "uploaded_date",
             "version_id",
+            "group_ids",
         ):
             assert canonical in document, canonical
+
+    def test_openapi_publishes_the_settled_field_names(self, client):
+        """The renamed fields are on the wire under their new names, and only those.
+
+        Asserted against schema ``properties`` rather than the document text, because
+        the retired timestamp spellings are not forbidden *strings* — the
+        ``/score-comparison`` description quotes v3's ``ORDER BY end_time DESC`` when
+        explaining what v4 does differently, and that is accurate prose about v3. What
+        must not exist is a v4 *field* by that name.
+        """
+        spec = client.get(f"{PREFIX}/openapi.json")
+        assert spec.status_code == 200, spec.text
+        schemas = spec.json()["components"]["schemas"]
+
+        retired_timestamps = ("requested_time", "start_time", "end_time")
+        for model in ("AssessmentOut", "AssessmentJob"):
+            properties = schemas[model]["properties"]
+            for settled in ("requested_at", "started_at", "ended_at"):
+                assert settled in properties, f"{model}.{settled}"
+            for retired in retired_timestamps:
+                assert retired not in properties, f"{model}.{retired}"
+
+        create = schemas["VersionCreate"]["properties"]
+        assert "group_ids" in create
+        assert "add_to_groups" not in create
+        # Request and response now spell the same concept the same way.
+        assert "group_ids" in schemas["VersionOut"]["properties"]
 
     def test_back_translation_id_targets_two_different_tables(self):
         """The defect the suffix fixes, pinned at the source.
@@ -1311,11 +1346,13 @@ class TestWireNaming:
         carry the suffix (``owner_id``, ``group_ids``, ``reference_id``,
         ``revision_id``, ``version_id``), so these two were the outliers.
 
-        One deliberate holdout, so this is not read as a blanket rule:
-        ``VersionCreate.add_to_groups`` carries group ids without the suffix and #925
-        ruled it stays, because a required create-time instruction is not the same
-        concept as ``group_ids`` read state and a matching name would imply a symmetry
-        that does not exist.
+        There is no longer a holdout: ``VersionCreate`` spells its group list
+        ``group_ids`` too. #925 first ruled the old ``add_to_groups`` should stay, on the
+        grounds that a required create-time instruction is not the same concept as
+        ``group_ids`` read state, then reversed it — v4 has no "remove" counterpart to
+        contrast against, so the verb was carrying nothing. Recorded because the earlier
+        ruling was written down here, and a retracted ruling has to be retracted where it
+        was made.
         """
         from database.models import BibleVersion as BibleVersionModel
 

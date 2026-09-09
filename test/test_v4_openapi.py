@@ -316,9 +316,14 @@ class TestForbiddenIsWriteOnly:
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 9 of the 31 domain operations, unreachable on 22.
+    write-path status: reachable on 9 of the 34 domain operations, unreachable on 25.
 
-    It briefly *was* in the shared set, which published it on all 31. This class is what
+    "Write-path" is the generalization, not the rule. The resolution ``PATCH`` on
+    ``/critique-issues/{issue_id}`` is a write that declares no 403, because it
+    authorizes by read access rather than ownership (#896) — so this set is the writes
+    that can raise a 403, not every write.
+
+    It briefly *was* in the shared set, which published it on all 34. This class is what
     keeps it out: a client generated from the schema would otherwise carry dead
     forbidden-handling on every read, and a reader of ``/v4/docs`` would conclude any
     v4 call can be refused.

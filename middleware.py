@@ -4,7 +4,7 @@ import socket
 import time
 import traceback
 
-from jose import JWTError, jwt
+import jwt
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
 from utils.logging_config import setup_logger
@@ -34,7 +34,7 @@ class LoggingMiddleware:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
             username = payload.get("sub")
             return username if username else "anonymous"
-        except JWTError:
+        except jwt.PyJWTError:
             return "invalid_token"
 
     async def __call__(self, scope, receive, send):

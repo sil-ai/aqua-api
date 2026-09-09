@@ -71,7 +71,7 @@ def _create(client, token, db_session, *, group_name="Group1", **overrides):
     body = {
         **BASE_VERSION,
         **overrides,
-        "add_to_groups": [_group_id(db_session, group_name)],
+        "group_ids": [_group_id(db_session, group_name)],
     }
     return client.post(f"{PREFIX}/versions", json=body, headers=_auth(token))
 
@@ -139,7 +139,7 @@ class TestCreate:
                 **BASE_VERSION,
                 "abbreviation": "V4CAMEL",
                 withdrawn: 1,
-                "add_to_groups": [_group_id(db_session, "Group1")],
+                "group_ids": [_group_id(db_session, "Group1")],
             }
             resp = client.post(
                 f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -168,7 +168,7 @@ class TestCreate:
                 **BASE_VERSION,
                 "abbreviation": "V4CLOSED",
                 **extra,
-                "add_to_groups": [_group_id(db_session, "Group1")],
+                "group_ids": [_group_id(db_session, "Group1")],
             }
             resp = client.post(
                 f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -230,7 +230,7 @@ class TestCreate:
         body = {
             **BASE_VERSION,
             "abbreviation": "V4ORPHAN",
-            "add_to_groups": [group2_id],
+            "group_ids": [group2_id],
         }
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -249,7 +249,7 @@ class TestCreate:
         assert after == before, "failed group check must not leave an orphan version"
 
     def test_create_empty_groups_is_400(self, client, regular_token1):
-        body = {**BASE_VERSION, "abbreviation": "V4EMPTY", "add_to_groups": []}
+        body = {**BASE_VERSION, "abbreviation": "V4EMPTY", "group_ids": []}
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
         )
@@ -257,13 +257,13 @@ class TestCreate:
         assert resp.json()["error"]["code"] == "VERSION_GROUP_REQUIRED"
 
     def test_create_missing_groups_is_422(self, client, regular_token1):
-        body = {**BASE_VERSION, "abbreviation": "V4MISSING"}  # no add_to_groups
+        body = {**BASE_VERSION, "abbreviation": "V4MISSING"}  # no group_ids
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
         )
         assert resp.status_code == 422, resp.text
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
-        assert "add_to_groups" in resp.text
+        assert "group_ids" in resp.text
 
     def test_create_unknown_iso_language_is_400_invalid_reference(
         self, client, regular_token1, db_session
@@ -273,7 +273,7 @@ class TestCreate:
             **BASE_VERSION,
             "abbreviation": "V4BADISO",
             "iso_language": "zzz",  # not in iso_language reference table
-            "add_to_groups": [_group_id(db_session, "Group1")],
+            "group_ids": [_group_id(db_session, "Group1")],
         }
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -314,7 +314,7 @@ class TestCreate:
             **BASE_VERSION,
             "abbreviation": "V4BADBT",
             "back_translation_id": 9999999,  # no such bible_version.id
-            "add_to_groups": [_group_id(db_session, "Group1")],
+            "group_ids": [_group_id(db_session, "Group1")],
         }
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -474,15 +474,13 @@ class TestDelete:
 
 
 class TestGroupDedup:
-    def test_duplicate_add_to_groups_collapses(
-        self, client, regular_token1, db_session
-    ):
+    def test_duplicate_group_ids_collapses(self, client, regular_token1, db_session):
         """Repeated group ids must not create duplicate access / group_ids."""
         group1_id = _group_id(db_session, "Group1")
         body = {
             **BASE_VERSION,
             "abbreviation": "V4DUP",
-            "add_to_groups": [group1_id, group1_id],
+            "group_ids": [group1_id, group1_id],
         }
         resp = client.post(
             f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
@@ -510,7 +508,7 @@ class TestGroupDedup:
             json={
                 **BASE_VERSION,
                 "abbreviation": "V4MULTI",
-                "add_to_groups": [group1_id, extra_group.id],
+                "group_ids": [group1_id, extra_group.id],
             },
             headers=_auth(regular_token1),
         )
@@ -714,6 +712,7 @@ class TestPatch:
             {"id": version_id + 1},
             {"owner_id": _user_id(db_session, "testuser2")},
             {"deleted": True},
+            {"group_ids": [_group_id(db_session, "Group1")]},
             {"add_to_groups": [_group_id(db_session, "Group1")]},
             {"remove_from_groups": [_group_id(db_session, "Group1")]},
             {"naem": "typo"},

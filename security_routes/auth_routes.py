@@ -3,9 +3,9 @@ import socket
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -81,7 +81,7 @@ async def get_current_user(
             },
         )
         return user
-    except JWTError:
+    except jwt.PyJWTError:
         raise credentials_exception
 
 

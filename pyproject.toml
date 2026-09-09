@@ -37,7 +37,11 @@ dependencies = [
     # once confirmed unused in production.
     "psycopg2-binary==2.9.6",
     # --- Auth ---
-    "python-jose[cryptography]==3.4.0",  # the [cryptography] extra preserves the JWT backend cryptography provides today
+    # The app only ever signs/verifies HS256 (security_routes/utilities.py), so no
+    # [crypto] extra is needed — that only matters for the RSA/ECDSA algorithms this
+    # app never uses. See #938: this replaces python-jose, which carried the repo's
+    # one critical CVE (GHSA-6c5p) and pulled in an unmaintained ecdsa dependency.
+    "pyjwt==2.13.0",
     "bcrypt==4.1.2",
     "slowapi==0.1.9",                 # per-IP rate limiting on the auth endpoints (#713)
     # --- ML / data ---
@@ -88,13 +92,6 @@ dev = [
 # onto PYTHONPATH rather than installing a wheel — so uv should manage only the
 # dependencies, not build/install the project itself.
 package = false
-# python-jose 3.4.0 (the fix for GHSA-6c5p, algorithm confusion) still hard-pins
-# pyasn1<0.5.0 upstream, which would otherwise force a downgrade to pyasn1 0.4.8 —
-# itself vulnerable to several DoS advisories (GHSA-hm4w, GHSA-8ppf, GHSA-m4p7).
-# Override so the resolver keeps a patched pyasn1; jose's rsa/ecdsa backends
-# (the only code that touches pyasn1) are never exercised here since this app's
-# JWT auth is hardcoded to HS256 (security_routes/utilities.py ALGORITHM).
-override-dependencies = ["pyasn1>=0.6.4"]
 
 [tool.uv.sources]
 # Public repo, installed from git (not published to PyPI).
