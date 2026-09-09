@@ -39,23 +39,47 @@ _COLUMNS = [
 ]
 
 
+# Both directions run without a ``USING`` clause, under an explicit UTC session.
+#
+# That combination is what keeps this migration cheap. Postgres can retype
+# timestamp <-> timestamptz as a catalog change alone when the session zone is UTC,
+# because the on-disk representation is then identical and no value has to move. Add
+# a ``USING`` clause and it loses that: an arbitrary expression could produce
+# anything, so the table is rewritten under an ACCESS EXCLUSIVE lock for the whole
+# duration. On ``assessment`` in production that is a write outage, and this
+# migration is applied by hand against the RDS that staging and prod share.
+#
+# The ``SET LOCAL`` is not optional and not merely an optimization. Without a
+# ``USING`` clause the cast interprets each naive value in the *session* zone, so on
+# a non-UTC connection every timestamp would shift by that offset — silently, and in
+# the same direction for rows that were already correct. Pinning the zone is what
+# makes the plain cast mean exactly what ``AT TIME ZONE 'UTC'`` meant. ``SET LOCAL``
+# scopes it to this migration's transaction, so nothing leaks into whatever alembic
+# runs next.
+#
+# Measured on PG16: with the ``USING`` clause the relfilenode changes (rewrite);
+# without it, under UTC, the relfilenode is unchanged (catalog-only) and the stored
+# values are identical either way.
+_SET_UTC = "SET LOCAL TIME ZONE 'UTC'"
+
+
 def upgrade() -> None:
+    op.execute(_SET_UTC)
     for table, column in _COLUMNS:
         op.alter_column(
             table,
             column,
             type_=sa.TIMESTAMP(timezone=True),
             existing_type=sa.TIMESTAMP(timezone=False),
-            postgresql_using=f"{column} AT TIME ZONE 'UTC'",
         )
 
 
 def downgrade() -> None:
+    op.execute(_SET_UTC)
     for table, column in _COLUMNS:
         op.alter_column(
             table,
             column,
             type_=sa.TIMESTAMP(timezone=False),
             existing_type=sa.TIMESTAMP(timezone=True),
-            postgresql_using=f"{column} AT TIME ZONE 'UTC'",
         )
