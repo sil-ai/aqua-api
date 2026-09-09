@@ -139,12 +139,20 @@ def _captured_error_logs(caplog):
     """
     logger = logging.getLogger("api_v4.errors")
     previous_level = logger.level
-    logger.addHandler(caplog.handler)
+    # Only detach what this block attached. ``addHandler`` is already idempotent — it
+    # is ``if not (hdlr in self.handlers)`` — so a second add cannot duplicate records.
+    # The *remove* is the unguarded half: nest this helper and the inner exit would
+    # detach the handler while the outer block was still using it, and the outer block
+    # would stop capturing silently rather than fail.
+    attached = caplog.handler not in logger.handlers
+    if attached:
+        logger.addHandler(caplog.handler)
     logger.setLevel(logging.DEBUG)
     try:
         yield caplog
     finally:
-        logger.removeHandler(caplog.handler)
+        if attached:
+            logger.removeHandler(caplog.handler)
         logger.setLevel(previous_level)
 
 
