@@ -77,8 +77,11 @@ def _spec_hs256_verify(token: str, secret: str) -> dict:
         padding = "=" * (-len(segment) % 4)
         return base64.urlsafe_b64decode(segment + padding)
 
+    # Only `alg` is security-relevant here (it's what an algorithm-confusion
+    # bug would tamper with); a real HS256 JWT header is free to omit `typ`
+    # or carry extra fields (e.g. `kid`), so don't require exact equality.
     header = json.loads(_b64url_decode(header_b64))
-    assert header == {"alg": "HS256", "typ": "JWT"}
+    assert header.get("alg") == "HS256"
 
     signing_input = f"{header_b64}.{payload_b64}".encode()
     expected_sig = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
@@ -199,7 +202,7 @@ class TestMiddlewareTokenExtraction:
         assert self.middleware.extract_username_from_token(None) == "anonymous"
 
 
-class TestBadTokensReturn401NotAn500:
+class TestBadTokensReturn401NotA500:
     """The specific regression #938 calls out: a missed exception-type
     mapping turns a bad token into an unhandled 500 instead of a 401.
     Exercised over HTTP, across both v3 and v4, and against both the
