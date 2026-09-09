@@ -1654,6 +1654,52 @@ class TestByIdAuthorization:
         assert response.status_code == 422
         assert _error(response)["code"] == "VALIDATION_ERROR"
 
+    def test_an_id_too_large_for_the_column_is_a_404_not_a_500(
+        self, client, db_session, regular_token1
+    ):
+        """``agent_lexeme_cards.id`` is a 32-bit integer; the path parameter is not.
+
+        Without the range guard, asyncpg refuses to encode the bind parameter and the
+        route answers 500 for an id that provably names no card — breaking the rule the
+        rest of this class pins, that every id you cannot have is the same 404. Both
+        signs, because FastAPI parses a leading minus into an ``int`` just as happily.
+        """
+        for card_id in (2**31, 2**64, -(2**31) - 1):
+            response = _get_by_id(client, regular_token1, card_id)
+
+            assert response.status_code == 404, f"{card_id}: {response.text}"
+            assert _error(response)["code"] == "LEXEME_CARD_NOT_FOUND"
+            assert _error(response)["details"] == {"card_id": card_id}
+
+    def test_the_largest_storable_id_is_still_served(
+        self, client, db_session, regular_token1
+    ):
+        """The bound is inclusive, so the guard must not swallow a real id.
+
+        A card is inserted *at* the maximum rather than merely asked for, because a 404
+        cannot tell "looked up and absent" from "refused before the lookup" — the
+        off-by-one this is here to catch would pass a test that only asserted 404. Every
+        other fixture card gets a small sequential id, so nothing else exercises the
+        boundary.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card = AgentLexemeCard(
+            id=2**31 - 1,
+            source_lemma="grace",
+            target_lemma="maxidlemma",
+            source_version_id=source,
+            target_version_id=target,
+            source_language_iso="eng",
+        )
+        db_session.add(card)
+        db_session.commit()
+
+        response = _get_by_id(client, regular_token1, 2**31 - 1)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == 2**31 - 1
+
 
 class TestByIdExampleVisibility:
     """v3's per-revision example filter, unchanged and applied by the shared loader."""

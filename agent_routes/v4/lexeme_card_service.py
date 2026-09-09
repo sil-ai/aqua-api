@@ -115,6 +115,24 @@ from database.models import (
 #: than a query the planner turns into a sequential scan.
 MAX_WORD_FILTER = 200
 
+#: Bounds of ``agent_lexeme_cards.id``, which is a PostgreSQL ``integer`` — checked
+#: against the column rather than read off the model, which types it as a bare
+#: ``Integer`` that says nothing about width.
+#:
+#: A path id outside them reaches asyncpg as a bind parameter it cannot encode, which
+#: raises before the statement runs and leaves the route answering ``500`` for an id that
+#: provably names no card. :func:`get_lexeme_card` refuses those up front instead, so
+#: "every id that does not name a card you may read is the same 404" holds for every
+#: value FastAPI will parse into an ``int`` rather than only the ones that fit.
+#:
+#: The same gap is open across the rest of the v4 surface — ``/v4/versions/{id}``,
+#: ``/v4/revisions/{id}`` and ``/v4/assessments/{id}`` all raise on an out-of-range id —
+#: and closing it there means a shared bounded path-id type, not a copy of this constant
+#: per module. This guard is deliberately local: it covers the one parameter this route
+#: owns and claims nothing about the others.
+_CARD_ID_MIN = -(2**31)
+_CARD_ID_MAX = 2**31 - 1
+
 
 class LexemeCardServiceError(Exception):
     """Base class for the signals this module raises."""
@@ -720,8 +738,9 @@ async def get_lexeme_card(
     a card can name a pivot Bible the caller has no grant on and still be theirs to read,
     and the list read serves that id on exactly the same terms.
 
-    Raises :class:`LexemeCardNotFound` for a card that does not exist and for one whose
-    target version the caller cannot reach, with no way to tell the two apart. The
+    Raises :class:`LexemeCardNotFound` for a card that does not exist, for one whose
+    target version the caller cannot reach, and for an id outside the column's range
+    (see :data:`_CARD_ID_MAX`), with no way to tell any of them apart. The
     version-level signal is caught and re-raised here rather than propagating: letting
     ``VersionNotVisible`` out would answer ``VERSION_NOT_FOUND`` for a card that exists
     and ``LEXEME_CARD_NOT_FOUND`` for one that does not, which is the probe the single
@@ -746,6 +765,9 @@ async def get_lexeme_card(
     null**, where v3's by-id read answers ``404`` to trigger a derivation pipeline. See
     :func:`_build_view`, and the routes module for why v4 does not carry the side effect.
     """
+    if not _CARD_ID_MIN <= card_id <= _CARD_ID_MAX:
+        raise LexemeCardNotFound(card_id)
+
     card = await db.scalar(select(AgentLexemeCard).where(AgentLexemeCard.id == card_id))
     if card is None:
         raise LexemeCardNotFound(card_id)
