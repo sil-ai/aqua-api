@@ -46,6 +46,8 @@ from models import (
     TfidfArtifactsPullResponse,
     TfidfArtifactsPushRequest,
     TfidfArtifactsPushResponse,
+    TfidfByTextRequest,
+    TfidfByTextsRequest,
     TfidfByVectorRequest,
     TfidfByVectorsRequest,
     TfidfByVectorsResponse,
@@ -98,10 +100,19 @@ async def _rank_against_corpus(
     assessment_id: int,
     query_vector: List[float],
     limit: int,
+    exclude_vref: str | None = None,
+    exclude_book: bool = False,
 ) -> List:
     """Return top-`limit` (id, vref, similarity) rows for a single query vector.
 
-    SVD output is L2-normalized, so inner product equals cosine similarity.
+    Ranks by inner product against the stored corpus vectors — the same score
+    `by_vector`/`by_vectors` use (corpus vectors are the raw SVD output, so the
+    query must be too; `_encode_texts` honours that).
+
+    Exclusion (leakage guard) is pushed into the WHERE clause so `limit` rows
+    survive after dropping — same approach as the vref-keyed GET endpoint.
+    When `exclude_book` is set, all verses in `exclude_vref`'s book are dropped
+    (book = the token before the first space); otherwise only the exact verse.
     """
     similarity_expr = cast(
         text(
@@ -110,9 +121,20 @@ async def _rank_against_corpus(
         Float,
     ).label("cosine_similarity")
 
+    conditions = [TfidfPcaVector.assessment_id == assessment_id]
+    if exclude_vref:
+        if exclude_book:
+            # Exact book match (token before the first space) rather than a
+            # LIKE pattern, so a `_`/`%` in caller-supplied exclude_vref can't
+            # act as a SQL wildcard.
+            book = exclude_vref.split(" ", 1)[0]
+            conditions.append(func.split_part(TfidfPcaVector.vref, " ", 1) != book)
+        else:
+            conditions.append(TfidfPcaVector.vref != exclude_vref)
+
     query = (
         select(TfidfPcaVector.id, TfidfPcaVector.vref, similarity_expr)
-        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(*conditions)
         .order_by(similarity_expr.desc())
         .limit(limit)
     )
@@ -142,9 +164,13 @@ async def _score_against_corpus(
     query_vector: List[float],
     limit: int,
     reference_id: int | None,
+    exclude_vref: str | None = None,
+    exclude_book: bool = False,
 ) -> List[TfidfResult]:
     """Rank corpus verses by similarity, then hydrate with revision/reference text."""
-    rows = await _rank_against_corpus(db, assessment.id, query_vector, limit)
+    rows = await _rank_against_corpus(
+        db, assessment.id, query_vector, limit, exclude_vref, exclude_book
+    )
     vrefs = [row.vref for row in rows]
 
     revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs)
@@ -1105,6 +1131,128 @@ async def pull_tfidf_artifacts(
 
 
 # ---------------------------------------------------------------------------
+# Server-side text encoding (TF-IDF → SVD-300), for the by_text endpoints.
+# Ports the encode chain from aqua-assessments' tfidf service so callers can
+# pass raw text instead of a pre-computed vector.
+# ---------------------------------------------------------------------------
+
+# Rehydrating the SVD components matrix + building the two vectorizers is the
+# only real per-request cost (~100-200ms). Cache the rebuilt encoder per
+# assessment, keyed alongside the artifact run's created_at so a re-push
+# (which bumps created_at) transparently invalidates the stale entry. No lock:
+# concurrent writers store identical objects, and nothing iterates the dict.
+_ENCODER_CACHE: Dict[int, tuple] = {}
+
+# Cap on cached encoders per worker. Each entry holds two vectorizers plus a
+# 300×n_features components matrix, so an unbounded cache could accumulate one
+# (potentially large) encoder per assessment ever queried. FIFO-evict the
+# oldest once full — encoders are cheap to rebuild on the next request.
+_ENCODER_CACHE_MAXSIZE = 32
+
+
+def _rehydrate_encoder(word, char, svd) -> tuple:
+    """Rebuild (word_vec, char_vec, svd) from stored artifact values.
+
+    `word`/`char` are (vocabulary, idf, params) tuples; `svd` is
+    (components_npy_bytes, n_components). Pure CPU work — call via
+    asyncio.to_thread. sklearn is imported lazily so workers that never hit
+    this path don't pay the import cost at startup.
+    """
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    def _vectorizer(vocabulary, idf, params):
+        vec = TfidfVectorizer(
+            analyzer=params["analyzer"],
+            ngram_range=tuple(params["ngram_range"]),
+            lowercase=params["lowercase"],
+            max_df=params["max_df"],
+            min_df=params["min_df"],
+            vocabulary=vocabulary,
+        )
+        # The idf_ setter builds the internal TfidfTransformer/_idf_diag that
+        # transform() needs (vocabulary alone isn't enough).
+        vec.idf_ = np.asarray(idf, dtype=float)
+        return vec
+
+    word_vec = _vectorizer(*word)
+    char_vec = _vectorizer(*char)
+
+    components_npy, n_components = svd
+    components = np.load(io.BytesIO(components_npy), allow_pickle=False)
+    truncated = TruncatedSVD(n_components=n_components)
+    truncated.components_ = components
+    return word_vec, char_vec, truncated
+
+
+def _encode_texts(encoder: tuple, texts: List[str]) -> List[List[float]]:
+    """Encode raw texts into the 300-dim SVD space the corpus vectors live in.
+
+    Mirrors aqua-assessments' `_encode_and_query`: word + char TF-IDF, L2-norm
+    of the horizontally-stacked sparse matrix, then SVD projection.
+    """
+    from scipy.sparse import hstack
+    from sklearn.preprocessing import normalize
+
+    word_vec, char_vec, svd = encoder
+    Xw = word_vec.transform(texts)
+    Xc = char_vec.transform(texts)
+    X = normalize(hstack([Xw, Xc]), norm="l2", axis=1)
+    return svd.transform(X).astype(float).tolist()
+
+
+async def _get_encoder(db: AsyncSession, assessment_id: int) -> tuple:
+    """Load (and cache) the rehydrated encoder for an assessment.
+
+    404s if the assessment has no TF-IDF artifacts (run/vectorizers/svd).
+    """
+    run = await db.scalar(
+        select(TfidfArtifactRun).where(TfidfArtifactRun.assessment_id == assessment_id)
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No TF-IDF artifacts found for assessment {assessment_id}",
+        )
+
+    cached = _ENCODER_CACHE.get(assessment_id)
+    if cached is not None and cached[0] == run.created_at:
+        return cached[1]
+
+    vectorizer_rows = (
+        await db.scalars(
+            select(TfidfVectorizerArtifact).where(
+                TfidfVectorizerArtifact.assessment_id == assessment_id
+            )
+        )
+    ).all()
+    by_kind = {v.kind: v for v in vectorizer_rows}
+    svd = await db.scalar(
+        select(TfidfSvd).where(TfidfSvd.assessment_id == assessment_id)
+    )
+    if "word" not in by_kind or "char" not in by_kind or svd is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Incomplete TF-IDF artifacts for assessment {assessment_id}",
+        )
+
+    encoder = await asyncio.to_thread(
+        _rehydrate_encoder,
+        (by_kind["word"].vocabulary, by_kind["word"].idf, by_kind["word"].params),
+        (by_kind["char"].vocabulary, by_kind["char"].idf, by_kind["char"].params),
+        (svd.components_npy, svd.n_components),
+    )
+    if (
+        assessment_id not in _ENCODER_CACHE
+        and len(_ENCODER_CACHE) >= _ENCODER_CACHE_MAXSIZE
+    ):
+        # Evict the oldest entry (dicts preserve insertion order).
+        _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)), None)
+    _ENCODER_CACHE[assessment_id] = (run.created_at, encoder)
+    return encoder
+
+
+# ---------------------------------------------------------------------------
 # POST — similarity by arbitrary vector
 # ---------------------------------------------------------------------------
 
@@ -1272,6 +1420,149 @@ async def get_tfidf_result_by_vectors(
             "limit": body.limit,
             "reference_id": body.reference_id,
             "batch_size": len(body.vectors),
+            "duration_s": duration,
+        },
+    )
+
+    return TfidfByVectorsResponse(results=results)
+
+
+# ---------------------------------------------------------------------------
+# POST — similarity by raw text (server-side encode)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/tfidf_result/by_text",
+    response_model=Dict[str, Union[List[TfidfResult], int]],
+)
+async def get_tfidf_result_by_text(
+    body: TfidfByTextRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Nearest-neighbour corpus verses to an arbitrary piece of text.
+
+    Encodes `text` into the assessment's 300-dim TF-IDF/SVD space server-side
+    (the step callers previously did out-of-band), then ranks it against the
+    corpus exactly like /tfidf_result/by_vector. `exclude_vref`/`exclude_book`
+    drop the query verse (or its whole book) from the neighbours.
+    """
+    request_start = time.perf_counter()
+
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
+    )
+    encoder = await _get_encoder(db, body.assessment_id)
+    vector = (await asyncio.to_thread(_encode_texts, encoder, [body.text]))[0]
+
+    results = await _score_against_corpus(
+        db,
+        assessment,
+        vector,
+        body.limit,
+        body.reference_id,
+        body.exclude_vref,
+        body.exclude_book,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_tfidf_result_by_text completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/tfidf_result/by_text",
+            "assessment_id": body.assessment_id,
+            "limit": body.limit,
+            "reference_id": body.reference_id,
+            "results_returned": len(results),
+            "duration_s": duration,
+        },
+    )
+
+    return {"results": results, "total_count": len(results)}
+
+
+@router.post(
+    "/tfidf_result/by_texts",
+    response_model=TfidfByVectorsResponse,
+)
+async def get_tfidf_result_by_texts(
+    body: TfidfByTextsRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch companion to /tfidf_result/by_text — one neighbour set per text.
+
+    `exclude_vrefs[i]` (if provided) applies to `texts[i]`; `exclude_book`
+    applies to all of them.
+    """
+    request_start = time.perf_counter()
+
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
+    )
+
+    total_results = len(body.texts) * body.limit
+    if total_results > TFIDF_MAX_BATCH_RESULTS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"len(texts) * limit must not exceed {TFIDF_MAX_BATCH_RESULTS}; "
+                f"got {len(body.texts)} * {body.limit} = {total_results}"
+            ),
+        )
+
+    encoder = await _get_encoder(db, body.assessment_id)
+    vectors = await asyncio.to_thread(_encode_texts, encoder, body.texts)
+
+    # Rank each vector sequentially (AsyncSession can't run concurrent
+    # statements), then hydrate text once across the union of vrefs — keeping
+    # the query count at N+2 rather than 3N. Mirrors /tfidf_result/by_vectors.
+    ranked: List[List] = []
+    all_vrefs: set = set()
+    for i, vec in enumerate(vectors):
+        exclude_vref = body.exclude_vrefs[i] if body.exclude_vrefs else None
+        rows = await _rank_against_corpus(
+            db,
+            body.assessment_id,
+            vec,
+            body.limit,
+            exclude_vref,
+            body.exclude_book,
+        )
+        ranked.append(rows)
+        all_vrefs.update(r.vref for r in rows)
+
+    vrefs_list = list(all_vrefs)
+    revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs_list)
+    reference_texts = await _fetch_verse_texts(db, body.reference_id, vrefs_list)
+
+    results = [
+        [
+            TfidfResult(
+                id=row.id,
+                vref=row.vref,
+                similarity=float(row.cosine_similarity),
+                assessment_id=assessment.id,
+                revision_text=revision_texts.get(row.vref),
+                reference_text=reference_texts.get(row.vref),
+            )
+            for row in rows
+        ]
+        for rows in ranked
+    ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_tfidf_result_by_texts completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/tfidf_result/by_texts",
+            "assessment_id": body.assessment_id,
+            "limit": body.limit,
+            "reference_id": body.reference_id,
+            "batch_size": len(body.texts),
             "duration_s": duration,
         },
     )

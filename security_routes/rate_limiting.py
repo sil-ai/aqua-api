@@ -54,6 +54,13 @@ if _STORAGE_URI:
 # the 429 below, which is the only header that matters for back-off.
 limiter = Limiter(**_limiter_kwargs)
 
+# One bucket per IP for *all* token endpoints. slowapi scopes a plain
+# ``@limiter.limit`` by the decorated endpoint, so v3's ``/latest/token`` and v4's
+# ``/v4/token`` would otherwise get a budget each and an attacker could double their
+# attempts by alternating surfaces. ``shared_limit`` keys on this scope instead, so
+# the two endpoints draw down the same counter (#713).
+TOKEN_LIMIT_SCOPE = "auth-token"
+
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
     """Return a 429 JSON response when a client exceeds an auth rate limit.
@@ -94,3 +101,23 @@ def _retry_after_seconds(request: Request, exc: RateLimitExceeded) -> int | None
         return max(delta, 1)
     except Exception:  # pragma: no cover - defensive against slowapi upgrades
         return None
+
+
+async def v4_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """The 429 for the v4 sub-app, in v4's ``{"error": {...}}`` envelope.
+
+    v4 shapes every error through its own handlers, and ``RateLimitExceeded`` is a
+    ``StarletteHTTPException``, so v4's HTTP-exception handler already produces the
+    right envelope and maps 429 to ``TOO_MANY_REQUESTS`` on its own. The one thing it
+    cannot supply is ``Retry-After``: slowapi builds the exception with only a status
+    and a detail, never headers, so the header v3 sets by hand would silently go
+    missing on v4. Attaching it to the exception first lets v4's handler emit it
+    through the same path it uses for ``WWW-Authenticate`` on a 401 — which keeps the
+    envelope itself defined in exactly one place.
+    """
+    from api_v4.errors import _handle_http_exception
+
+    retry_after = _retry_after_seconds(request, exc)
+    if retry_after is not None:
+        exc.headers = {"Retry-After": str(retry_after)}
+    return await _handle_http_exception(request, exc)
