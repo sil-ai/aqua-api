@@ -79,6 +79,14 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api_v4.schemas.base import V4BaseModel
+from utils.logging_config import setup_logger
+
+#: Only the two swallowed-encoder branches in :func:`_bounded_details` log. Nothing else
+#: in this module may: the ``Exception`` catch-all deliberately stays silent because
+#: ``ServerErrorMiddleware`` re-raises after it, and the parent ``LoggingMiddleware``
+#: writes the traceback (see the module docstring). Those two branches are the one place
+#: where an exception is *consumed* here, so if they say nothing, nothing does.
+logger = setup_logger(__name__)
 
 
 class V4APIError(Exception):
@@ -617,15 +625,17 @@ def _bounded_details(details: dict | None) -> dict | None:
     ``details`` goes for the same reason as above: the exception arrives with the walk
     never having run and nothing partial to keep.
 
-    **A cycle lands here too, and that is a real trade rather than a free win.** A
-    self-referential ``details`` exhausts the same stack, so it now comes back as this
-    marker carrying the endpoint's own 4xx, where before it was a 500 — but a cyclic
-    ``details`` is a *server* bug, not a client one, and because the exception no longer
-    escapes there is no traceback in the logs for it. Telling a cycle apart from sheer
-    depth needs cycle detection, which means a visited set and a second walk; pydantic
-    does not bother either, and reports merely-deep data as ``Circular reference
-    detected``. So the marker in the response body is where that bug surfaces instead,
-    which is where the person exercising the endpoint will be looking.
+    **A cycle lands here too, and it keeps its traceback.** A self-referential
+    ``details`` exhausts the same stack, so it comes back as this marker carrying the
+    endpoint's own 4xx, where before it was a 500. A cyclic ``details`` is a *server*
+    bug, not a client one, and consuming the exception here would have left it no trace
+    anywhere but the response body — so both ``except`` branches log, which is the whole
+    reason this module has a logger at all. Telling a cycle apart from sheer depth needs
+    cycle detection, which means a visited set and a second walk; pydantic does not
+    bother either, and reports merely-deep data as ``Circular reference detected``. So
+    the log line does not claim which of the two it was, and the levels differ instead:
+    this branch is ``warning`` because a client can reach it with a deep enough body,
+    while the ``bytes`` branch above is ``error`` because only server code can.
 
     Fixing this by bounding depth *before* the encoder was the alternative, and it is
     the wrong trade: finding every branch deeper than the ceiling means visiting every
@@ -636,8 +646,26 @@ def _bounded_details(details: dict | None) -> dict | None:
     try:
         encoded = jsonable_encoder(details, custom_encoder={bytes: _decoded_or_named})
     except UnicodeDecodeError:
+        # ``error``, because nothing a client sends can reach this today: it means server
+        # code put undecodable ``bytes`` in ``details``, which is a bug in the caller.
+        logger.error(
+            "v4 error details held bytes that are not UTF-8; details replaced",
+            exc_info=True,
+            extra={"marker": "undecodable_details"},
+        )
         encoded = {_OMITTED_KEY: _omitted_undecodable_details()}
     except RecursionError:
+        # ``warning``, not ``error``, because this one *is* client-reachable: a body
+        # nested past roughly 965 levels exhausts the encoder's stack, and a client can
+        # send that. Alerting on it would let anyone page the on-call with one request.
+        # The server-bug case — a cyclic ``details`` — lands here too and is the reason
+        # this logs at all: the exception is consumed, so without this line a cycle
+        # would leave no trace anywhere but the response body.
+        logger.warning(
+            "v4 error details were too deeply nested to encode; details replaced",
+            exc_info=True,
+            extra={"marker": "nesting_details"},
+        )
         encoded = {_OMITTED_KEY: _omitted_nesting_details()}
     bounded, _ = _bounded_json_safe(encoded, _DETAILS_BUDGET)
     return bounded

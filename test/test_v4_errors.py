@@ -13,7 +13,9 @@ abort the test — see api_v4/errors.py. test_v4_subapp.py covers the same 500 p
 end to end through the parent mount.
 """
 
+import contextlib
 import json
+import logging
 import math
 import sys
 
@@ -122,6 +124,36 @@ def _container_depth(value) -> int:
     if isinstance(value, list):
         return 1 + max([_container_depth(item) for item in value], default=0)
     return 0
+
+
+@contextlib.contextmanager
+def _captured_error_logs(caplog):
+    """Records from ``api_v4.errors``, which does not reach ``caplog`` on its own.
+
+    ``setup_logger`` sets ``propagate = False`` so production does not get duplicate
+    lines through parent loggers, while ``caplog`` installs its handler on the root — so
+    the two never meet and ``caplog.records`` comes back empty even though the line was
+    written. Attaching the handler to this logger directly is what makes the records
+    visible. The alternative, flipping ``propagate`` for the test, would assert against
+    a logging configuration the app never actually runs with.
+    """
+    logger = logging.getLogger("api_v4.errors")
+    previous_level = logger.level
+    # Only detach what this block attached. ``addHandler`` is already idempotent — it
+    # is ``if not (hdlr in self.handlers)`` — so a second add cannot duplicate records.
+    # The *remove* is the unguarded half: nest this helper and the inner exit would
+    # detach the handler while the outer block was still using it, and the outer block
+    # would stop capturing silently rather than fail.
+    attached = caplog.handler not in logger.handlers
+    if attached:
+        logger.addHandler(caplog.handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield caplog
+    finally:
+        if attached:
+            logger.removeHandler(caplog.handler)
+        logger.setLevel(previous_level)
 
 
 def _chain_leaf(value):
@@ -773,11 +805,11 @@ def test_a_circular_details_degrades_to_a_marker_rather_than_a_500():
     the same path out.
 
     Pinned because it is the one case where that path carries a *server* bug: the
-    endpoint built a self-referential ``details``, and since the exception no longer
-    escapes, no traceback is logged for it — this marker in the body is where it shows
-    up. Telling a cycle from a deep payload would need cycle detection, a visited set
-    and a second walk; pydantic does not bother either, and reports merely-deep data as
-    ``Circular reference detected``.
+    endpoint built a self-referential ``details``. The exception is consumed rather than
+    raised, so the log line asserted in the next test is the only trace it leaves
+    besides this marker. Telling a cycle from a deep payload would need cycle detection,
+    a visited set and a second walk; pydantic does not bother either, and reports
+    merely-deep data as ``Circular reference detected``.
     """
     cyclic = {}
     cyclic["self"] = cyclic
@@ -786,6 +818,55 @@ def test_a_circular_details_degrades_to_a_marker_rather_than_a_500():
 
     assert set(bounded) == {_OMITTED_KEY}
     assert "nest too deeply" in bounded[_OMITTED_KEY], bounded
+
+
+def test_a_swallowed_cycle_still_reaches_the_logs(caplog):
+    """The consumed exception must leave a traceback behind.
+
+    This is the guard on the trade the depth fix makes. Both ``except`` branches in
+    ``_bounded_details`` turn a raised exception into a marker, which is right for the
+    client — the 4xx survives — but it also means the base-``Exception`` handler never
+    runs, so ``ServerErrorMiddleware`` never re-raises and the parent
+    ``LoggingMiddleware`` never writes the traceback. A cyclic ``details`` is a server
+    bug; without this line it would leave no trace outside the response body.
+
+    ``warning`` rather than ``error`` on purpose: a body nested past roughly 965 levels
+    reaches this same branch, and a client can send one. Alerting on it would hand
+    anyone a way to page the on-call with a single request.
+    """
+    cyclic = {}
+    cyclic["self"] = cyclic
+
+    with _captured_error_logs(caplog):
+        _bounded_details({"input": cyclic})
+
+    (record,) = [r for r in caplog.records if r.name == "api_v4.errors"]
+    assert record.levelno == logging.WARNING, record.levelname
+    assert "too deeply nested" in record.getMessage()
+    # exc_info is the point: the message alone does not say which bug this was.
+    assert record.exc_info is not None
+
+
+def test_undecodable_details_are_logged_at_error(caplog):
+    """The ``bytes`` branch logs at ``error``, unlike its sibling above.
+
+    Nothing a client sends can reach it: it fires only when server code puts
+    undecodable ``bytes`` in ``details``, so there is no client-triggered noise to
+    worry about and the louder level is free. The asymmetry is the assertion — collapse
+    both branches to one level and either a cycle stops being visible or a deep body
+    starts paging someone.
+    """
+
+    class _WithBytes(V4BaseModel):
+        blob: bytes
+
+    with _captured_error_logs(caplog):
+        bounded = _bounded_details({"m": _WithBytes(blob=_UNDECODABLE)})
+
+    assert "not UTF-8 text" in bounded[_OMITTED_KEY], bounded
+    (record,) = [r for r in caplog.records if r.name == "api_v4.errors"]
+    assert record.levelno == logging.ERROR, record.levelname
+    assert record.exc_info is not None
 
 
 def test_the_float_scrub_still_runs_at_the_depth_ceiling():
