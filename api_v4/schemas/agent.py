@@ -167,11 +167,19 @@ class CritiqueIssueOut(V4BaseModel):
     "not critiqued" rather than "covered above". That under-claims; it cannot
     over-claim, and it is what v3 reports today.
 
-    **The full location triple is stored on this table**, unlike
-    ``text_lengths_table``, which holds only ``vref`` and has to reach ``verse_reference``
-    for its triple. So ``book``, ``chapter`` and ``verse`` are served from their own
-    columns here, and ``vref`` from its own column too — this read joins
-    ``book_reference`` for one thing only, the canonical book ordinal it sorts on.
+    **The full location triple is stored on this table**, unlike ``text_lengths_table``,
+    which holds only ``vref`` and has to reach ``verse_reference`` for its triple. So
+    ``book``, ``chapter`` and ``verse`` are served from their own columns, and this read
+    joins ``book_reference`` for one thing only — the canonical book ordinal it sorts on.
+
+    **``vref`` is rebuilt from that triple rather than served from the stored ``vref``
+    column**, which is the same call :class:`~api_v4.schemas.assessment.AssessmentResultOut`
+    makes over the same storage shape: where both are stored, the triple is the authority
+    and the string is the redundant copy. It matters because v3's push parses the string
+    with an unanchored regex, so a stored ``"MAT 9:20-21"`` yields the correct triple
+    while keeping its extra characters — and serving that would put a non-verse in a field
+    documented as a verse. :func:`agent_routes.v4.agent_routes._to_critique_issue_out`
+    has the detail.
     """
 
     id: int = Field(
@@ -196,7 +204,10 @@ class CritiqueIssueOut(V4BaseModel):
     vref: str = Field(
         description=(
             "The verse the issue was found in (`JHN 1:1`) — the **first** verse of the "
-            "span where the revision merged several. Served from the stored column."
+            "span where the revision merged several. Formatted from this row's "
+            "`book`/`chapter`/`verse`, so it is always a literal canonical vref that "
+            "joins against `vref.txt` and can never disagree with the triple beside it "
+            "(see the class docstring)."
         ),
     )
     vrefs: list[str] = Field(

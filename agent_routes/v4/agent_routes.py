@@ -117,7 +117,31 @@ def _not_found_error(exc: Exception, assessment_id: int) -> V4APIError:
 
 
 def _to_critique_issue_out(row, continuations: dict) -> CritiqueIssueOut:
-    """Build one critique-issue row, deriving its ``vrefs`` from the span map.
+    """Build one critique-issue row, deriving ``vref`` and ``vrefs`` from the triple.
+
+    **``vref`` is formatted from ``book``/``chapter``/``verse``, not read from the stored
+    ``vref`` column**, and that is the rule
+    :func:`assessment_routes.v4.assessment_routes._to_result_out` states and
+    :func:`assessment_routes.v4.assessment_service.get_alignment_scores` follows: on a
+    table that stores *both*, the triple is the authority and the ``vref`` string is the
+    redundant copy, so formatting from the triple is what stops the two disagreeing.
+
+    Contrast :func:`_to_agent_translation_out`, which correctly does the opposite:
+    ``agent_translations`` stores **only** ``vref``, its triple is derived by a join, and
+    the inner join to ``verse_reference`` is what guarantees the stored value is a literal
+    canonical vref. Reading the stored column there is safe for exactly the reason it is
+    not safe here — this read deliberately does *not* join ``verse_reference`` (only
+    ``book_reference``, for the sort ordinal), so nothing validates the stored string.
+
+    The disagreement is reachable, not theoretical. v3's push parses the vref it copies
+    from the translation with ``re.match(r"([A-Z1-3]{3})\\s+(\\d+):(\\d+)", vref)`` —
+    ``re.match`` with no end anchor — so ``"MAT 9:20-21"``, ``"MAT  9:20"`` and
+    ``"MAT 9:20a"`` all yield the correct triple ``(MAT, 9, 20)`` while the stored string
+    keeps its extra characters. Serving that string would emit a value that is not a
+    verse as ``vref`` and as ``vrefs[0]``, in a field documented as verses in canonical
+    order, and it would not join against ``vref.txt``. Formatting from the triple also
+    keeps ``vrefs[0]`` consistent with the continuations, which are keyed on that same
+    triple. Found in review of #944.
 
     Constructed field by field rather than by ``model_validate`` on the ORM object,
     because two names differ from their columns: ``is_resolved`` is served as ``resolved``
@@ -135,12 +159,13 @@ def _to_critique_issue_out(row, continuations: dict) -> CritiqueIssueOut:
     pins the constraint instead, so relaxing the column would fail a test rather than
     quietly start serving nulls through a required field.
     """
+    vref = f"{row.book} {row.chapter}:{row.verse}"
     return CritiqueIssueOut(
         id=row.id,
         assessment_id=row.assessment_id,
         agent_translation_id=row.agent_translation_id,
-        vref=row.vref,
-        vrefs=[row.vref, *continuations.get((row.book, row.chapter, row.verse), ())],
+        vref=vref,
+        vrefs=[vref, *continuations.get((row.book, row.chapter, row.verse), ())],
         book=row.book,
         chapter=row.chapter,
         verse=row.verse,
@@ -309,6 +334,11 @@ async def get_assessment_critique_issues(
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
+    # No next_updated_since, and it cannot honestly be added: the table has no
+    # updated_at, and the resolution PATCH mutates rows without touching created_at, so
+    # a delta feed keyed on it would appear to work while missing every resolution. The
+    # key stays present and null, per the envelope's contract that gaining delta support
+    # later is not a response-shape change.
     return V4Page[CritiqueIssueOut].create(
         items=[_to_critique_issue_out(row, continuations) for row in rows],
         total=total,
@@ -377,6 +407,8 @@ async def get_assessment_translations(
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
+    # No next_updated_since: agent_translations carries no modification timestamp, so
+    # there is no watermark to publish. Same reason /results and /text-lengths give.
     return V4Page[AgentTranslationOut].create(
         items=[_to_agent_translation_out(row, continuations) for row in rows],
         total=total,

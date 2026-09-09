@@ -648,6 +648,31 @@ class TestCritiqueIssuesRows:
             20,
         )
 
+    @pytest.mark.parametrize("stored_vref", ["MAT 9:20-21", "MAT  9:20", "MAT 9:20a"])
+    def test_vref_is_rebuilt_from_the_triple_not_served_from_the_column(
+        self, client, regular_token1, db_session, group1_version, stored_vref
+    ):
+        """The rule ``/results`` and ``/alignment-scores`` both follow: where a table
+        stores the triple *and* a ``vref`` string, the triple is the authority.
+
+        These three inputs are reachable, not contrived. v3's push copies the vref from
+        the translation and parses it with ``re.match`` and no end anchor, so each of
+        them yields the correct triple ``(MAT, 9, 20)`` while the stored string keeps its
+        extra characters. Serving the string would put a value that is not a verse into
+        ``vref`` and ``vrefs[0]`` — a field documented as verses in canonical order — and
+        it would not join against ``vref.txt``. Found in review of #944.
+        """
+        run = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, run, "MAT 9:20")
+        _make_issue(db_session, run, translation_id, "MAT 9:20")
+        db_session.query(AgentCritiqueIssue).filter_by(
+            assessment_id=run.assessment_id
+        ).update({"vref": stored_vref})
+        db_session.commit()
+        row = _rows(_issues(client, regular_token1, run.assessment_id))[0]
+        assert row["vref"] == "MAT 9:20"
+        assert row["vrefs"] == ["MAT 9:20"]
+
     def test_an_unmerged_verse_has_a_single_entry_vrefs(
         self, client, regular_token1, db_session, group1_version
     ):
