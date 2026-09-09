@@ -33,8 +33,12 @@ import json
 
 import fastapi
 import pytest
-from fastapi.dependencies.utils import get_flat_dependant
-from fastapi.routing import APIRoute
+from fastapi.dependencies.models import (
+    Dependant,
+    _get_security_scheme,
+    _is_security_scheme,
+)
+from fastapi.routing import APIRoute, iter_route_contexts
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -102,6 +106,19 @@ def _operations(schema):
     ]
 
 
+def _iter_dependants(dependant: Dependant):
+    """Every ``Dependant`` in the tree rooted at ``dependant``, itself included.
+
+    ``fastapi.dependencies.utils.get_flat_dependant`` (and the ``security_requirements``
+    it produced) was removed upstream; walking ``dependant.dependencies`` directly is
+    the same traversal FastAPI's own OpenAPI generator now does internally
+    (``fastapi.openapi.utils._get_openapi_dependency_data``).
+    """
+    yield dependant
+    for sub_dependant in dependant.dependencies:
+        yield from _iter_dependants(sub_dependant)
+
+
 def _security_schemes_in_use(v4_app):
     """The ``SecurityBase`` *objects* FastAPI would harvest from the v4 route tree.
 
@@ -109,13 +126,21 @@ def _security_schemes_in_use(v4_app):
     sees precisely what the schema would be built from — but it yields the instances
     rather than the rendered dict, which is what makes a v3 leak detectable at all.
     See :func:`test_no_v4_route_depends_on_the_v3_security_scheme`.
+
+    Since fastapi 0.137.0, routes added via ``include_router()`` no longer appear
+    directly in ``v4_app.routes`` as ``APIRoute`` instances — they sit behind an
+    ``_IncludedRouter`` wrapper — so the tree is walked with
+    ``iter_route_contexts()`` and resolved back to the original route via
+    ``.original_route``.
     """
     schemes = set()
-    for route in v4_app.routes:
+    for route_context in iter_route_contexts(v4_app.routes):
+        route = route_context.original_route
         if not isinstance(route, APIRoute):
             continue
-        for requirement in get_flat_dependant(route.dependant).security_requirements:
-            schemes.add(requirement.security_scheme)
+        for dependant in _iter_dependants(route.dependant):
+            if _is_security_scheme(dependant=dependant):
+                schemes.add(_get_security_scheme(dependant=dependant))
     return schemes
 
 

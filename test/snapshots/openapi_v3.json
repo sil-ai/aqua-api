@@ -1270,12 +1270,13 @@
                 "type": "null"
               }
             ],
+            "format": "password",
             "title": "Client Secret"
           },
           "grant_type": {
             "anyOf": [
               {
-                "pattern": "password",
+                "pattern": "^password$",
                 "type": "string"
               },
               {
@@ -1285,6 +1286,7 @@
             "title": "Grant Type"
           },
           "password": {
+            "format": "password",
             "title": "Password",
             "type": "string"
           },
@@ -1327,12 +1329,13 @@
                 "type": "null"
               }
             ],
+            "format": "password",
             "title": "Client Secret"
           },
           "grant_type": {
             "anyOf": [
               {
-                "pattern": "password",
+                "pattern": "^password$",
                 "type": "string"
               },
               {
@@ -1342,6 +1345,7 @@
             "title": "Grant Type"
           },
           "password": {
+            "format": "password",
             "title": "Password",
             "type": "string"
           },
@@ -1384,12 +1388,13 @@
                 "type": "null"
               }
             ],
+            "format": "password",
             "title": "Client Secret"
           },
           "grant_type": {
             "anyOf": [
               {
-                "pattern": "password",
+                "pattern": "^password$",
                 "type": "string"
               },
               {
@@ -1399,6 +1404,7 @@
             "title": "Grant Type"
           },
           "password": {
+            "format": "password",
             "title": "Password",
             "type": "string"
           },
@@ -1422,7 +1428,7 @@
       "Body_upload_revision_latest_revision_post": {
         "properties": {
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           }
@@ -1436,7 +1442,7 @@
       "Body_upload_revision_v3_revision_post": {
         "properties": {
           "file": {
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           }
@@ -7117,6 +7123,13 @@
       },
       "ValidationError": {
         "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
           "loc": {
             "items": {
               "anyOf": [
@@ -7782,9 +7795,9 @@
   },
   "info": {
     "contact": {
-      "email": "mark_woodwardsil.org",
+      "email": "mark_woodward@sil.org",
       "name": "Get Help with this API",
-      "url": "http://ai.sil.org"
+      "url": "http://ai.sil.org/"
     },
     "description": "Augmented Quality Assessment API",
     "license": {
@@ -8685,13 +8698,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -9015,13 +9023,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -9200,13 +9203,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -10097,14 +10095,9 @@
             "name": "score_type",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/AlignmentScoreType"
-                }
-              ],
+              "$ref": "#/components/schemas/AlignmentScoreType",
               "default": "top",
-              "description": "Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores).",
-              "title": "Score Type"
+              "description": "Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores)."
             }
           }
         ],
@@ -14269,14 +14262,9 @@
             "name": "include_verses",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/IncludeVerses"
-                }
-              ],
+              "$ref": "#/components/schemas/IncludeVerses",
               "default": "union",
-              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': only verses that have text (default). 'intersection': treated identically to 'union' for a single revision.",
-              "title": "Include Verses"
+              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': only verses that have text (default). 'intersection': treated identically to 'union' for a single revision."
             }
           }
         ],
@@ -14618,14 +14606,9 @@
             "name": "include_verses",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/IncludeVerses"
-                }
-              ],
+              "$ref": "#/components/schemas/IncludeVerses",
               "default": "union",
-              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': verses where at least one revision has text (default). 'intersection': only verses where every revision has text.",
-              "title": "Include Verses"
+              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': verses where at least one revision has text (default). 'intersection': only verses where every revision has text."
             }
           },
           {
@@ -18139,13 +18122,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -18469,13 +18447,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -18654,13 +18627,8 @@
             "name": "list_mode",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ListMode"
-                }
-              ],
-              "default": "append",
-              "title": "List Mode"
+              "$ref": "#/components/schemas/ListMode",
+              "default": "append"
             }
           },
           {
@@ -19551,14 +19519,9 @@
             "name": "score_type",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/AlignmentScoreType"
-                }
-              ],
+              "$ref": "#/components/schemas/AlignmentScoreType",
               "default": "top",
-              "description": "Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores).",
-              "title": "Score Type"
+              "description": "Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores)."
             }
           }
         ],
@@ -23448,14 +23411,9 @@
             "name": "include_verses",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/IncludeVerses"
-                }
-              ],
+              "$ref": "#/components/schemas/IncludeVerses",
               "default": "union",
-              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': only verses that have text (default). 'intersection': treated identically to 'union' for a single revision.",
-              "title": "Include Verses"
+              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': only verses that have text (default). 'intersection': treated identically to 'union' for a single revision."
             }
           }
         ],
@@ -23797,14 +23755,9 @@
             "name": "include_verses",
             "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/IncludeVerses"
-                }
-              ],
+              "$ref": "#/components/schemas/IncludeVerses",
               "default": "union",
-              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': verses where at least one revision has text (default). 'intersection': only verses where every revision has text.",
-              "title": "Include Verses"
+              "description": "Which verses to include in the response. 'all': all 41,899 canonical verses, with empty text for missing verses. 'union': verses where at least one revision has text (default). 'intersection': only verses where every revision has text."
             }
           },
           {
