@@ -196,6 +196,15 @@ def _finite_float(value: object) -> float | None:
     ``float``. All three are reachable by a direct SQL write, which is how these tables
     are corrected today. Same judgement as the JSONB repair above: serve the row without
     the unrepresentable value rather than refuse the row.
+
+    **One consequence is left alone deliberately.** PostgreSQL sorts ``numeric`` ``NaN``
+    as *larger* than every number, so a NaN-scored card sorts first under
+    ``confidence DESC`` while arriving on the wire as ``confidence: null`` — which
+    otherwise means a card that sorts last. Making the two agree needs
+    ``nullif(confidence, 'NaN')`` in the ``ORDER BY``, and wrapping the column in a
+    function stops ``ix_agent_lexeme_cards_version_confidence`` from serving the sort.
+    Paying that on every request to tidy a row only a direct SQL write can create is the
+    wrong trade, so the quirk is recorded here instead.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         return None
