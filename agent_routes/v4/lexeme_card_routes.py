@@ -324,7 +324,10 @@ async def list_lexeme_cards(
     reads made for the same reason.
 
     Status codes beyond the shared set: `404 VERSION_NOT_FOUND` for a `target_version_id`
-    or `source_version_id` that does not exist or is not yours.
+    or `source_version_id` that does not exist or is not yours, and
+    `422 INVALID_WORD_FILTER` for a `source_word` or `target_word` sent with nothing but
+    blanks in it — which is refused rather than dropped, since dropping it would answer a
+    narrowed request with the whole collection.
     """
     try:
         views, total = await lexeme_card_service.list_lexeme_cards(
@@ -342,6 +345,13 @@ async def list_lexeme_cards(
         )
     except lexeme_card_service.VersionNotVisible as exc:
         raise _version_not_visible_error(exc, exc.version_id) from exc
+    except lexeme_card_service.InvalidWordFilter as exc:
+        raise V4APIError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="INVALID_WORD_FILTER",
+            message=str(exc),
+            details={"parameter": exc.parameter},
+        ) from exc
 
     # No next_updated_since, for the reason the docstring gives: the table's only
     # modification timestamp is nullable with no default and cards are hard-deleted, so

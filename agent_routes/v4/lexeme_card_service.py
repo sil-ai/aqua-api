@@ -126,6 +126,25 @@ class VersionNotVisible(LexemeCardServiceError):
         super().__init__(f"Version {version_id} does not exist.")
 
 
+class InvalidWordFilter(LexemeCardServiceError):
+    """A word filter was sent, but nothing in it is a word.
+
+    ``?target_word=`` or ``?target_word=%20`` reaches the handler as a list holding an
+    empty or blank string. Treating that as "no filter" would answer a request that asked
+    for *some* cards with *every* card, which is the wrong direction to fail in: the
+    caller gets more than they asked for and nothing says the filter was dropped. v3 makes
+    the same call on the half of this parameter that can express it, answering 400 when
+    ``target_words`` parses to no words.
+    """
+
+    def __init__(self, parameter: str) -> None:
+        self.parameter = parameter
+        super().__init__(
+            f"{parameter} was sent with no usable words; each value must contain at "
+            "least one non-whitespace character."
+        )
+
+
 @dataclass
 class ExampleView:
     """One example as the caller will read it, after the overlay is applied."""
@@ -156,22 +175,28 @@ class LexemeCardView:
     examples: list[ExampleView] = field(default_factory=list)
 
 
-def _normalize_words(words: list[str] | None) -> list[str] | None:
+def _normalize_words(words: list[str] | None, parameter: str) -> list[str] | None:
     """NFC-normalize and lowercase a repeated word filter, dropping blanks.
 
     Matches what ``LexemeCardIn`` applies on the way in, so an NFD-decomposed query finds
-    an NFC-stored row (v3 issue #779). Returns ``None`` for a filter that had no usable
-    words, which the caller treats as "no filter" rather than compiling a predicate that
-    can match nothing.
+    an NFC-stored row (v3 issue #779).
+
+    ``None`` in, ``None`` out — the filter was not sent. A filter that *was* sent but
+    holds nothing usable raises :class:`InvalidWordFilter` rather than degrading to "no
+    filter", which would widen the result set instead of narrowing it. Individual blanks
+    among real words are still dropped: ``?target_word=grace&target_word=`` is a request
+    for ``grace``.
     """
-    if not words:
+    if words is None:
         return None
     cleaned = [
         unicodedata.normalize("NFC", w.strip()).lower()
         for w in words
         if w and w.strip()
     ]
-    return cleaned or None
+    if not cleaned:
+        raise InvalidWordFilter(parameter)
+    return cleaned
 
 
 def _words_param(name: str, words: list[str]):
@@ -612,8 +637,8 @@ async def list_lexeme_cards(
         target_version_id=target_version_id,
         source_version_id=source_version_id,
         source_language_iso=requested_language_iso,
-        source_words=_normalize_words(source_words),
-        target_words=_normalize_words(target_words),
+        source_words=_normalize_words(source_words, "source_word"),
+        target_words=_normalize_words(target_words, "target_word"),
         pos=pos,
         model=model,
     )

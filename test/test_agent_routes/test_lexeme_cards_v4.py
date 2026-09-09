@@ -297,6 +297,45 @@ class TestLexemeCardAuthorization:
         assert response.json()["error"]["code"] == "VERSION_NOT_FOUND"
         assert response.json()["error"]["details"] == {"version_id": forbidden_source}
 
+    def test_source_version_id_is_served_even_when_unreachable(
+        self, client, db_session, regular_token2
+    ):
+        """Pinned as intended, because it is the one id this read does expose.
+
+        Gating on the target version alone means a card can name a
+        ``source_version_id`` the caller has no grant on, and the response reports it.
+        That is deliberate and is what makes the field useful — it is how a caller learns
+        which value to send back to ``?source_version_id=``, and pivot Bibles are shared
+        precisely so that cards built against them can be read by projects that do not
+        own them.
+
+        What does **not** leak is anything about that version beyond its id: no name, no
+        language, no source-side content unless an overlay for the caller's own language
+        holds it, and no example text — those stay behind the per-revision filter. Asking
+        ``?source_version_id=`` about it still answers 404, so the id cannot be turned
+        into access.
+        """
+        hidden_source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group2")
+        card_id = _make_card(db_session, hidden_source, target)
+
+        listed = _get(client, regular_token2, target_version_id=target)
+
+        assert listed.status_code == 200
+        (card,) = listed.json()["items"]
+        assert card["id"] == card_id
+        assert card["source_version_id"] == hidden_source
+
+        # The id is visible; the version behind it is still not reachable.
+        probed = _get(
+            client,
+            regular_token2,
+            target_version_id=target,
+            source_version_id=hidden_source,
+        )
+        assert probed.status_code == 404
+        assert probed.json()["error"]["code"] == "VERSION_NOT_FOUND"
+
     def test_unauthenticated_is_401(self, client, db_session):
         target = _make_version(db_session, "Group1")
         response = client.get(PATH, params={"target_version_id": target})
@@ -783,6 +822,81 @@ class TestFilters:
         ]
         response = client.get(PATH, params=params, headers=_auth(regular_token1))
         assert response.status_code == 422
+
+    def test_a_blank_word_filter_is_422_not_the_whole_collection(
+        self, client, db_session, regular_token1
+    ):
+        """Failing wide is the wrong direction.
+
+        ``?target_word=`` asks for some cards. Dropping the filter would answer with every
+        card, and nothing in the response would say the filter was ignored.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        _make_card(db_session, source, target)
+
+        response = _get(
+            client, regular_token1, target_version_id=target, target_word="   "
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_WORD_FILTER"
+        assert response.json()["error"]["details"] == {"parameter": "target_word"}
+
+    def test_a_blank_alongside_a_real_word_is_dropped(
+        self, client, db_session, regular_token1
+    ):
+        """Only an entirely blank filter is refused; one blank among words is not."""
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        wanted = _make_card(db_session, source, target, target_lemma="neema")
+        _make_card(db_session, source, target, target_lemma="amani")
+
+        response = client.get(
+            PATH,
+            params=[
+                ("target_version_id", target),
+                ("target_word", "neema"),
+                ("target_word", "  "),
+            ],
+            headers=_auth(regular_token1),
+        )
+
+        assert response.status_code == 200
+        assert _ids(response.json()) == [wanted]
+
+    def test_source_word_and_target_word_together(
+        self, client, db_session, regular_token1
+    ):
+        """Both filters in one request, which is where a bind-parameter collision would show.
+
+        The two word lists are bound as separate arrays. If they ever shared a name, one
+        would silently overwrite the other and this would return the wrong card.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        # Distinct target lemmas: ix_agent_lexeme_cards_unique_v5 allows only one card
+        # per (lower(target_lemma), source_language_iso, target_version_id).
+        both = _make_card(
+            db_session, source, target, source_lemma="grace", target_lemma="neema"
+        )
+        _make_card(
+            db_session, source, target, source_lemma="grace", target_lemma="amani"
+        )
+        _make_card(
+            db_session, source, target, source_lemma="peace", target_lemma="upendo"
+        )
+
+        response = _get(
+            client,
+            regular_token1,
+            target_version_id=target,
+            source_word="grace",
+            target_word="neema",
+        )
+
+        assert response.status_code == 200
+        assert _ids(response.json()) == [both]
 
     def test_target_version_id_is_required(self, client, regular_token1):
         response = client.get(PATH, headers=_auth(regular_token1))
