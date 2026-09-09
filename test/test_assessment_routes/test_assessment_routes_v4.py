@@ -127,6 +127,8 @@ What each group of tests pins down:
 import asyncio
 import itertools
 import json
+import os
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import get_args
@@ -1831,13 +1833,28 @@ class TestRunnerPayload:
         self, client, regular_token1, db_session, group1_version
     ):
         revision_id, _ = _pair(db_session, group1_version)
-        with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
-            dispatch.side_effect = RuntimeError("modal is down")
-            resp = client.post(
-                f"{PREFIX}/assessments",
-                json=_body(revision_id, {"type": "tfidf"}),
-                headers=_auth(regular_token1),
-            )
+        # The process zone is forced away from UTC for the dispatch, which is what makes
+        # the end_time assertion below able to fail. CI runs on a UTC host, and there
+        # datetime.utcnow() and datetime.now() describe the same instant — so the naive
+        # writer this guards against would be indistinguishable from a correct one, and
+        # the assertion would pass no matter what the code did.
+        previous_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+        try:
+            with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
+                dispatch.side_effect = RuntimeError("modal is down")
+                resp = client.post(
+                    f"{PREFIX}/assessments",
+                    json=_body(revision_id, {"type": "tfidf"}),
+                    headers=_auth(regular_token1),
+                )
+        finally:
+            if previous_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous_tz
+            time.tzset()
         assert resp.status_code == 503, resp.text
         assert _error_code(resp) == "ASSESSMENT_DISPATCH_FAILED"
         # The row exists and says so, rather than sitting queued forever.
@@ -1845,6 +1862,17 @@ class TestRunnerPayload:
         row = db_session.query(Assessment).filter_by(revision_id=revision_id).one()
         assert row.status == "failed"
         assert "dispatch_failed" in row.status_detail
+        # ``end_time`` is stamped on this path, and it is stamped into a
+        # ``TIMESTAMP WITH TIME ZONE`` column (#720). asyncpg reads a *naive* value as
+        # host-local, so ``datetime.utcnow()`` — which returns UTC wall-clock with no
+        # tzinfo — would be re-localized and land off by the host's offset, while
+        # ``datetime.now()`` and ``datetime.now(timezone.utc)`` both record the true
+        # instant. The window is what catches that; ``tzinfo is not None`` alone would
+        # not, since the column returns aware values whatever was written.
+        assert row.end_time is not None
+        assert row.end_time.tzinfo is not None
+        assert row.end_time <= datetime.now(timezone.utc) + timedelta(minutes=1)
+        assert row.end_time >= datetime.now(timezone.utc) - timedelta(minutes=10)
 
 
 class TestTranscribedAudio:

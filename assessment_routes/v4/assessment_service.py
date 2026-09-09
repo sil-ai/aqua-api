@@ -466,7 +466,7 @@ and it carries **#862**, the last of this slice's five security issues.
 import asyncio
 import statistics
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -931,7 +931,14 @@ def _in_progress_duplicate_query(
       legacy rows may hold SQL ``NULL``, and older ones may hold ``{}`` from an empty
       ``extra_kwargs``. All three mean the same thing and must dedup together.
     """
-    stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
+    # tz-aware so the comparison against ``requested_time`` below is between two
+    # instants rather than a wall-clock reading and an instant: that column is
+    # ``TIMESTAMP WITH TIME ZONE`` (#720), and a naive right-hand side would be read
+    # in the session zone while ``datetime.now()`` returns the host's local clock.
+    # On any non-UTC host the window would silently shift by the host's offset,
+    # which for a liveness guard means either waving through a duplicate or
+    # refusing a legitimate resubmit.
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_ASSESSMENT_HOURS)
     stmt = (
         select(Assessment.id)
         .where(
@@ -1137,7 +1144,7 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
         reference_id=reference_id,
         type=assessment_type,
         status=AssessmentStatus.queued.value,
-        requested_time=datetime.now(),
+        requested_time=datetime.now(timezone.utc),
         owner_id=user.id,
         kwargs=kwargs,
     )
@@ -1222,7 +1229,7 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
             await db.rollback()
             assessment.status = AssessmentStatus.failed.value
             assessment.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
-            assessment.end_time = datetime.utcnow()
+            assessment.end_time = datetime.now(timezone.utc)
             await db.commit()
         except SQLAlchemyError as cleanup_err:
             await db.rollback()
