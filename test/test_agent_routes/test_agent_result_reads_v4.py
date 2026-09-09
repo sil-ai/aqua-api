@@ -1956,6 +1956,53 @@ class TestResolveStateTransitions:
         ).json()
         assert body["resolution_notes"] is None
 
+    def test_a_resolved_row_with_no_timestamp_gets_repaired(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A row can be resolved but unstamped if something outside this endpoint wrote
+        it — ``resolved_at`` is nullable. The no-op check therefore also asks whether the
+        timestamp is present: without that, such a row would read as "already stored" and
+        stay broken forever, contradicting the contract that ``resolved: true`` records
+        the resolver now. Raised by Copilot on #944.
+        """
+        run = _agent_run(db_session, group1_version)
+        translation_id = _make_translation(db_session, run, "MAT 1:1")
+        issue_id = _make_issue(db_session, run, translation_id, "MAT 1:1")
+        db_session.query(AgentCritiqueIssue).filter_by(id=issue_id).update(
+            {
+                "is_resolved": True,
+                "resolved_by_id": _user_id(db_session, "testuser1"),
+                "resolved_at": None,
+                "resolution_notes": None,
+            }
+        )
+        db_session.commit()
+        body = _resolve(
+            client, regular_token1, run.assessment_id, issue_id, resolved=True
+        ).json()
+        assert body["resolved"] is True
+        assert body["resolved_at"] is not None
+        assert _stored_issue(db_session, issue_id).resolved_at is not None
+
+    def test_a_fully_stamped_row_still_no_ops(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The other half of the repair check: adding ``resolved_at is not None`` to the
+        predicate must not cost idempotency on a row that is properly stamped."""
+        run, issue_id = self._resolved_issue(
+            client, regular_token1, db_session, group1_version, notes="fixed"
+        )
+        first = _stored_issue(db_session, issue_id).resolved_at
+        _resolve(
+            client,
+            regular_token1,
+            run.assessment_id,
+            issue_id,
+            resolved=True,
+            resolution_notes="fixed",
+        )
+        assert _stored_issue(db_session, issue_id).resolved_at == first
+
     def test_a_second_user_asserting_the_same_resolution_takes_it_over(
         self, client, regular_token1, regular_token2, db_session
     ):

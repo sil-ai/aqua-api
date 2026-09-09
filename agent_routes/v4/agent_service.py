@@ -476,9 +476,6 @@ async def resolve_critique_issue(
     assessment = await get_assessment(
         db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES
     )
-    continuations = await verse_range_service.continuations_for_revision(
-        db, assessment.revision_id
-    )
     issue = (
         (
             await db.execute(
@@ -494,9 +491,24 @@ async def resolve_critique_issue(
     if issue is None:
         raise CritiqueIssueNotFound(issue_id)
 
+    # After the issue is found, not before: a request naming an issue that is not on
+    # this assessment needs no span map to be refused, and on a cold memo this is one
+    # or two statements. (Copilot review, PR #944.)
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+
     if resolved:
+        # ``resolved_at is not None`` belongs in this predicate even though the
+        # endpoint always stamps it, because a row written outside this endpoint can
+        # hold ``is_resolved=True`` with a null timestamp. Without the clause such a
+        # row would be read as "already stored" and never repaired, leaving it
+        # permanently resolved-but-unstamped and contradicting the contract that
+        # ``resolved: true`` records the resolver *now*. With it, a properly stamped
+        # row still no-ops, so idempotency is unaffected. (Copilot review, PR #944.)
         already = (
             issue.is_resolved
+            and issue.resolved_at is not None
             and issue.resolved_by_id == user.id
             and issue.resolution_notes == resolution_notes
         )
@@ -520,6 +532,16 @@ async def resolve_critique_issue(
         issue.resolved_at = None
         issue.resolution_notes = None
 
-    await db.commit()
+    # Guarded exactly as the sibling v4 writes are (``version_service.update_version``,
+    # ``revision_service``, ``assessment_service.soft_delete_assessment``): a failing
+    # commit must leave the session usable rather than in a failed transaction until
+    # request teardown, and the pending attribute changes must not survive it. There is
+    # no domain error to translate here — no FK this write can point at a missing row —
+    # so the exception re-raises to the #828 catch-all as the 500 it is.
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(issue)
     return issue, continuations
