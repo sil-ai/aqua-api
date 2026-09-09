@@ -43,6 +43,7 @@ dependencies = [
     # one critical CVE (GHSA-6c5p) and pulled in an unmaintained ecdsa dependency.
     "pyjwt==2.13.0",
     "bcrypt==4.1.2",
+    "slowapi==0.1.9",                 # per-IP rate limiting on the auth endpoints (#713)
     # --- ML / data ---
     "numpy==1.26.3",
     "pandas==2.1.4",
