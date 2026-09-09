@@ -101,7 +101,14 @@ class VersionCreate(V4BaseModel):
     # the caller belongs to. An empty list is a domain error (400), a missing
     # field is a framework validation error (422) — see version_service /
     # version_routes.
-    add_to_groups: list[int]
+    #
+    # Spelled ``group_ids`` to match ``VersionOut.group_ids`` (#925), reversing an
+    # earlier ruling that kept ``add_to_groups`` on the grounds that a create-time
+    # instruction is a different concept from read state. What decided it the other
+    # way: v4 has no "remove" counterpart to contrast with — group access moved to
+    # ``PUT``/``DELETE /v4/versions/{id}/groups/{group_id}`` — so the verb was the
+    # only thing the old name carried, and an id list is what it always was.
+    group_ids: list[int]
 
     model_config = {
         **V4BaseModel.model_config,
@@ -114,7 +121,7 @@ class VersionCreate(V4BaseModel):
                 "iso_script": "Latn",
                 "abbreviation": "english_-_king_james_version",
                 "machine_translation": False,
-                "add_to_groups": [1],
+                "group_ids": [1],
             }
         },
     }
@@ -142,7 +149,7 @@ class VersionPatch(V4BaseModel):
       transferable through a field patch, and soft-delete has its own endpoint
       (``DELETE /v4/versions/{id}``). Group access likewise moved out, to the
       ``/v4/versions/{id}/groups/{group_id}`` sub-resource — so no
-      ``add_to_groups`` / ``remove_from_groups`` here either.
+      ``group_ids`` here either, nor v3's two group-mutation fields.
 
     **``str``/``bool`` annotated with a ``None`` default is deliberate** for the
     fields whose column must not become NULL (a NULL ``name`` would fail
@@ -191,7 +198,7 @@ class VersionPatch(V4BaseModel):
     model_config = {
         **V4BaseModel.model_config,
         # The allowlist is closed: unknown or non-patchable fields (id, owner_id,
-        # deleted, add_to_groups, ...) are a 422, never silently dropped. See the
+        # deleted, group_ids, ...) are a 422, never silently dropped. See the
         # class docstring.
         "extra": "forbid",
         "json_schema_extra": {

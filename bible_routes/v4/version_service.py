@@ -121,7 +121,7 @@ class VersionAccessForbidden(VersionServiceError):
 
 
 class VersionGroupRequired(VersionServiceError):
-    """``add_to_groups`` was empty — a version must join at least one group."""
+    """``group_ids`` was empty — a version must join at least one group."""
 
 
 class GroupMembershipRequired(VersionServiceError):
@@ -294,7 +294,7 @@ async def get_version(db: AsyncSession, user: UserDB, version_id: int) -> BibleV
 
 
 async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
-    """Create a version owned by ``user`` and grant its ``add_to_groups`` access.
+    """Create a version owned by ``user`` and grant its ``group_ids`` access.
 
     ``data`` is a ``VersionCreate``. Raises :class:`VersionGroupRequired` if no
     group was given and :class:`GroupMembershipRequired` for any group the caller
@@ -302,16 +302,16 @@ async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
     on insert (unknown ``iso_language`` / ``iso_script`` code, or a non-existent
     ``back_translation_id``) becomes :class:`InvalidReference` rather than a raw
     ``IntegrityError`` (which the catch-all would turn into a 500). Duplicate group
-    ids in ``add_to_groups`` are collapsed (order-preserving) so a caller cannot
+    ids in ``group_ids`` are collapsed (order-preserving) so a caller cannot
     create duplicate access rows.
     """
-    if not data.add_to_groups:
+    if not data.group_ids:
         raise VersionGroupRequired()
 
     # De-duplicate while preserving order: [1, 1, 2] -> [1, 2]. bible_version_access
     # has no unique constraint, so without this a repeated id would write duplicate
     # rows (and surface as duplicate group_ids in the response).
-    group_ids = list(dict.fromkeys(data.add_to_groups))
+    group_ids = list(dict.fromkeys(data.group_ids))
 
     user_group_ids = set(
         (
