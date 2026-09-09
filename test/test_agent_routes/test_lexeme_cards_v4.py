@@ -1076,6 +1076,51 @@ class TestMalformedJsonbIsRepaired:
         assert response.status_code == 200
         assert _ids(response.json()) == [wanted]
 
+    def test_nan_confidence_does_not_break_the_response_body(
+        self, client, db_session, regular_token1
+    ):
+        """PostgreSQL ``numeric`` accepts NaN; JSON does not.
+
+        Served raw, it reaches the wire as the bare literal ``NaN``. That is not valid
+        JSON, so a strict parser rejects the entire body while the status line still says
+        200 — the client sees a broken response, not a broken field.
+        """
+        from decimal import Decimal
+
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, confidence=Decimal("NaN"))
+
+        response = _get(client, regular_token1, target_version_id=target)
+
+        assert response.status_code == 200
+        # .json() is what proves it: a NaN literal in the body raises here.
+        (card,) = response.json()["items"]
+        assert card["id"] == card_id
+        assert card["confidence"] is None
+
+    def test_an_oversized_alignment_score_does_not_500(
+        self, client, db_session, regular_token1
+    ):
+        """``jsonb`` numbers are arbitrary precision; a Python float is not.
+
+        A stored integer too large to convert raises ``OverflowError``, which would be a
+        500 on a read that can otherwise serve the row perfectly well.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        _make_card(
+            db_session,
+            source,
+            target,
+            alignment_scores={"huge": 10**400, "god": 0.9},
+        )
+
+        response = _get(client, regular_token1, target_version_id=target)
+
+        assert response.status_code == 200
+        assert response.json()["items"][0]["alignment_scores"] == {"god": 0.9}
+
     def test_alignment_scores_drops_non_numeric_values(
         self, client, db_session, regular_token1
     ):

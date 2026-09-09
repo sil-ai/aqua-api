@@ -59,6 +59,8 @@ round trip per word and a 100-row ceiling would put the round trips back.
 
 __version__ = "v4"
 
+import math
+from decimal import Decimal
 from typing import List, Optional
 
 import fastapi
@@ -138,21 +140,55 @@ def _to_senses(value: object) -> list[SenseOut] | None:
     return senses
 
 
+def _finite_float(value: object) -> float | None:
+    """A stored number as a JSON-safe float, or ``None`` if it cannot be one.
+
+    Three stored values are numbers to the database and not numbers to JSON, and each of
+    them turns a read into a broken response rather than an error anyone would notice:
+
+    * PostgreSQL ``numeric`` accepts ``NaN``, and ``float(Decimal("NaN"))`` is ``nan``.
+      ``json.dumps`` writes that as the bare literal ``NaN``, which is not valid JSON — so
+      the caller's parser rejects the **whole body**, not just this field, and the
+      response still carries a ``200``.
+    * ``jsonb`` numbers are arbitrary precision. A stored integer larger than a float can
+      hold raises ``OverflowError`` on conversion, which is a ``500`` on a read that could
+      otherwise have served the row.
+    * Infinities serialize exactly the way ``NaN`` does.
+
+    None of the three is reachable through the v3 write path, which types both columns as
+    ``float``. All three are reachable by a direct SQL write, which is how these tables
+    are corrected today. Same judgement as the JSONB repair above: serve the row without
+    the unrepresentable value rather than refuse the row.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
 def _to_alignment_scores(value: object) -> dict[str, float] | None:
     """A ``{word: number}`` map, or null if the column does not hold one.
 
-    ``bool`` is excluded explicitly: it is a subclass of ``int`` in Python, so a stored
-    ``true`` would otherwise be served as ``1.0`` — a number the caller would rank on.
+    ``bool`` is excluded by :func:`_finite_float`: it is a subclass of ``int`` in Python,
+    so a stored ``true`` would otherwise be served as ``1.0`` — a number the caller would
+    rank on. A key whose value is not a representable number is dropped rather than
+    served as null, because the field is a ranking and a null has no place in one.
     """
     if not isinstance(value, dict):
         return None
-    return {
-        key: float(score)
-        for key, score in value.items()
-        if isinstance(key, str)
-        and isinstance(score, (int, float))
-        and not isinstance(score, bool)
-    }
+    scores: dict[str, float] = {}
+    for key, score in value.items():
+        if not isinstance(key, str):
+            continue
+        number = _finite_float(score)
+        if number is not None:
+            scores[key] = number
+    return scores
 
 
 def _to_lexeme_card_out(view: LexemeCardView) -> LexemeCardOut:
@@ -166,10 +202,10 @@ def _to_lexeme_card_out(view: LexemeCardView) -> LexemeCardOut:
     decided — spelling the mapping out here is what keeps that decision in one place while
     keeping a column rename from silently changing the wire.
 
-    ``confidence`` is coerced with ``float()`` because the column is ``numeric``, which
-    asyncpg returns as ``Decimal``; the wire field is a JSON number either way, but the
-    conversion belongs at the boundary rather than in Pydantic's coercion, where a stored
-    ``NaN`` would become an invalid JSON literal instead of an error we can see.
+    ``confidence`` goes through :func:`_finite_float` rather than a bare ``float()``. The
+    column is ``numeric``, which returns ``Decimal`` and accepts ``NaN`` — and ``float()``
+    does not repair that, it propagates it into a response body no strict JSON parser will
+    accept.
     """
     card = view.card
     return LexemeCardOut(
@@ -192,7 +228,7 @@ def _to_lexeme_card_out(view: LexemeCardView) -> LexemeCardOut:
             )
             for example in view.examples
         ],
-        confidence=None if card.confidence is None else float(card.confidence),
+        confidence=_finite_float(card.confidence),
         english_lemma=card.english_lemma,
         alignment_scores=_to_alignment_scores(card.alignment_scores),
         build_version=card.build_version,
