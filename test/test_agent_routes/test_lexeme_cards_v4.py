@@ -1,7 +1,10 @@
-"""Tests for ``GET /v4/lexeme-cards`` (issue #896, epic #842).
+"""Tests for the ``GET /v4/lexeme-cards`` reads (issue #896, epic #842).
 
-The first half of the lexeme-card slice: the list read that ``aqua-django-app`` calls
-twice over, once per word and once in bulk.
+The read half of the lexeme-card slice: the list that ``aqua-django-app`` calls twice
+over, once per word and once in bulk, and the by-id read beside it. One module for both
+because they are one resource — the by-id classes at the bottom lean on the same fixture
+helpers, and ``TestByIdMatchesTheListRow`` asserts against the list read directly, which
+it could not do from another file.
 
 Two things here are new rather than ported, and carry most of the weight below.
 **Authorization**, because v3 has none on this family — any authenticated caller reads any
@@ -194,6 +197,14 @@ def _make_overlay(
 
 def _get(client, token, **params):
     return client.get(PATH, params=params, headers=_auth(token))
+
+
+def _get_by_id(client, token, card_id, **params):
+    return client.get(f"{PATH}/{card_id}", params=params, headers=_auth(token))
+
+
+def _error(response):
+    return response.json()["error"]
 
 
 def _ids(payload):
@@ -657,7 +668,14 @@ class TestLanguageOverlay:
     def test_last_user_edit_is_the_later_of_canonical_and_overlay(
         self, client, db_session, regular_token1
     ):
-        """v3 does this on its by-id read only, so the two reads disagreed."""
+        """Neither v3 read does this, so a source-only edit was invisible on both.
+
+        v3's merge lives in ``_build_lexeme_card_out_for_lang``, which only its patch
+        handlers call — both of its *reads* report the canonical row's timestamp alone.
+        So v3 answers one edit time when you write a card and another when you read it
+        back. v4 applies the merge on both reads instead; ``TestByIdMatchesTheListRow``
+        pins that the two agree.
+        """
         source = _make_version(db_session, "Group1")
         target = _make_version(db_session, "Group1")
         card_id = _make_card(
@@ -1465,3 +1483,625 @@ class TestRowShape:
         (card,) = _get(client, regular_token1, target_version_id=target).json()["items"]
 
         assert "has_translation_overlay" not in card
+
+
+class TestByIdAuthorization:
+    """The target-version rule, reached from the card rather than from the version."""
+
+    def test_reads_a_card_whose_target_version_the_caller_reaches(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get_by_id(client, regular_token1, card_id)
+
+        assert response.status_code == 200
+        assert response.json()["id"] == card_id
+
+    def test_source_access_alone_does_not_grant_the_card(
+        self, client, db_session, regular_token1, regular_token2
+    ):
+        """The list read's central rule, pinned again on the path that bypasses it.
+
+        ``test_source_access_alone_does_not_grant_the_cards`` proves the list cannot be
+        used to read another project's dictionary. That proof does not carry to this
+        route: the list is authorized on a ``target_version_id`` the caller typed, while
+        here the version is one the caller never mentioned and the handler had to go and
+        find. A by-id read that skipped the lookup would be a hole in the same wall.
+        """
+        source = _make_version(db_session, "Group2")  # testuser2 only
+        target = _make_version(db_session, "Group1")  # testuser1 only
+        card_id = _make_card(db_session, source, target)
+
+        source_only = _get_by_id(client, regular_token2, card_id)
+        target_only = _get_by_id(client, regular_token1, card_id)
+
+        assert source_only.status_code == 404
+        assert _error(source_only)["code"] == "LEXEME_CARD_NOT_FOUND"
+
+        assert target_only.status_code == 200
+        assert target_only.json()["id"] == card_id
+
+    def test_a_hidden_card_is_indistinguishable_from_one_that_does_not_exist(
+        self, client, db_session, regular_token1
+    ):
+        """The whole point of the shared code: card ids are enumerable.
+
+        ``target_version_id`` is supplied by the caller, so the list read can name it in
+        a refusal. A card id is not — it is a bare sequential integer — so a refusal that
+        distinguished "not yours" from "no such row" would let anyone walk the space and
+        count another project's dictionary. Message and ``details`` are compared too, not
+        just the code: either one differing would be the same oracle.
+        """
+        hidden_target = _make_version(db_session, "Group2")
+        hidden_card = _make_card(
+            db_session, hidden_target, hidden_target, target_lemma="hiddenlemma"
+        )
+        missing_card = 99_999_999
+
+        hidden = _get_by_id(client, regular_token1, hidden_card)
+        missing = _get_by_id(client, regular_token1, missing_card)
+
+        assert hidden.status_code == missing.status_code == 404
+        assert (
+            _error(hidden)["code"] == _error(missing)["code"] == "LEXEME_CARD_NOT_FOUND"
+        )
+        assert _error(hidden)["details"] == {"card_id": hidden_card}
+        assert _error(missing)["details"] == {"card_id": missing_card}
+        assert _error(hidden)["message"].replace(str(hidden_card), "N") == _error(
+            missing
+        )["message"].replace(str(missing_card), "N")
+
+    def test_the_refusal_never_says_version_not_found(
+        self, client, db_session, regular_token1
+    ):
+        """The specific leak the service catches and re-raises.
+
+        Letting the version signal out would answer ``VERSION_NOT_FOUND`` for a card that
+        exists and ``LEXEME_CARD_NOT_FOUND`` for one that does not — the probe restated
+        in a different field.
+        """
+        hidden_target = _make_version(db_session, "Group2")
+        card_id = _make_card(
+            db_session, hidden_target, hidden_target, target_lemma="othergroupslemma"
+        )
+
+        body = _get_by_id(client, regular_token1, card_id).json()
+
+        assert body["error"]["code"] != "VERSION_NOT_FOUND"
+        assert str(hidden_target) not in body["error"]["message"]
+        assert "version_id" not in body["error"]["details"]
+
+    def test_soft_deleted_target_version_is_404(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+        version = db_session.query(BibleVersion).filter_by(id=target).first()
+        version.deleted = True
+        db_session.commit()
+
+        response = _get_by_id(client, regular_token1, card_id)
+
+        assert response.status_code == 404
+        assert _error(response)["code"] == "LEXEME_CARD_NOT_FOUND"
+
+    def test_admin_reads_a_card_no_group_grants(self, client, db_session, admin_token):
+        source = _make_version(db_session, "Group2")
+        target = _make_version(db_session, "Group2")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get_by_id(client, admin_token, card_id)
+
+        assert response.status_code == 200
+        assert response.json()["id"] == card_id
+
+    def test_admin_does_not_bypass_a_soft_deleted_target_version(
+        self, client, db_session, admin_token
+    ):
+        """Admin reaches past a missing grant, not past a deletion.
+
+        ``version_service.get_version`` passes ``include_deleted=False`` for everyone, so
+        soft-deleting a translation withdraws its cards from administrators too. Worth
+        pinning separately from the two halves either side of it: an admin bypass added
+        to that helper later would break no other test here.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+        version = db_session.query(BibleVersion).filter_by(id=target).first()
+        version.deleted = True
+        db_session.commit()
+
+        response = _get_by_id(client, admin_token, card_id)
+
+        assert response.status_code == 404
+        assert _error(response)["code"] == "LEXEME_CARD_NOT_FOUND"
+
+    def test_an_unreachable_source_version_does_not_hide_the_card(
+        self, client, db_session, regular_token2
+    ):
+        """The counterpart of ``test_source_version_id_is_served_even_when_unreachable``.
+
+        Cards are pivot-routed, so ``source_version_id`` routinely names a shared Bible
+        the reading project has no grant on. Checking it here would make most cards
+        unreadable by id while the same rows list fine — the two reads must agree.
+        """
+        hidden_source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group2")
+        card_id = _make_card(db_session, hidden_source, target)
+
+        response = _get_by_id(client, regular_token2, card_id)
+
+        assert response.status_code == 200
+        assert response.json()["source_version_id"] == hidden_source
+
+    def test_unauthenticated_is_401(self, client, db_session):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        assert client.get(f"{PATH}/{card_id}").status_code == 401
+
+    def test_a_non_integer_card_id_is_a_validation_error(
+        self, client, db_session, regular_token1
+    ):
+        response = _get_by_id(client, regular_token1, "not-a-number")
+
+        assert response.status_code == 422
+        assert _error(response)["code"] == "VALIDATION_ERROR"
+
+
+class TestByIdExampleVisibility:
+    """v3's per-revision example filter, unchanged and applied by the shared loader."""
+
+    def test_example_from_a_revision_the_caller_cannot_reach_is_hidden(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        unreachable = _make_version(db_session, "Group2")
+        readable_revision = _make_revision(db_session, target)
+        hidden_revision = _make_revision(db_session, unreachable)
+        card_id = _make_card(db_session, source, target)
+        readable = _make_example(
+            db_session, card_id, readable_revision, "by grace", "kwa neema"
+        )
+        _make_example(db_session, card_id, hidden_revision, "hidden", "siri")
+
+        card = _get_by_id(client, regular_token1, card_id).json()
+
+        assert [example["id"] for example in card["examples"]] == [readable]
+
+    def test_admin_sees_every_example(self, client, db_session, admin_token):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        unreachable = _make_version(db_session, "Group2")
+        card_id = _make_card(db_session, source, target)
+        first = _make_example(
+            db_session, card_id, _make_revision(db_session, target), "a", "b"
+        )
+        second = _make_example(
+            db_session, card_id, _make_revision(db_session, unreachable), "c", "d"
+        )
+
+        card = _get_by_id(client, admin_token, card_id).json()
+
+        assert [example["id"] for example in card["examples"]] == [first, second]
+
+    def test_only_this_cards_examples_are_served(
+        self, client, db_session, regular_token1
+    ):
+        """The loader is given a one-card list; nothing else on the version may leak in."""
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        wanted = _make_card(db_session, source, target, target_lemma="wantedlemma")
+        other = _make_card(db_session, source, target, target_lemma="otherlemma")
+        mine = _make_example(db_session, wanted, revision, "mine", "yangu")
+        _make_example(db_session, other, revision, "theirs", "yao")
+
+        card = _get_by_id(client, regular_token1, wanted).json()
+
+        assert [example["id"] for example in card["examples"]] == [mine]
+
+
+class TestByIdLanguageOverlay:
+    """Where v3's by-id read and v4's part company."""
+
+    def test_a_missing_overlay_is_served_rather_than_404(
+        self, client, db_session, regular_token1
+    ):
+        """The single biggest behavioural difference from v3's by-id read.
+
+        v3 answers ``404`` for a language the card has no translation into, so that the
+        caller triggers a derivation pipeline. v4 reports the state: the card comes back
+        with its whole source side null, ``source_language_iso`` included, and the target
+        side intact — which is what the list read already does, and what a client needs
+        in order to render the target while the translation is missing.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        card_id = _make_card(
+            db_session,
+            source,
+            target,
+            target_lemma="neemamissing",
+            source_lemma="grace",
+            source_surface_forms=["grace", "graces"],
+            senses=[{"definition": "unearned favour", "examples": []}],
+        )
+        _make_example(db_session, card_id, revision, "by grace", "kwa neema")
+
+        response = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="swh"
+        )
+
+        assert response.status_code == 200
+        card = response.json()
+        assert card["source_language_iso"] is None
+        assert card["source_lemma"] is None
+        assert card["source_surface_forms"] is None
+        assert card["senses"] is None
+        assert [example["source"] for example in card["examples"]] == [None]
+        # The target side is untouched — that is the point of serving the row at all.
+        assert card["target_lemma"] == "neemamissing"
+        assert [example["target"] for example in card["examples"]] == ["kwa neema"]
+
+    def test_overlay_replaces_the_source_side_only(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        card_id = _make_card(
+            db_session,
+            source,
+            target,
+            target_lemma="neema",
+            source_lemma="grace",
+            surface_forms=["neema"],
+            source_surface_forms=["grace"],
+            senses=[{"definition": "unearned favour", "examples": []}],
+        )
+        example_id = _make_example(
+            db_session, card_id, revision, "by grace", "kwa neema"
+        )
+        _make_overlay(
+            db_session,
+            card_id,
+            "swh",
+            source_lemma="rehema",
+            source_surface_forms=["rehema"],
+            senses=[{"definition": "fadhili", "examples": []}],
+            example_translations={example_id: "kwa rehema"},
+        )
+
+        card = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="swh"
+        ).json()
+
+        assert card["source_language_iso"] == "swh"
+        assert card["source_lemma"] == "rehema"
+        assert card["source_surface_forms"] == ["rehema"]
+        assert card["senses"] == [{"definition": "fadhili", "examples": []}]
+        assert card["examples"] == [
+            {
+                "id": example_id,
+                "revision_id": revision,
+                "source": "kwa rehema",
+                "target": "kwa neema",
+            }
+        ]
+        # One target column, projected by every language view.
+        assert card["target_lemma"] == "neema"
+        assert card["surface_forms"] == ["neema"]
+
+    def test_untranslated_example_falls_back_to_the_canonical_text(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        card_id = _make_card(db_session, source, target)
+        translated = _make_example(
+            db_session, card_id, revision, "by grace", "kwa neema"
+        )
+        untranslated = _make_example(
+            db_session, card_id, revision, "of grace", "ya neema"
+        )
+        _make_overlay(
+            db_session,
+            card_id,
+            "swh",
+            source_lemma="rehema",
+            example_translations={translated: "kwa rehema"},
+        )
+
+        card = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="swh"
+        ).json()
+
+        assert {e["id"]: e["source"] for e in card["examples"]} == {
+            translated: "kwa rehema",
+            untranslated: "of grace",
+        }
+
+    def test_requesting_the_cards_own_language_returns_it_unchanged(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(
+            db_session, source, target, source_lemma="grace", source_language_iso="eng"
+        )
+        _make_overlay(db_session, card_id, "swh", source_lemma="rehema")
+
+        card = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="eng"
+        ).json()
+
+        assert card["source_language_iso"] == "eng"
+        assert card["source_lemma"] == "grace"
+
+    def test_an_overlay_in_a_different_language_is_not_served(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, source_lemma="grace")
+        _make_overlay(db_session, card_id, "swh", source_lemma="rehema")
+
+        card = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="fra"
+        ).json()
+
+        assert card["source_language_iso"] is None
+        assert card["source_lemma"] is None
+
+    def test_the_language_code_is_matched_case_insensitively(
+        self, client, db_session, regular_token1
+    ):
+        """Overlays are stored lowercase; the caller's casing must not decide the answer.
+
+        Nothing else in this module sends anything but a lowercase code, so the
+        ``.lower()`` both reads depend on has no other test standing over it — and its
+        failure mode is a silent one: an uppercase request would report the card as
+        having no translation rather than erroring.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, source_lemma="grace")
+        _make_overlay(db_session, card_id, "swh", source_lemma="rehema")
+
+        card = _get_by_id(
+            client, regular_token1, card_id, source_language_iso="SWH"
+        ).json()
+
+        assert card["source_language_iso"] == "swh"
+        assert card["source_lemma"] == "rehema"
+
+    def test_language_code_must_be_three_characters(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get_by_id(client, regular_token1, card_id, source_language_iso="en")
+
+        assert response.status_code == 422
+
+
+class TestByIdWithdrawnParameters:
+    def test_v3_lang_is_refused_not_ignored(self, client, db_session, regular_token1):
+        """The one rename that reaches this route, and the reason the guard is here.
+
+        ``?lang=swh`` ignored would serve the English canonical to a translator who asked
+        for Swahili — a wrong answer wearing a 200, which is the failure the guard exists
+        to convert into an error.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get_by_id(client, regular_token1, card_id, lang="swh")
+
+        assert response.status_code == 422
+        assert _error(response)["code"] == "WITHDRAWN_QUERY_PARAMETER"
+        assert _error(response)["details"] == {
+            "parameters": {"lang": "source_language_iso"}
+        }
+
+    def test_a_word_filter_is_not_refused_here(
+        self, client, db_session, regular_token1
+    ):
+        """The by-id guard is a subset, deliberately.
+
+        v3's by-id read never took ``target_words`` or ``source_words``, so no client can
+        arrive here still sending them, and this route has no word filter for one to
+        silently drop. On this path they are unrecognized keys like any other and are
+        ignored — the same treatment
+        ``test_an_unrelated_unknown_parameter_is_still_ignored`` pins on the list.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target)
+
+        response = _get_by_id(
+            client, regular_token1, card_id, target_words="neema", source_words="grace"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["id"] == card_id
+
+
+class TestByIdMalformedJsonbIsRepaired:
+    """The router's conversion helpers are shared, so this is a wiring check."""
+
+    def test_senses_holding_a_bare_string(self, client, db_session, regular_token1):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, senses=["a bare string"])
+
+        card = _get_by_id(client, regular_token1, card_id).json()
+
+        assert card["senses"] == [{"definition": "a bare string", "examples": []}]
+
+    def test_nan_confidence_does_not_break_the_response_body(
+        self, client, db_session, regular_token1
+    ):
+        from decimal import Decimal
+
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(db_session, source, target, confidence=Decimal("NaN"))
+
+        response = _get_by_id(client, regular_token1, card_id)
+
+        assert response.status_code == 200
+        # Against the raw text, not the parsed body: Python's json.loads accepts a bare
+        # ``NaN`` literal, so ``.json()`` alone would not catch one reaching the wire.
+        assert "NaN" not in response.text
+        assert response.json()["confidence"] is None
+
+
+class TestByIdMatchesTheListRow:
+    """The decision this PR turns on: by-id serves one row of the list, not more.
+
+    Both reads resolve a card through ``_views_for`` and convert it through
+    ``_to_lexeme_card_out``, so the two bodies are built by the same code. These compare
+    them anyway — a divergence would be someone adding a by-id-only field later, which is
+    exactly what the shared resolver exists to prevent.
+    """
+
+    def _both(self, client, token, target, card_id, **params):
+        listed = _get(client, token, target_version_id=target, **params)
+        assert listed.status_code == 200, listed.text
+        (row,) = [item for item in listed.json()["items"] if item["id"] == card_id]
+
+        single = _get_by_id(client, token, card_id, **params)
+        assert single.status_code == 200, single.text
+        return row, single.json()
+
+    def test_canonical_read(self, client, db_session, regular_token1):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        card_id = _make_card(
+            db_session,
+            source,
+            target,
+            target_lemma="neema",
+            source_lemma="grace",
+            surface_forms=["neema"],
+            source_surface_forms=["grace"],
+            senses=[{"definition": "favour", "examples": ["by grace"]}],
+            confidence=0.75,
+            pos="noun",
+            model="anthropic.claude-x",
+            alignment_scores={"grace": 0.9},
+            english_lemma="grace",
+            last_user_edit=datetime(2026, 1, 1, 12, 0, 0),
+        )
+        _make_example(db_session, card_id, revision, "by grace", "kwa neema")
+
+        row, single = self._both(client, regular_token1, target, card_id)
+
+        assert single == row
+
+    def test_overlaid_read(self, client, db_session, regular_token1):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        revision = _make_revision(db_session, target)
+        card_id = _make_card(
+            db_session, source, target, target_lemma="neema2", source_lemma="grace"
+        )
+        example_id = _make_example(
+            db_session, card_id, revision, "by grace", "kwa neema"
+        )
+        _make_overlay(
+            db_session,
+            card_id,
+            "swh",
+            source_lemma="rehema",
+            senses=[{"definition": "fadhili", "examples": []}],
+            example_translations={example_id: "kwa rehema"},
+        )
+
+        row, single = self._both(
+            client, regular_token1, target, card_id, source_language_iso="swh"
+        )
+
+        assert single == row
+        assert single["source_lemma"] == "rehema"
+
+    def test_missing_overlay_read(self, client, db_session, regular_token1):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(
+            db_session, source, target, target_lemma="neema3", source_lemma="grace"
+        )
+
+        row, single = self._both(
+            client, regular_token1, target, card_id, source_language_iso="fra"
+        )
+
+        assert single == row
+        assert single["source_language_iso"] is None
+
+    def test_last_user_edit_agrees_when_the_overlay_is_the_later_edit(
+        self, client, db_session, regular_token1
+    ):
+        """The one field v3 reports differently depending on how you reached the card.
+
+        v3's merge of canonical and overlay ``last_user_edit`` lives in the helper its
+        patch handlers use, so a v3 client sees one timestamp on a write and an older one
+        on either read. v4 merges on both reads; this pins that the two agree.
+        """
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        card_id = _make_card(
+            db_session,
+            source,
+            target,
+            target_lemma="neema4",
+            last_user_edit=datetime(2026, 1, 1, 12, 0, 0),
+        )
+        _make_overlay(
+            db_session,
+            card_id,
+            "swh",
+            source_lemma="rehema",
+            last_user_edit=datetime(2026, 6, 1, 12, 0, 0),
+        )
+
+        row, single = self._both(
+            client, regular_token1, target, card_id, source_language_iso="swh"
+        )
+
+        assert single == row
+        assert single["last_user_edit"].startswith("2026-06-01")
+
+    def test_examples_hidden_from_the_list_are_hidden_here_too(
+        self, client, db_session, regular_token1
+    ):
+        source = _make_version(db_session, "Group1")
+        target = _make_version(db_session, "Group1")
+        unreachable = _make_version(db_session, "Group2")
+        card_id = _make_card(db_session, source, target, target_lemma="neema5")
+        visible = _make_example(
+            db_session, card_id, _make_revision(db_session, target), "seen", "ona"
+        )
+        _make_example(
+            db_session, card_id, _make_revision(db_session, unreachable), "unseen", "x"
+        )
+
+        row, single = self._both(client, regular_token1, target, card_id)
+
+        assert single == row
+        assert [example["id"] for example in single["examples"]] == [visible]

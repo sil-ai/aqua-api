@@ -30,6 +30,13 @@ because it names the scope this collection is read within rather than narrowing 
 already-authorized set — the distinction ``/v4/revisions``' ``version_id`` filter draws.
 ``source_version_id`` is checked on the same terms, but only when the caller sends it.
 
+**The by-id read applies the same rule from the other end.** The list read is handed a
+``target_version_id`` and returns the cards under it; the by-id read is handed a card and
+must reach the version *it* names. One helper serves both, so the two cannot come apart.
+What differs is only what may be said about a refusal: the list read names the version
+back to the caller who supplied it, while the by-id read reports nothing but the card id
+it was given — see :class:`LexemeCardNotFound`.
+
 **Why the target version alone, and not both.** The strictest reading would demand access
 to source *and* target, the way ``is_user_authorized_for_assessment`` demands the
 revision's version and the reference's. It was rejected on what the data actually looks
@@ -124,6 +131,40 @@ class VersionNotVisible(LexemeCardServiceError):
     def __init__(self, version_id: int) -> None:
         self.version_id = version_id
         super().__init__(f"Version {version_id} does not exist.")
+
+
+class LexemeCardNotFound(LexemeCardServiceError):
+    """No card with this id that this caller may read.
+
+    Three cases behind one signal: no row with that id at all, a row whose target
+    version the caller has no grant on, and a row whose target version is soft-deleted.
+    The by-id read collapses them deliberately. A card id is a bare sequential integer,
+    so the whole space is enumerable, and any status code that told "not yours" apart
+    from "no such card" would be an oracle for which cards exist on translations the
+    caller cannot see — including how many a project has.
+
+    Distinct from :class:`VersionNotVisible`, which the list read raises for the same
+    underlying refusal, because the two name different resources. There the caller
+    supplied the ``target_version_id`` themselves and it names the scope of the whole
+    read, so reporting it back is not a disclosure; here the version is one the caller
+    never mentioned and learned nothing about, so the answer is about the card.
+
+    **The collapse is in the response, not in the cost.** A missing id is refused after
+    one indexed lookup; a card that exists but is not yours is refused after a second,
+    joined one, so the two are in principle separable by timing. Closing that would mean
+    scoping the card lookup by visibility in a single statement, the way
+    :func:`assessment_routes.v4.assessment_service.get_assessment` does — and the only
+    way to do it without a second copy of the version predicate here, which
+    :func:`_require_visible_version` exists to avoid, is a public visibility subquery on
+    :mod:`bible_routes.v4.version_service` that does not exist yet. Left as is: what the
+    channel yields is bare existence with no owner attached, at a cost that network
+    jitter dominates, and a duplicated access predicate that could drift from
+    ``/v4/versions`` is the worse risk of the two.
+    """
+
+    def __init__(self, card_id: int) -> None:
+        self.card_id = card_id
+        super().__init__(f"Lexeme card {card_id} does not exist.")
 
 
 class InvalidWordFilter(LexemeCardServiceError):
@@ -661,3 +702,61 @@ async def list_lexeme_cards(
 
     views = await _views_for(db, user, list(cards), requested_language_iso)
     return views, total or 0
+
+
+async def get_lexeme_card(
+    db: AsyncSession,
+    user: UserDB,
+    card_id: int,
+    *,
+    source_language_iso: str | None = None,
+) -> LexemeCardView:
+    """One lexeme card by id, resolved into the language the caller asked for.
+
+    **Authorized on the card's target version and nothing else**, which is the list
+    read's rule reached from the other direction: there the caller names the version and
+    the cards follow, here the card names the version and the caller must reach it. Same
+    helper, so the two cannot drift. The card's ``source_version_id`` is *not* checked —
+    a card can name a pivot Bible the caller has no grant on and still be theirs to read,
+    and the list read serves that id on exactly the same terms.
+
+    Raises :class:`LexemeCardNotFound` for a card that does not exist and for one whose
+    target version the caller cannot reach, with no way to tell the two apart. The
+    version-level signal is caught and re-raised here rather than propagating: letting
+    ``VersionNotVisible`` out would answer ``VERSION_NOT_FOUND`` for a card that exists
+    and ``LEXEME_CARD_NOT_FOUND`` for one that does not, which is the probe the single
+    signal exists to close.
+
+    **The row is built by** :func:`_views_for`, **the list read's own resolver, given a
+    one-card list.** That is why it takes a list: examples, the language overlay and the
+    ``last_user_edit`` merge are one implementation, so by-id returns field for field what
+    the same card returns as a list row. Do not grow a by-id-only field here — the shape
+    is shared on purpose, and :class:`api_v4.schemas.agent.LexemeCardOut` documents one
+    body for both reads.
+
+    That parity is a small change from v3 in one place. v3's ``last_user_edit`` on
+    *both* its reads is the canonical row's alone; the later-of-canonical-and-overlay
+    merge lives in ``_build_lexeme_card_out_for_lang``, which only v3's patch handlers
+    call, so v3 reports one edit time when you read a card and another when you write to
+    it. v4 applies the merge everywhere, which makes a source-only overlay edit visible
+    to a client rendering an "edited recently" marker on either read.
+
+    The other change from v3 is the larger one and belongs to the whole slice: a
+    ``source_language_iso`` this card has no overlay for is **served with the source side
+    null**, where v3's by-id read answers ``404`` to trigger a derivation pipeline. See
+    :func:`_build_view`, and the routes module for why v4 does not carry the side effect.
+    """
+    card = await db.scalar(select(AgentLexemeCard).where(AgentLexemeCard.id == card_id))
+    if card is None:
+        raise LexemeCardNotFound(card_id)
+
+    try:
+        await _require_visible_version(db, user, card.target_version_id)
+    except VersionNotVisible as exc:
+        raise LexemeCardNotFound(card_id) from exc
+
+    requested_language_iso = (
+        source_language_iso.lower() if source_language_iso else None
+    )
+    views = await _views_for(db, user, [card], requested_language_iso)
+    return views[0]

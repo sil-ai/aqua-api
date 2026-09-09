@@ -1,7 +1,10 @@
 """v4 lexeme-cards router (issue #896, epic #842).
 
-``GET /v4/lexeme-cards`` — the dictionary a translation team is building, one entry per
-target-language word: its inflected forms, what it means, and verses where it is used.
+``GET /v4/lexeme-cards`` and ``GET /v4/lexeme-cards/{card_id}`` — the dictionary a
+translation team is building, one entry per target-language word: its inflected forms,
+what it means, and verses where it is used. The by-id read serves one row of the list,
+identical field for field, because both go through the same resolver and the same row
+builder — see :func:`agent_routes.v4.lexeme_card_service.get_lexeme_card`.
 
 The last family in guide §15.7's three-way split of the agent surface, and the one that
 is not assessment output. Critique issues and agent translations hang off a run and so
@@ -22,8 +25,19 @@ What a v3 caller will notice
 
 **Cards are now authorized.** v3 gates them on nothing: any authenticated caller reads any
 card for any version pair. v4 requires the caller to reach the card's **target version**,
-and an unreachable one is a ``404 VERSION_NOT_FOUND`` rather than an empty page. The
-per-revision filter v3 already applies to *examples* is kept exactly as it was.
+and an unreachable one is a ``404`` rather than an empty page — ``VERSION_NOT_FOUND`` on
+the list, where the caller supplied the id, and ``LEXEME_CARD_NOT_FOUND`` on the by-id
+read, where naming the version would say something about a card the caller may not know
+exists. The per-revision filter v3 already applies to *examples* is kept exactly as it
+was.
+
+**A missing translation is served, not refused.** v3's by-id read answers ``404`` when you
+ask for a language the card has no overlay for, deliberately, as a trigger for a
+derivation pipeline. v4 returns the card with the whole source side null instead. A row
+that exists reported as missing is a side effect wearing a status code; the pipeline that
+consumed it runs against v3 and is unaffected. This is the largest behavioural difference
+between v3's by-id read and v4's, and the list read already worked this way — the two
+must agree.
 
 **One repeated ``?target_word=`` replaces v3's ``target_word`` / ``target_words`` pair.**
 v3 has two parameters for one idea and answers ``400`` if you send both. v4 has one that
@@ -100,9 +114,31 @@ WITHDRAWN_QUERY_PARAMS = {
 }
 
 
-def _withdrawn_parameter_error(sent: list[str]) -> V4APIError:
+#: The subset of :data:`WITHDRAWN_QUERY_PARAMS` that ``GET /v4/lexeme-cards/{id}`` guards.
+#:
+#: ``lang`` alone. v3's ``GET /agent/lexeme-card/{card_id}`` takes ``lang`` and no other
+#: query parameter, so ``target_words`` and ``source_words`` were never parameters of
+#: *this* read — on this path they are ordinary unrecognized keys and get v4's ordinary
+#: treatment, which is to ignore them.
+#:
+#: The test the guard exists to apply is whether a renamed parameter can turn into
+#: silence behind a ``200``. ``lang`` fails it: pointed at v4 unchanged, ``?lang=swh``
+#: would serve the English canonical to a translator who asked for Swahili, with nothing
+#: in the body saying so. A word filter this route never had cannot narrow anything, so
+#: ``?target_words=grace`` here already gets precisely what it asked for — the card at
+#: that id. Refusing it would be a new strictness rather than a migration aid, and it is
+#: the general rule the shared dict's own note declines to make on this slice's budget.
+#:
+#: Derived from the shared dict rather than respelled, so the replacement name cannot
+#: drift between the two routes.
+BY_ID_WITHDRAWN_QUERY_PARAMS = {"lang": WITHDRAWN_QUERY_PARAMS["lang"]}
+
+
+def _withdrawn_parameter_error(
+    sent: list[str], withdrawn: dict[str, str]
+) -> V4APIError:
     """Name every withdrawn parameter in the request, and what to send instead."""
-    replacements = {name: WITHDRAWN_QUERY_PARAMS[name] for name in sent}
+    replacements = {name: withdrawn[name] for name in sent}
     told = ", ".join(f"{old} is now {new}" for old, new in replacements.items())
     return V4APIError(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -114,6 +150,17 @@ def _withdrawn_parameter_error(sent: list[str]) -> V4APIError:
         ),
         details={"parameters": replacements},
     )
+
+
+def _refuse_withdrawn_parameters(request: Request, withdrawn: dict[str, str]) -> None:
+    """Raise if the request carries any of ``withdrawn``'s v3 names.
+
+    Takes the mapping rather than closing over the module-level one, because the two
+    routes guard different sets — see :data:`BY_ID_WITHDRAWN_QUERY_PARAMS`.
+    """
+    sent = [name for name in withdrawn if name in request.query_params]
+    if sent:
+        raise _withdrawn_parameter_error(sent, withdrawn)
 
 
 def _version_not_visible_error(
@@ -417,11 +464,7 @@ async def list_lexeme_cards(
     than ignored so that a client mid-migration cannot get a `200` carrying a filter it
     thinks it applied.
     """
-    withdrawn = [
-        name for name in WITHDRAWN_QUERY_PARAMS if name in request.query_params
-    ]
-    if withdrawn:
-        raise _withdrawn_parameter_error(withdrawn)
+    _refuse_withdrawn_parameters(request, WITHDRAWN_QUERY_PARAMS)
 
     try:
         views, total = await lexeme_card_service.list_lexeme_cards(
@@ -456,3 +499,83 @@ async def list_lexeme_cards(
         total=total,
         pagination=page,
     )
+
+
+# Declared after the list read, but nothing depends on the order: ``""`` and
+# ``"/{card_id}"`` cannot shadow each other, and this router has no literal sub-path for a
+# path parameter to swallow. v3 needs the warning comment above its by-id route because
+# ``/agent/lexeme-card/check-word`` shares that shape; v4 does not carry ``check-word``
+# (no callers, guide §15.7), so the hazard does not exist here.
+@router.get(
+    "/{card_id}",
+    response_model=LexemeCardOut,
+)
+async def get_lexeme_card(
+    request: Request,
+    card_id: int,
+    source_language_iso: Optional[str] = Query(
+        None,
+        min_length=3,
+        max_length=3,
+        description=(
+            "ISO 639-3 code of the language you want the **source side** of the card in, "
+            "on exactly the terms `GET /v4/lexeme-cards` takes it. Omit it for the card "
+            "as stored. v3 calls this `lang`."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user_v4),
+) -> LexemeCardOut:
+    """Read one lexeme card by id.
+
+    **The body is one row of `GET /v4/lexeme-cards`, identical field for field.** Both
+    reads resolve the card through the same code, so a card fetched by id and the same
+    card seen in a list cannot disagree — including `last_user_edit`, which is the later
+    of the card's own and the requested language's overlay on both. Use the list read to
+    find cards and this one to re-read a card whose id you already hold.
+
+    **A card you cannot see is `404 LEXEME_CARD_NOT_FOUND`, and so is one that does not
+    exist** — the same code, message and `details` for both. You may read a card when you
+    can reach its **target version**, the translation the card describes; access to the
+    source side grants nothing, and the card's own `source_version_id` is not checked,
+    since it is often a shared pivot Bible no single project owns. Card ids are
+    sequential integers, so any answer that told the two cases apart would let a caller
+    walk the space and count another project's dictionary.
+
+    **A `source_language_iso` this card has no translation for is served, not refused.**
+    The whole source side comes back null — `source_lemma`, `source_surface_forms`,
+    `senses`, each example's `source`, and `source_language_iso` itself, which is how you
+    tell. **This is the substantive change from v3**, whose by-id read answers `404` in
+    that case so that a caller will trigger a derivation pipeline. A row that plainly
+    exists reported as missing is a side effect wearing a status code, the pipeline that
+    consumed it runs against v3 and is unaffected, and the v4 list read already reports
+    the state rather than the 404 — the two reads must agree.
+
+    Examples are filtered to the revisions you may read, exactly as on the list: an empty
+    `examples` means "none you may read", not "none stored", and an administrator sees
+    them all.
+
+    Sending v3's `lang` is `422 WITHDRAWN_QUERY_PARAMETER`, naming `source_language_iso`
+    as its replacement, so a client mid-migration cannot get a `200` of the canonical
+    English it did not ask for. `target_words` and `source_words` are not guarded here —
+    v3's by-id read never accepted them, so on this path they are unrecognized keys like
+    any other.
+    """
+    _refuse_withdrawn_parameters(request, BY_ID_WITHDRAWN_QUERY_PARAMS)
+
+    try:
+        view = await lexeme_card_service.get_lexeme_card(
+            db,
+            current_user,
+            card_id,
+            source_language_iso=source_language_iso,
+        )
+    except lexeme_card_service.LexemeCardNotFound as exc:
+        raise V4APIError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="LEXEME_CARD_NOT_FOUND",
+            message=str(exc),
+            details={"card_id": card_id},
+        ) from exc
+
+    return _to_lexeme_card_out(view)
