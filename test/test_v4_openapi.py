@@ -310,19 +310,28 @@ class TestPublishedErrorContract:
         """
         assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "500"}
 
-    def test_the_token_endpoint_documents_its_own_401(self, schema):
+    def test_the_token_endpoint_documents_its_own_401_and_429(self, schema):
         """``POST /v4/token`` answers 401, but for bad credentials, not a bad token.
 
         It is declared on the route so it can say ``INVALID_CREDENTIALS`` rather than
         inheriting the protected-route wording about a missing bearer token.
+
+        The 429 is declared here for the same reason the class exists — v4 documents
+        the errors an operation can actually return, and this operation is the only
+        rate-limited one on the surface (#713). It is per-IP and shared with v3's
+        ``/latest/token``, so a caller has to know it can arrive.
         """
         responses = schema["paths"]["/token"]["post"]["responses"]
-        assert set(responses) == {"200", "401", "422", "500"}
+        assert set(responses) == {"200", "401", "422", "429", "500"}
         assert (
             responses["401"]["content"]["application/json"]["schema"]["$ref"]
             == V4_ERROR_REF
         )
         assert "INVALID_CREDENTIALS" in responses["401"]["description"]
+        assert (
+            responses["429"]["content"]["application/json"]["schema"]["$ref"]
+            == V4_ERROR_REF
+        )
         # No 403: nothing here can be forbidden, because nothing is authenticated.
         assert "403" not in responses
 
@@ -332,9 +341,14 @@ class TestForbiddenIsWriteOnly:
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 9 of the 31 domain operations, unreachable on 22.
+    write-path status: reachable on 9 of the 34 domain operations, unreachable on 25.
 
-    It briefly *was* in the shared set, which published it on all 31. This class is what
+    "Write-path" is the generalization, not the rule. The resolution ``PATCH`` on
+    ``/critique-issues/{issue_id}`` is a write that declares no 403, because it
+    authorizes by read access rather than ownership (#896) — so this set is the writes
+    that can raise a 403, not every write.
+
+    It briefly *was* in the shared set, which published it on all 34. This class is what
     keeps it out: a client generated from the schema would otherwise carry dead
     forbidden-handling on every read, and a reader of ``/v4/docs`` would conclude any
     v4 call can be refused.

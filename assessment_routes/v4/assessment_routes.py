@@ -446,7 +446,9 @@ def _to_out(assessment: Assessment) -> AssessmentOut:
     slice states (#891) and the reason the three v3 fields v4 drops (``status``,
     ``is_training``, ``attempt_count``) cannot reappear by accident. This is also the
     one place the wire names are bridged to the ORM spellings: ``kwargs`` -> ``options``,
-    and ``status`` -> the public ``state``.
+    ``status`` -> the public ``state``, and the three timestamp columns -> their ``_at``
+    spellings (``requested_time`` -> ``requested_at``, ``start_time`` -> ``started_at``,
+    ``end_time`` -> ``ended_at``, #925). The columns keep v3's names; only the wire moved.
 
     ``state_for_assessment_status`` raises ``ValueError`` on a status outside the four
     internal values, which reaches the #828 catch-all as a 500. That is
@@ -468,9 +470,9 @@ def _to_out(assessment: Assessment) -> AssessmentOut:
         state=state_for_assessment_status(assessment.status),
         status_detail=assessment.status_detail,
         percent_complete=assessment.percent_complete,
-        requested_time=assessment.requested_time,
-        start_time=assessment.start_time,
-        end_time=assessment.end_time,
+        requested_at=assessment.requested_time,
+        started_at=assessment.start_time,
+        ended_at=assessment.end_time,
         owner_id=assessment.owner_id,
         options=assessment.kwargs,
         deleted=bool(assessment.deleted),
@@ -631,7 +633,7 @@ async def list_assessments(
       keeps listing assessments of deleted revisions.
 
     Ordered by id rather than v3's newest-requested-first: offset pagination needs a
-    total order on a column that cannot tie or move, and ``requested_time`` is nullable.
+    total order on a field that cannot tie or move, and ``requested_at`` is nullable.
 
     ``updated_since`` turns the same list into a delta feed, and every response carries
     ``next_updated_since`` — the caller's next watermark, lapped server-side by
