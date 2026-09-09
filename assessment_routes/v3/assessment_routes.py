@@ -34,6 +34,7 @@ from models import (
     AssessmentStatusUpdate,
 )
 from security_routes.auth_routes import get_current_user
+from utils.datetime_utils import as_naive_utc
 from utils.logging_config import setup_logger
 
 load_dotenv()
@@ -147,6 +148,7 @@ async def get_assessments(
     revision_id: Optional[int] = None,
     reference_id: Optional[int] = None,
     type: Optional[str] = None,
+    updated_since: Optional[datetime] = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -160,6 +162,13 @@ async def get_assessments(
     - revision_id: Filter assessments by revision ID
     - reference_id: Filter assessments by reference ID
     - type: Filter assessments by assessment type
+    - updated_since: ISO-8601 timestamp (naive values are interpreted as UTC).
+      Returns only assessments modified after this time, *including*
+      soft-deleted ones (a soft-delete is an update), so downstream mirrors can
+      sync deltas — deletions included. Applies to any authenticated caller,
+      scoped to the assessments they are authorized for. Mirrors should use the
+      max updated_at from the response body, verbatim, as their next watermark,
+      and keep a periodic full reconcile as a safety net.
 
     Currently supported assessment types are:
 
@@ -195,9 +204,18 @@ async def get_assessments(
 
     """
 
+    if updated_since is not None:
+        updated_since = as_naive_utc(updated_since)
+
     if current_user.is_admin:
         # Admin users can access all assessments
-        stmt = select(Assessment).where(Assessment.deleted.is_(False))
+        stmt = select(Assessment)
+        if updated_since is not None:
+            stmt = stmt.where(Assessment.updated_at > updated_since)
+        else:
+            # is_not(True), not is_(False): legacy rows carry NULL deleted,
+            # matching the non-admin branch below
+            stmt = stmt.where(Assessment.deleted.is_not(True))
 
         stmt = _apply_filters(stmt, ids, revision_id, reference_id, type)
 
@@ -235,7 +253,6 @@ async def get_assessments(
                 ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
             )
             .filter(
-                Assessment.deleted.is_not(True),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
                     Assessment.reference_id.is_(None),
@@ -243,6 +260,10 @@ async def get_assessments(
                 ),
             )
         )
+        if updated_since is not None:
+            stmt = stmt.filter(Assessment.updated_at > updated_since)
+        else:
+            stmt = stmt.filter(Assessment.deleted.is_not(True))
 
         stmt = _apply_filters(stmt, ids, revision_id, reference_id, type)
 

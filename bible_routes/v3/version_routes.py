@@ -1,8 +1,8 @@
 __version__ = "v3"
 
 from collections import defaultdict
-from datetime import date
-from typing import List
+from datetime import date, datetime
+from typing import List, Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -18,6 +18,7 @@ from models import VersionIn
 from models import VersionOut_v3 as VersionOut
 from models import VersionUpdate
 from security_routes.auth_routes import get_current_user
+from utils.datetime_utils import as_naive_utc
 
 router = fastapi.APIRouter()
 
@@ -25,6 +26,7 @@ router = fastapi.APIRouter()
 @router.get("/version", response_model=List[VersionOut])
 async def list_version(
     include_deleted: bool = False,
+    updated_since: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -34,16 +36,33 @@ async def list_version(
     Admins may pass ``include_deleted=true`` to also return soft-deleted
     versions, so downstream mirrors can satisfy FK constraints against
     revisions whose parent version has been soft-deleted. Non-admin callers
-    never receive soft-deleted versions regardless of this flag.
+    never receive soft-deleted versions via this flag alone (but see
+    ``updated_since`` below).
+
+    ``updated_since`` (ISO-8601 timestamp; naive values are interpreted as
+    UTC) returns only versions modified after that time, *including*
+    soft-deleted ones (a soft-delete is an update), so downstream mirrors can
+    sync deltas — deletions included — instead of re-fetching the full list.
+    This applies to any authenticated caller, scoped to the versions they are
+    authorized for; it also takes precedence over ``include_deleted=false``.
+    Mirrors should use the max ``updated_at`` from the response body,
+    verbatim, as their next watermark, and keep a periodic full reconcile as
+    a safety net: a write transaction still open when a delta is served can
+    commit rows stamped near (though never before) that watermark.
     """
 
     admin_include_deleted = include_deleted and current_user.is_admin
+    if updated_since is not None:
+        updated_since = as_naive_utc(updated_since)
 
     # Step 1: Fetch all versions the user can access
     if current_user.is_admin:
         stmt = select(BibleVersionModel).order_by(BibleVersionModel.id)
-        if not admin_include_deleted:
-            stmt = stmt.where(BibleVersionModel.deleted.is_(False))
+        if updated_since is not None:
+            stmt = stmt.where(BibleVersionModel.updated_at > updated_since)
+        elif not admin_include_deleted:
+            # is_not(True), not is_(False): legacy rows carry NULL deleted
+            stmt = stmt.where(BibleVersionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         versions = result.scalars().all()
     else:
@@ -60,12 +79,13 @@ async def list_version(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
             )
-            .where(
-                BibleVersionModel.deleted.is_(False),
-                BibleVersionAccess.group_id.in_(user_groups_subq),
-            )
+            .where(BibleVersionAccess.group_id.in_(user_groups_subq))
             .order_by(BibleVersionModel.id)
         )
+        if updated_since is not None:
+            stmt = stmt.where(BibleVersionModel.updated_at > updated_since)
+        else:
+            stmt = stmt.where(BibleVersionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         versions = result.scalars().all()
 

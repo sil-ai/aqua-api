@@ -2864,6 +2864,8 @@ def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
     actually blocks pg_try_advisory_xact_lock(K) on another connection
     (#780). Guards against accidentally swapping in a non-locking
     primitive during a refactor."""
+    import os
+
     from sqlalchemy import create_engine
     from sqlalchemy import text as _text
 
@@ -2873,7 +2875,7 @@ def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
     )
 
     sync_engine = create_engine(
-        "postgresql://dbuser:dbpassword@localhost:5432/dbname",
+        os.environ["AQUA_DB"].replace("+asyncpg", ""),
         # Two distinct backend connections — required for advisory-lock
         # contention to be observable.
         pool_size=2,
@@ -2973,9 +2975,9 @@ def test_call_assessment_runner_refuses_to_respawn_non_queued_row(
     )
 
     async def _run():
-        async_engine = create_async_engine(
-            "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-        )
+        import os
+
+        async_engine = create_async_engine(os.environ["AQUA_DB"])
         AsyncSessionLocal = sessionmaker(
             autocommit=False,
             autoflush=False,
@@ -3274,3 +3276,118 @@ def test_assessment_out_exposes_attempt_count(
     assert resp.status_code == 200
     bodies = [row for row in resp.json() if row["id"] == aid]
     assert bodies[0]["attempt_count"] == 1
+
+
+def test_get_assessments_updated_since_includes_soft_deleted(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """updated_since returns only assessments modified after the timestamp,
+    including soft-deleted ones, so downstream mirrors can sync deltas (#887).
+    """
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        kept_response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert kept_response.status_code == 200
+        kept_id = kept_response.json()[0]["id"]
+
+        deleted_response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert deleted_response.status_code == 200
+        deleted_id = deleted_response.json()[0]["id"]
+
+    list_response = list_assessment(client, admin_token)
+    assert list_response.status_code == 200
+    by_id = {a["id"]: a for a in list_response.json()}
+    assert by_id[kept_id]["updated_at"] is not None
+    watermark = max(a["updated_at"] for a in list_response.json())
+
+    delete_response = delete_assessment(client, regular_token1, deleted_id)
+    assert delete_response.status_code == 200
+
+    delta_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": watermark},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {a["id"]: a for a in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Non-admin owner also sees the deletion in their delta window
+    delta_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": watermark},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {a["id"]: a for a in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Nothing changed since the delta → empty response
+    new_watermark = max(a["updated_at"] for a in delta_response.json())
+    empty_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": new_watermark},
+        headers=admin_headers,
+    )
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []
+
+
+def test_get_assessments_includes_null_deleted_rows(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """The default listing must not drop legacy NULL-deleted rows: the filter
+    is deleted.is_not(True), not deleted.is_(False)."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        assessment_id = response.json()[0]["id"]
+
+    row = db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
+    row.deleted = None
+    db_session.commit()
+
+    for token in (admin_token, regular_token1):
+        response = list_assessment(client, token)
+        assert response.status_code == 200
+        assert assessment_id in {a["id"] for a in response.json()}

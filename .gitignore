@@ -100,7 +100,7 @@ Pipfile*
 
 # Poetry
 poetry.lock
-pyproject.toml
+# pyproject.toml is tracked (project + uv dependency manifest); uv.lock is tracked too.
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow
 __pypackages__/

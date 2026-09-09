@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -19,6 +19,7 @@ from security_routes.utilities import (
     get_authorized_revision_ids,
     is_user_authorized_for_bible_version,
 )
+from utils.datetime_utils import as_naive_utc
 
 router = APIRouter()
 
@@ -77,6 +78,7 @@ def create_revision_out(
 @router.get("/revision", response_model=List[RevisionOut])
 async def list_revisions(
     version_id: Optional[int] = None,
+    updated_since: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -88,6 +90,14 @@ async def list_revisions(
     Input:
     - version_id: Optional[int] = None
     Description: The id of the version to which the revision belongs. If not provided, returns all revisions.
+    - updated_since: Optional[datetime] = None
+    Description: ISO-8601 timestamp (naive values are interpreted as UTC).
+    Returns only revisions modified after this time, *including* soft-deleted
+    ones (a soft-delete is an update), so downstream mirrors can sync deltas —
+    deletions included. Applies to any authenticated caller, scoped to the
+    revisions they are authorized for. Mirrors should use the max updated_at
+    from the response body, verbatim, as their next watermark, and keep a
+    periodic full reconcile as a safety net.
 
     Returns:
     Fields(Revision):
@@ -104,6 +114,9 @@ async def list_revisions(
     - file: UploadFile
     Description: The file containing the revision text.
     """
+    if updated_since is not None:
+        updated_since = as_naive_utc(updated_since)
+
     if version_id:
         # Step 1: Check version existence
         version = await db.scalar(
@@ -125,19 +138,26 @@ async def list_revisions(
             )
 
         # Step 3: Load revisions for that version
-        result = await db.execute(
-            select(BibleRevisionModel).where(
-                BibleRevisionModel.bible_version_id == version_id,
-                BibleRevisionModel.deleted.is_(False),
-            )
+        stmt = select(BibleRevisionModel).where(
+            BibleRevisionModel.bible_version_id == version_id
         )
+        if updated_since is not None:
+            stmt = stmt.where(BibleRevisionModel.updated_at > updated_since)
+        else:
+            # is_not(True), not is_(False): legacy rows carry NULL deleted
+            stmt = stmt.where(BibleRevisionModel.deleted.is_not(True))
+        result = await db.execute(stmt)
         revisions = result.scalars().all()
 
     else:
-        # Step 1: Load all undeleted revisions
-        result = await db.execute(
-            select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False))
-        )
+        # Step 1: Load all revisions in the window (soft-deleted ones are
+        # included when updated_since is given, so mirrors see deletions)
+        stmt = select(BibleRevisionModel)
+        if updated_since is not None:
+            stmt = stmt.where(BibleRevisionModel.updated_at > updated_since)
+        else:
+            stmt = stmt.where(BibleRevisionModel.deleted.is_not(True))
+        result = await db.execute(stmt)
         all_revisions = result.scalars().all()
 
         # Step 2: Get only those revisions the user is authorized for
