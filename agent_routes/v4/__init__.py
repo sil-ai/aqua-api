@@ -10,9 +10,17 @@ and agent translations *are* assessment results — so the router shares the
 ``/assessments`` prefix with the Assessments router while declaring only sub-paths; see
 ``agent_routes.py`` for why that is safe.
 
-Still to land on the same issue: ``/v4/lexeme-cards`` and ``/v4/agent-word-alignments``,
-which are version- and language-keyed reference data with no assessment to nest under and
-so become top-level collections here.
+Also here, on the same issue: ``lexeme_card_routes.py`` over ``lexeme_card_service.py``,
+serving ``/v4/lexeme-cards``. Version- and language-keyed reference data with no
+assessment to nest under, so a top-level collection rather than a sub-resource, and its
+own router and service because it shares no authorization with the two reads above.
+
+``/v4/agent-word-alignments`` was **not** built. §15.7 planned it, and a caller check
+before starting reversed that: no client repo reads ``GET /agent/word-alignment`` or its
+``/all`` form, and the table is a cache from the retired NLLB pipeline that nothing writes
+any more — ``aqua-assessments`` withdrew its own bulk push as redundant once eflomal
+results were queryable in their own right. The two reads stay on v3, on the same "no
+caller in any local client repo" ruling that made tokenizer and pivot v3-only.
 
 The five agent **writes** stay on v3 by design (§15.7): ``POST /agent/critique``,
 ``/agent/translation``, ``/agent/translations``, ``/agent/word-alignment`` and its
