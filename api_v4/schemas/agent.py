@@ -562,3 +562,296 @@ class CritiqueIssueResolution(V4BaseModel):
                 "unresolving clears the notes"
             )
         return self
+
+
+class SenseOut(V4BaseModel):
+    """One sense of a lexeme — a definition, and the phrases illustrating it.
+
+    **Typed, where v3 serves ``senses`` as a bare ``list``.** The rule the agent-result
+    slice settled is to type a JSONB column when its shape is *enforced* somewhere and to
+    leave it open when nothing enforces it (assessment ``options`` being the open case).
+    This one is enforced three times over in ``aqua-assessments``, which is the only
+    writer: a ``Sense(definition: str, examples: List[str])`` Pydantic model, a JSON-schema
+    tool contract the card-building model must satisfy, and a defensive normalizer that
+    folds looser LLM output into that shape before it is ever sent. The one known reader,
+    ``aqua-django-app``, already reads exactly these two keys.
+
+    **``examples`` is a list of plain strings, and is not**
+    :attr:`LexemeCardOut.examples`. The card-level field is verse-grounded — each entry
+    carries a row id and a source/target pair drawn from a real revision. These are
+    illustrative phrases attached to a single definition, with no id and no verse behind
+    them. Two different things that v3's untyped ``list`` let share a name.
+
+    In practice the runner writes ``examples: []`` on every canonical card: the only path
+    that carries a non-empty list is the translation overlay, which copies the canonical's
+    entries forward while replacing the definition. So an empty list here is the norm and
+    means "none recorded", not "none exist".
+    """
+
+    definition: str = Field(
+        description=(
+            "What the lexeme means in this sense, in the source-side language. Served as "
+            "stored. Can be an empty string on a malformed legacy row — see "
+            "`LexemeCardOut.senses` for why such a row is repaired rather than refused."
+        ),
+    )
+    examples: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Phrases illustrating this sense, as plain strings. Usually empty: only the "
+            "translation-overlay path carries these forward. Not verse-grounded — for "
+            "that, read `LexemeCardOut.examples`."
+        ),
+    )
+
+
+class LexemeCardExampleOut(V4BaseModel):
+    """One verse-grounded usage example on a lexeme card.
+
+    A row of ``agent_lexeme_card_examples``, filtered to the revisions the caller may
+    read — see :class:`LexemeCardOut` for that rule, which is the one piece of
+    authorization v3 already applied to this family.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored example's id. Unlike most ids on v4 result rows this one **is** a "
+            "handle: it is what `card_translation_examples.example_id` points at, so a "
+            "translated example can be matched back to the canonical it translates."
+        ),
+    )
+    revision_id: int = Field(
+        description=(
+            "The revision the example was drawn from. **v3 does not serve this**, which "
+            "left its one client re-sending examples on a `PATCH` with the revision it "
+            "happened to be viewing rather than the one each example came from. Always a "
+            "revision of the card's source or target version — the write path enforces "
+            "that, and the read filter above depends on it."
+        ),
+    )
+    source: str | None = Field(
+        default=None,
+        description=(
+            "The phrase in the source-side language. **Null when a "
+            "`source_language_iso` was requested that this card has no translation "
+            "for** — the whole source side is null in that case, and "
+            "`LexemeCardOut.source_language_iso` is null to say so. Never null on a "
+            "canonical read."
+        ),
+    )
+    target: str | None = Field(
+        default=None,
+        description=(
+            "The phrase in the target language. Never null in practice — the column is "
+            "`NOT NULL` — and optional here only so that the source-side nulling above "
+            "cannot be mistaken for a shape this field shares."
+        ),
+    )
+
+
+class LexemeCardOut(V4BaseModel):
+    """One row of ``GET /v4/lexeme-cards`` and the whole body of ``GET /v4/lexeme-cards/{id}``.
+
+    **A lexeme card is a dictionary entry for one word of a translation**, built against a
+    source text: the target-language lemma, the surface forms it inflects into, what it
+    means, and verses where it is used. It is reference data rather than assessment
+    output — keyed on a version pair rather than on a run, outliving any single one —
+    which is why guide §15.7 promotes it to a top-level collection with no assessment to
+    nest under.
+
+    Canonical storage, and the language you asked for
+    ------------------------------------------------
+
+    A card is stored once, against the source language it was built in — its
+    ``source_language_iso``. The same card can then carry a cheap machine translation of
+    its **source side only** into other languages, so a Swahili translator and a Spanish
+    translator can read the same card. Pass ``?source_language_iso=`` to pick which:
+
+    * Omitted, or equal to the card's canonical language — the canonical card, verbatim.
+    * A language with a stored overlay — :attr:`source_lemma`,
+      :attr:`source_surface_forms`, :attr:`senses` and each example's ``source`` come from
+      the overlay; everything target-side is untouched, because there is only one target
+      column and every language view projects it.
+    * **A language with no overlay** — the whole source side is null, including
+      :attr:`source_language_iso` itself, and the target side is served as normal. That
+      last one is the substantive change from v3, whose by-id read answers **404** in this
+      case to signal a derivation pipeline it should trigger. A 404 for a row that plainly
+      exists is a side effect wearing a status code, and the pipeline that consumed it
+      runs against v3, which is unchanged. So v4 reports the state instead: null
+      ``source_language_iso`` means "this card has nothing in the language you asked for".
+
+    v3 published that state as a separate boolean, ``has_translation_overlay``. Guide
+    §10's boolean rule is that a boolean is bare and that ``is_admin`` / ``is_reference``
+    are a closed pair, so the name could not survive as it was — and once
+    ``source_language_iso`` is on the wire, a boolean beside it would be a second field
+    saying what the first already says.
+
+    Malformed JSONB is repaired, not refused
+    ----------------------------------------
+
+    :attr:`senses`, :attr:`surface_forms` and :attr:`source_surface_forms` are ``jsonb``
+    columns with no database constraint, and the only writer that types them arrived after
+    rows already existed. A read that validated them strictly would answer **500** on a
+    legacy row rather than showing the caller the card — the failure mode the
+    ``severity`` note above rejects for the same reason. So the conversion boundary folds
+    what it can into the declared shape (a bare string sense becomes a definition with no
+    examples) and drops what it cannot, rather than declining to serve the row. This
+    mirrors what the runner's own normalizer does before writing.
+    """
+
+    id: int = Field(
+        description="The card's id, and its handle on `/v4/lexeme-cards/{id}`."
+    )
+    target_lemma: str = Field(
+        description=(
+            "The dictionary form of the word in the **target** language — the translation "
+            "being worked on. Stored lowercased and NFC-normalized, and that stored "
+            "spelling is what is served."
+        ),
+    )
+    source_lemma: str | None = Field(
+        default=None,
+        description=(
+            "The dictionary form in the **source-side** language, i.e. whichever language "
+            "`source_language_iso` names. Null when the card never recorded one, and also "
+            "null when a `source_language_iso` was requested that this card has no "
+            "translation for."
+        ),
+    )
+    source_version_id: int = Field(
+        description=(
+            "The version the card was built **from**. Often a shared pivot Bible rather "
+            "than the reference the caller had in mind, because card lookup is "
+            "pivot-routed; that is why it is reported rather than assumed."
+        ),
+    )
+    target_version_id: int = Field(
+        description="The version the card is **for** — the translation it describes.",
+    )
+    source_language_iso: str | None = Field(
+        default=None,
+        description=(
+            "ISO 639-3 code of the language the source-side fields above are actually in. "
+            "**Null means the card has no translation into the `source_language_iso` you "
+            "asked for**, and the whole source side is null with it. Non-null on every "
+            "canonical read: the column is `NOT NULL`, filled by a database trigger from "
+            "`source_version_id` when a writer omits it."
+        ),
+    )
+    pos: str | None = Field(
+        default=None,
+        description=(
+            "Part of speech. **Free text, deliberately not an enum.** The card builder "
+            "picks from a closed list (`noun`, `verb`, `adjective`, …, `unknown`), but a "
+            "second writer — function-word seeding — stores values outside it "
+            "(`complementizer`, `demonstrative`, `quantifier`, `tam_marker`). Declaring "
+            "the enum would turn those rows into 500s on a read, and the column has no "
+            "database constraint to make the enum true."
+        ),
+    )
+    surface_forms: list[str] | None = Field(
+        default=None,
+        description=(
+            "The inflected forms the target lemma appears as in the text. Shared across "
+            "every language view — there is one target side, so a correction made from "
+            "any view is visible from all of them."
+        ),
+    )
+    source_surface_forms: list[str] | None = Field(
+        default=None,
+        description=(
+            "The inflected forms on the source side. Overlaid per language, and null when "
+            "the requested language has no overlay."
+        ),
+    )
+    senses: list[SenseOut] | None = Field(
+        default=None,
+        description=(
+            "What the lemma means, one entry per distinct sense, in the source-side "
+            "language. Overlaid per language and null when the requested language has no "
+            'overlay. Null also means "none recorded" on a card that never got any.'
+        ),
+    )
+    examples: list[LexemeCardExampleOut] = Field(
+        default_factory=list,
+        description=(
+            "Verse-grounded usages, oldest row first. **Filtered to the revisions you may "
+            "read** — a card is visible when you can reach its target version, but an "
+            "example is shown only when you can reach the revision it was drawn from, so "
+            "two callers can legitimately see the same card with different examples. "
+            'Administrators see them all. An empty list therefore means "none you may '
+            'read", which is not the same as "none stored".'
+        ),
+    )
+    confidence: float | None = Field(
+        default=None,
+        description=(
+            "How much the builder trusts the card, 0 to 1. Null on rows written before it "
+            "was recorded. Cards are returned highest-confidence first, and nulls sort "
+            "last."
+        ),
+    )
+    english_lemma: str | None = Field(
+        default=None,
+        description=(
+            "An English gloss, recorded when neither side of the pair is English so that "
+            "a card is readable without knowing either language. Null when the source "
+            "side is already English, and on rows that never got one."
+        ),
+    )
+    alignment_scores: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Source words statistically aligned to this lemma, mapped to a strength, "
+            "strongest first. **The values are not probabilities and are not bounded by "
+            "1.** Rows from the current eflomal pipeline hold a rate in `(0, 1]` — "
+            "alignment links divided by corpus occurrences — while rows from the retired "
+            "NLLB pipeline hold an attention score scaled by a frequency factor and can "
+            "exceed 1. Nothing on the row says which produced it, so treat the numbers as "
+            "a ranking rather than a measurement. Keys are lowercased source words."
+        ),
+    )
+    build_version: str | None = Field(
+        default=None,
+        description=(
+            "Opaque token identifying the build that produced this card, bumped whenever "
+            "the builder rebuilds it. **Null on most cards**: only the agentic "
+            "card-builder stamps it, while translation-discovered lemmas and function-word "
+            "seeds do not. Useful for spotting a translation overlay that has fallen "
+            "behind its parent, not as a general version marker."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "The model that built the card, resolved to a foundation-model name rather "
+            "than the runtime inference-profile id (e.g. `anthropic.claude-sonnet-4-6`). "
+            "Null on the same rows `build_version` is null on. `?model=` filters on it, "
+            "and that filter excludes unstamped cards for the same reason."
+        ),
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the card was first stored. Null on legacy rows: the column is nullable "
+            "with no database default and its default is applied in Python, so a row "
+            "written outside the ORM has none."
+        ),
+    )
+    last_updated: datetime | None = Field(
+        default=None,
+        description=(
+            "When the card was last written, by anyone. Null on the same terms as "
+            "`created_at`. **Not a delta watermark** — see the endpoint description for "
+            "why this collection publishes no `next_updated_since`."
+        ),
+    )
+    last_user_edit: datetime | None = Field(
+        default=None,
+        description=(
+            "When a human last edited what you are reading, as opposed to the pipeline "
+            "rewriting it. Null if nobody ever has. On an overlaid read this is the later "
+            "of the canonical row's value and the overlay's, so a source-only edit is "
+            'still visible to a client rendering an "edited recently" marker.'
+        ),
+    )
