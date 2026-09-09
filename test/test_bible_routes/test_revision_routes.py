@@ -87,7 +87,7 @@ def create_bible_version(client, regular_token1, db_session):
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
     # Get the user's first available group dynamically
-    from jose import jwt
+    import jwt
 
     from database.models import UserDB, UserGroup
     from security_routes.auth_routes import ALGORITHM, SECRET_KEY

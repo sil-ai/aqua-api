@@ -19,8 +19,8 @@ from security_routes.utilities import (
 @pytest.mark.parametrize("missing_value", [None, "", "   ", "\t\n"])
 def test_secret_key_required_at_import(monkeypatch, missing_value):
     """Importing security_routes.utilities must fail fast if SECRET_KEY is
-    missing, empty, or whitespace-only — otherwise python-jose silently
-    signs JWTs with an effectively-empty key, which any other instance or
+    missing, empty, or whitespace-only — otherwise PyJWT silently signs
+    JWTs with an effectively-empty key, which any other instance or
     attacker can also produce.
     """
     if missing_value is None:
