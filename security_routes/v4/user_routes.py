@@ -224,6 +224,11 @@ async def change_own_password(
 
     ``204`` with no body: there is nothing to return, and anything derived from the
     new password would be the one thing that must not be returned.
+
+    **Not a "sign out everywhere".** Tokens already issued stay valid until they
+    expire — authentication is stateless JWT with no revocation list — so this
+    shortens a stolen token's remaining life to at most ``ACCESS_TOKEN_EXPIRE_MINUTES``
+    (30) rather than ending it. See :class:`~api_v4.schemas.security.PasswordChange`.
     """
     try:
         await user_service.change_own_password(

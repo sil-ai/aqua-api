@@ -56,6 +56,24 @@ from api_v4.schemas.base import V4BaseModel
 #: does not deliver, so :data:`NewPassword` refuses it instead.
 _BCRYPT_MAX_BYTES = 72
 
+#: Upper bound on a password the caller *supplies* to be checked rather than stored.
+#:
+#: Only ``current_password`` needs this. Every other field in this module is bounded by
+#: something real — a column width, or bcrypt's 72 bytes — and that field is bounded by
+#: nothing, because the thing it must not do is reject a password somebody already has.
+#: A floor would lock out accounts predating the 8-character rule; a 72-byte ceiling
+#: would lock out accounts whose stored hash came from a longer string, since a caller
+#: has no way to know bcrypt only used the first 72 bytes of it.
+#:
+#: So this is a memory bound, not a policy one, set far above any password a person or a
+#: manager generates. Without it the field is the one unbounded input on the v4 surface:
+#: there is no request-body size limit anywhere in the app, so a multi-megabyte string
+#: would be parsed, allocated and UTF-8 encoded before ``verify_password`` rejected it.
+#: There is no CPU amplification behind it — ``bcrypt.checkpw`` costs the same on 72
+#: bytes as on 20 MB, measured, since the cost factor dominates — which is why this is a
+#: generous cap rather than a tight one.
+_SUPPLIED_PASSWORD_MAX_LENGTH = 1024
+
 #: Longest username / email the columns will hold. Both are ``String(50)``: an
 #: over-length value reaches Postgres, which raises ``StringDataRightTruncation`` ->
 #: SQLAlchemy ``DataError``. ``DataError`` is a *sibling* of ``IntegrityError``, not a
@@ -266,12 +284,22 @@ class PasswordChange(V4BaseModel):
     out. Re-proving the password turns a stolen token into something that cannot change
     the credential it was issued against.
 
-    ``current_password`` carries no length floor, unlike ``new_password`` — see
-    :data:`NewPassword`.
+    ``current_password`` carries no length *floor*, unlike ``new_password`` — see
+    :data:`NewPassword`. It does carry a ceiling, but a far looser one: see
+    :data:`_SUPPLIED_PASSWORD_MAX_LENGTH`.
+
+    **A successful change does not invalidate tokens already issued.** Authentication is
+    stateless JWT with no revocation list, so a token minted before the change keeps
+    working until it expires — ``ACCESS_TOKEN_EXPIRE_MINUTES`` is 30. Worth knowing
+    rather than fixing at that window: this endpoint stops a replayed token *changing*
+    the credential, and shortens the life of one that has already been stolen to at most
+    half an hour, but it is not a "sign out everywhere" button and should not be
+    described to clients as one.
     """
 
     current_password: str = Field(
         min_length=1,
+        max_length=_SUPPLIED_PASSWORD_MAX_LENGTH,
         description="The caller's existing password, re-sent to prove identity.",
     )
     new_password: NewPassword = Field(

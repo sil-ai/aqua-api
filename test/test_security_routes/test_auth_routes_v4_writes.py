@@ -802,6 +802,39 @@ class TestChangeOwnPassword:
         assert response.status_code == status.HTTP_403_FORBIDDEN, response.text
         assert response.json()["error"]["code"] == "INCORRECT_PASSWORD"
 
+    def test_an_enormous_current_password_is_a_422(self, client, admin_token):
+        """``current_password`` takes no length floor and no 72-byte ceiling, so a cap
+        far above any real password is the only thing bounding it. Without one it is
+        the single unbounded input on the surface — there is no request-body size
+        limit in the app — and a multi-megabyte string would be parsed, allocated and
+        encoded before ``verify_password`` rejected it."""
+        response = client.post(
+            self.PATH,
+            json={
+                "current_password": "x" * 1025,
+                "new_password": SENTINEL_PASSWORD,
+            },
+            headers=_auth(admin_token),
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+        # And the rejected value is still redacted, cap or no cap.
+        assert "x" * 100 not in response.text
+
+    def test_a_long_but_plausible_current_password_is_accepted(
+        self, client, admin_token
+    ):
+        """The cap must not reject anything a person or a password manager would
+        produce. 200 characters reaches the credential check (a 403), not the
+        validator."""
+        response = client.post(
+            self.PATH,
+            json={"current_password": "x" * 200, "new_password": SENTINEL_PASSWORD},
+            headers=_auth(admin_token),
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN, response.text
+        assert response.json()["error"]["code"] == "INCORRECT_PASSWORD"
+
     def test_unauthenticated_is_a_401(self, client):
         response = client.post(
             self.PATH,
