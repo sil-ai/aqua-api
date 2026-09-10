@@ -61,6 +61,30 @@ limiter = Limiter(**_limiter_kwargs)
 # the two endpoints draw down the same counter (#713).
 TOKEN_LIMIT_SCOPE = "auth-token"
 
+# The same device for v4's account-creation and password writes (#950). Two things to
+# know about these:
+#
+# * **They do not share v3's counter, and cannot.** v3's ``create_user`` and
+#   ``change_password`` use a plain ``@limiter.limit``, which slowapi scopes by the
+#   decorated endpoint — there is no scope name for v4 to join. Giving them one means
+#   editing frozen v3, so v4 gets its own bucket and one IP can spend both. Narrower
+#   than it sounds, and worth being precise about rather than alarmed by: v3's two
+#   endpoints are *both* admin-only, so the doubled budget is reachable only by someone
+#   already holding an administrator token, on account creation and admin password
+#   resets. The one endpoint here that a stranger can brute-force is
+#   ``POST /v4/users/me/password``, and it has no v3 counterpart at all — v3 has no
+#   self-service password change — so nothing is doubled where it would matter. The
+#   split goes away when v3 does.
+# * **Both password endpoints share one bucket.** Splitting v3's single
+#   ``POST /change-password`` into a self-service half and an admin half must not double
+#   the budget for writing a password, which is the same reasoning as
+#   ``TOKEN_LIMIT_SCOPE``. Only ``POST /v4/users/me/password`` verifies a credential and
+#   so is the brute-forceable one, but it is the pair that shares the limit. Raise
+#   ``AUTH_CHANGE_PASSWORD_RATE_LIMIT`` if an administrator needs to reset accounts in
+#   bulk.
+USERS_LIMIT_SCOPE = "auth-users"
+PASSWORD_LIMIT_SCOPE = "auth-password"
+
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
     """Return a 429 JSON response when a client exceeds an auth rate limit.
