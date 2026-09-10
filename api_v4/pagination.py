@@ -317,9 +317,10 @@ class TextSearchPaginationParams(PaginationParams):
 #: **A cap is bounding something that is already bounded here**, which is why it can sit
 #: this high. Every other v4 list grows with the deployment — more versions, more
 #: revisions, more assessments, more verses — while these two are bounded by their ISO
-#: standards: ``iso_language`` holds one row per ISO 639-3 code (7,909 today) and
-#: ``iso_script`` one per ISO 15924 code (210). Measured against the live table, the
-#: whole language list is 310 KB of JSON and the whole script list is 10 KB.
+#: standards: counted against the live database, ``iso_language`` holds one row per
+#: ISO 639-3 code (7,909 today) and ``iso_script`` one per ISO 15924 code (210).
+#: Serializing those, the whole language list is 310 KB of JSON (66 KB gzipped) and the
+#: whole script list is 10 KB.
 #:
 #: **Default equals maximum because the alternative fails silently.** A smaller default
 #: would hand a caller who forgot ``limit`` the first 100 of 7,909 languages, and a

@@ -6,6 +6,12 @@ their exact contents are the point of most assertions here: four languages
 (``eng``/"english", ``ngq``/"ngq", ``swh``/"swh", ``zga``/"kinga") and one script
 (``Latn``/"latin").
 
+Those four come from ``conftest.setup_references_and_isos``, the **sync** seeder, which
+is what ``test_db_session`` runs. Worth naming because conftest has two ISO seeders and
+they disagree: the async one (``setup_references_and_isos_async``) seeds three languages
+and omits ``zga``. A module that moved to the async fixture would fail here in several
+places, and the cause would not look like the symptom.
+
 What each class is pinning down:
 
 * ``TestLanguages`` / ``TestScripts`` — the #829 envelope, ordering by code, and the
@@ -28,7 +34,7 @@ import pytest
 
 from api_v4.pagination import REFERENCE_DEFAULT_LIMIT, REFERENCE_MAX_LIMIT
 from api_v4.schemas.bible import MAX_REFERENCE_QUERY_LENGTH
-from database.models import IsoLanguage
+from database.models import IsoLanguage, IsoScript
 
 PREFIX = "/v4"
 
@@ -61,6 +67,36 @@ def _get(client, token, path, **params):
 
 def _codes(body, key="iso639"):
     return [item[key] for item in body["items"]]
+
+
+def _nameless(test_db_session, row):
+    """Add ``row``, hand it to the test, and remove it however the test ends.
+
+    Cleaned up rather than left to module teardown: every other test in this module
+    asserts on the exact contents of these tables.
+    """
+    test_db_session.add(row)
+    test_db_session.commit()
+    try:
+        yield row
+    finally:
+        test_db_session.delete(row)
+        test_db_session.commit()
+
+
+@pytest.fixture
+def nameless_language(test_db_session):
+    yield from _nameless(test_db_session, IsoLanguage(iso639="zzz", name=None))
+
+
+@pytest.fixture
+def nameless_script(test_db_session):
+    """A script row with a NULL name.
+
+    Doubles as the second script row: the fixtures seed exactly one, which is too few
+    to say anything about ordering or paging on ``/v4/scripts``.
+    """
+    yield from _nameless(test_db_session, IsoScript(iso15924="Zzzz", name=None))
 
 
 class TestLanguages:
@@ -135,6 +171,14 @@ class TestScripts:
         for item in body["items"]:
             assert set(item) == SCRIPT_FIELDS, item
 
+    def test_ordering_and_paging(self, client, regular_token1, nameless_script):
+        """Needs a second row, which the fixtures do not have — see the fixture."""
+        body = _get(client, regular_token1, "/scripts")
+        assert _codes(body, "iso15924") == ["Latn", "Zzzz"]
+        page = _get(client, regular_token1, "/scripts", limit=1, offset=1)
+        assert _codes(page, "iso15924") == ["Zzzz"]
+        assert page["total"] == 2
+
     def test_the_filter_applies_here_too(self, client, regular_token1, test_db_session):
         assert _codes(
             _get(client, regular_token1, "/scripts", q="lat"), "iso15924"
@@ -184,6 +228,33 @@ class TestFilter:
         """
         assert _get(client, regular_token1, "/languages", q=term)["total"] == 0
 
+    @pytest.mark.parametrize("term", ["e\\n", "\\g", "\\", "\\%"])
+    def test_a_backslash_in_the_term_is_literal_too(
+        self, client, regular_token1, test_db_session, term
+    ):
+        """The escape character itself, which the wildcard cases above do not cover.
+
+        Undoubled, the caller's backslash reaches Postgres as an *escape*: ``e\\n``
+        becomes the pattern ``%e\\n%``, which asks for a literal ``n`` after an ``e``
+        and so matches "english". A wrong answer rather than an error, which is why it
+        needs an assertion of its own.
+
+        **The terms are chosen against the fixture rows, not for readability.** The
+        obvious ``a\\b`` passes either way here, because no fixture name contains
+        "ab" — a test that cannot fail. ``e\\n`` and ``\\g`` both match fixture data
+        under the broken reading and nothing under the correct one. The last two are
+        the degenerate inputs: a bare backslash and a backslash before a wildcard,
+        which must be answered rather than error.
+        """
+        assert _get(client, regular_token1, "/languages", q=term)["total"] == 0
+
+    def test_an_offset_past_the_end_is_an_empty_page_not_an_error(
+        self, client, regular_token1, test_db_session
+    ):
+        body = _get(client, regular_token1, "/languages", offset=500)
+        assert body["items"] == []
+        assert body["total"] == len(FIXTURE_LANGUAGES)
+
     @pytest.mark.parametrize("term", ["", "   "])
     def test_a_blank_filter_is_the_same_as_none(
         self, client, regular_token1, test_db_session, term
@@ -203,22 +274,6 @@ class TestNullName:
     the row that might appear later, not one that is there now.
     """
 
-    @pytest.fixture
-    def nameless_language(self, test_db_session):
-        """A language row with a NULL name, removed again however the test ends.
-
-        Cleaned up rather than left to module teardown: every other test in this module
-        asserts on the exact contents of the table.
-        """
-        row = IsoLanguage(iso639="zzz", name=None)
-        test_db_session.add(row)
-        test_db_session.commit()
-        try:
-            yield row
-        finally:
-            test_db_session.delete(row)
-            test_db_session.commit()
-
     def test_a_null_name_serves_the_row_instead_of_500ing_the_list(
         self, client, regular_token1, nameless_language
     ):
@@ -232,6 +287,29 @@ class TestNullName:
         """The code is the identifier and the name is a label — so a row with no name
         is still a code a client may legitimately use on ``POST /v4/versions``."""
         assert _codes(_get(client, regular_token1, "/languages", q="zzz")) == ["zzz"]
+
+    def test_a_nameless_row_is_excluded_when_neither_column_matches(
+        self, client, regular_token1, nameless_language
+    ):
+        """``code ILIKE p`` is FALSE and ``name ILIKE p`` is NULL, so the ``OR`` is
+        NULL and the row drops out — which is what it should do, but it is three-valued
+        logic rather than the obvious thing, and a rewrite using ``and_`` or
+        ``coalesce`` could change it without looking like it had."""
+        body = _get(client, regular_token1, "/languages", q="engli")
+        assert _codes(body) == ["eng"]
+        assert body["total"] == 1
+
+    def test_scripts_are_the_same_on_both_counts(
+        self, client, regular_token1, nameless_script
+    ):
+        """``ScriptOut`` carries the whole explanation for this decision, so it needs
+        its own assertion: with ``name: str`` there instead, every test above still
+        passes while ``GET /v4/scripts`` becomes the latent 500 v3 has."""
+        body = _get(client, regular_token1, "/scripts")
+        assert {"iso15924": "Zzzz", "name": None} in body["items"]
+        assert _codes(
+            _get(client, regular_token1, "/scripts", q="zzzz"), "iso15924"
+        ) == ["Zzzz"]
 
 
 class TestAuthentication:

@@ -19,17 +19,17 @@ that does. There is deliberately no scaffolding here for one.
 
 __version__ = "v4"
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import IsoLanguage, IsoScript
 
 #: The character ``ILIKE`` patterns below use to escape a caller's own wildcards.
 #:
-#: Postgres treats backslash as the escape character by default, but the ``ESCAPE``
-#: clause is stated explicitly anyway: the default depends on ``standard_conforming_
-#: strings``, and a pattern that silently stopped escaping would turn ``q=%`` from a
-#: literal-percent search into a match-everything one.
+#: Backslash is already Postgres's default, so the ``ESCAPE`` clause the queries below
+#: pass is redundant. It is stated anyway so the escape character is pinned by this
+#: module — the one place that also *applies* it, in :func:`_like_pattern` — rather than
+#: inherited from a dialect default the module would silently disagree with if it moved.
 _LIKE_ESCAPE = "\\"
 
 
@@ -39,8 +39,16 @@ def _like_pattern(term: str) -> str:
     The caller's own ``%``, ``_`` and ``\\`` are escaped first, so they match
     themselves instead of acting as wildcards. Without this, ``q=%`` matches every
     row and ``q=e_g`` matches ``eng`` — both of them a filter quietly meaning
-    something other than what was typed. The backslash is escaped first, otherwise it
-    would go on to escape the escapes added after it.
+    something other than what was typed.
+
+    **The backslash is doubled first, and the order is load-bearing in both
+    directions.** Doubling it last would escape the escapes added before it, turning
+    ``q=%`` into a live wildcard again. Not doubling it at all is subtler and worth
+    naming, because it fails quietly rather than raising: the caller's backslash would
+    survive into the pattern as an *escape*, so ``q=a\\b`` becomes ``%a\\b%``,
+    which asks for a literal ``b`` after an ``a`` — measured against the live table,
+    that returns three rows whose names contain "ab" instead of the nothing the caller
+    asked for.
     """
     escaped = (
         term.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
@@ -53,7 +61,6 @@ def _like_pattern(term: str) -> str:
 async def _list_reference(
     db: AsyncSession,
     model,
-    code_column,
     *,
     limit: int,
     offset: int,
@@ -64,6 +71,29 @@ async def _list_reference(
     Shared by both lists rather than written twice: the two tables differ only in
     which column holds the code, and a filter or an ordering fixed in one copy and
     not the other is exactly the drift a second copy invites.
+
+    **The code column is derived from the model, not passed in.** Both tables are a
+    code plus a name, and in both the code is the single-column primary key, so
+    ``inspect(model).primary_key[0]`` is exactly the column a caller would have handed
+    over — with no way to hand over the wrong one. That matters more here than the
+    equivalent choice in ``user_service._page``, which takes its ``order_by``
+    explicitly because it accepts an *arbitrary* statement and genuinely cannot know
+    the column. Passing a column from the other table would fail two different ways:
+    in ``order_by`` it produces ``ORDER BY iso_language.iso639`` over
+    ``FROM iso_script``, which Postgres rejects as *missing FROM-clause entry* — a
+    request-time 500. In the ``where`` below it is worse, because SQLAlchemy pulls the
+    stray table into the FROM clause instead of rejecting it, giving
+    ``FROM iso_script, iso_language`` — a cartesian product answering **200** with
+    duplicated items and an inflated ``total``. A wrong answer is not something a test
+    of the happy path would notice, so the parameter that could produce it is gone.
+
+    The count-plus-page body below is deliberately a *second* copy of
+    ``security_routes.v4.user_service._page`` rather than an import of it: that helper
+    is private to another domain's service. It is a copy, though, not an instance of
+    the one-line ``func.count()`` idiom the verse and version services use — so if a
+    third list wants this exact shape, the answer is to promote ``_page`` to
+    :mod:`api_v4.pagination`, which both domains already import from, rather than to
+    write it a third time.
 
     ``total`` counts *all* matching rows ignoring ``limit``/``offset`` (what the #829
     envelope needs), computed from the same statement as the page so the two can never
@@ -77,6 +107,7 @@ async def _list_reference(
     therefore a stable paging key — the property offset pagination needs and
     insertion order does not have.
     """
+    code_column = inspect(model).primary_key[0]
     stmt = select(model)
 
     # Whitespace-only is not a filter anybody means, so it is treated as no filter
@@ -108,9 +139,7 @@ async def list_languages(
     filter by and no admin branch. Replaces v3 ``GET /language``, which returned an
     unbounded array.
     """
-    return await _list_reference(
-        db, IsoLanguage, IsoLanguage.iso639, limit=limit, offset=offset, q=q
-    )
+    return await _list_reference(db, IsoLanguage, limit=limit, offset=offset, q=q)
 
 
 async def list_scripts(
@@ -120,6 +149,4 @@ async def list_scripts(
 
     Unscoped, for the reason :func:`list_languages` gives. Replaces v3 ``GET /script``.
     """
-    return await _list_reference(
-        db, IsoScript, IsoScript.iso15924, limit=limit, offset=offset, q=q
-    )
+    return await _list_reference(db, IsoScript, limit=limit, offset=offset, q=q)

@@ -1095,9 +1095,10 @@ class TextSearchPage(V4Page[TextSearchOut]):
 
 # --- Reference lists (issue #951) --------------------------------------------
 
-#: Longest ``q`` a reference list will accept. The longest name in either table is 95
-#: characters (``iso_script``; ``iso_language``'s longest is 58), so a longer term can
-#: match nothing and the bound costs a caller nothing real. It is here to keep the one
+#: Longest ``q`` a reference list will accept. Checked against the live database, the
+#: longest name in either table is 95 characters — ``iso_script.Zanb``, "Zanabazar
+#: Square (Zanabazarin Dörböljin Useg, ...)"; ``iso_language``'s longest is 58 — so a
+#: longer term can match nothing and the bound costs a caller nothing real. It is here to keep the one
 #: free-text input on these endpoints bounded rather than to enforce a policy — the same
 #: reason :data:`TEXT_SEARCH_TERM_MAX_LENGTH` exists on the text search.
 MAX_REFERENCE_QUERY_LENGTH = 100
