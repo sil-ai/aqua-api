@@ -66,7 +66,6 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 import fastapi
 
 from agent_routes.v4.agent_routes import router as agent_router
-from agent_routes.v4.lexeme_card_routes import router as lexeme_card_router
 from api_v4.errors import (
     V4_ERROR_RESPONSES,
     V4_PUBLIC_ERROR_RESPONSES,
@@ -155,11 +154,6 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         # patterns from ``/assessments/{id}``, so neither router can shadow the other and
         # registration order is not load-bearing. See agent_routes/v4/agent_routes.py.
         agent_router,
-        # Top-level collection on its own ``/lexeme-cards`` prefix, so unlike the two
-        # routers above it shares nothing and cannot shadow anything. Same package as
-        # ``agent_router`` because it is the same family; a different router because
-        # guide §15.7 rules lexeme cards reference data rather than assessment output.
-        lexeme_card_router,
         user_router,
         group_router,
     ):
