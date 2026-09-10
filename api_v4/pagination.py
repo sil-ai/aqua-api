@@ -57,9 +57,11 @@ policy for the verse *text* read. :class:`TextSearchPaginationParams` (#893) is 
 third, with a 10/1000 policy for the text search — the *smallest* default on the
 surface, and the one that shows the pattern is about matching consumers rather than
 about growing: a search page is something a person looks at, and each of its rows can
-carry alignment links. Four dependencies rather than one shared cap is the intended
-shape, not drift: each names a page size sized to what its own consumers actually ask
-for, and none of them can widen another.
+carry alignment links. :class:`ReferencePaginationParams` (#951) is the fourth, and
+the only one whose default *is* its maximum — see its docstring for why a list bounded
+by an ISO standard rather than by usage is a different kind of list. Five dependencies
+rather than one shared cap is the intended shape, not drift: each names a page size
+sized to what its own consumers actually ask for, and none of them can widen another.
 """
 
 from datetime import datetime
@@ -299,6 +301,81 @@ class TextSearchPaginationParams(PaginationParams):
             description=(
                 "Number of items to skip before collecting the page. "
                 "Defaults to 0; must be >= 0. Cannot be combined with `random=true`."
+            ),
+        ),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+
+
+#: Page size for the two reference lists — both the default *and* the maximum, which
+#: is what makes this class different from the three above rather than just another
+#: number. ``GET /v4/languages`` and ``GET /v4/scripts`` exist so a client can populate
+#: a picker before it creates anything, so the whole list is the unit a caller asks for,
+#: and an unparameterized call returns it.
+#:
+#: **A cap is bounding something that is already bounded here**, which is why it can sit
+#: this high. Every other v4 list grows with the deployment — more versions, more
+#: revisions, more assessments, more verses — while these two are bounded by their ISO
+#: standards: ``iso_language`` holds one row per ISO 639-3 code (7,909 today) and
+#: ``iso_script`` one per ISO 15924 code (210). Measured against the live table, the
+#: whole language list is 310 KB of JSON and the whole script list is 10 KB.
+#:
+#: **Default equals maximum because the alternative fails silently.** A smaller default
+#: would hand a caller who forgot ``limit`` the first 100 of 7,909 languages, and a
+#: picker built from that looks perfectly fine and is wrong. A caller who gets the whole
+#: list instead gets a slow call they can see and fix. ``limit``/``offset`` still work
+#: for a client that wants to page; they just are not needed to get everything.
+#:
+#: 10,000 rather than exactly 7,909: a ceiling should not need editing every time ISO
+#: 639-3 registers a code. If the table ever did outgrow this the default would truncate
+#: silently again — ``total`` in the envelope stays the check — but at the standard's
+#: historical rate of tens of codes a year that is decades away, and it follows the same
+#: one-way-door reasoning as :data:`RESULT_MAX_LIMIT`: raising a ceiling later is
+#: non-breaking and lowering it is not.
+REFERENCE_DEFAULT_LIMIT = 10000
+#: Hard maximum for the reference lists; above this is a 422, not a clamp. Equal to
+#: :data:`REFERENCE_DEFAULT_LIMIT` on purpose — see there.
+REFERENCE_MAX_LIMIT = 10000
+
+
+class ReferencePaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the reference lists: the whole list by default, 10,000 max.
+
+    Consumed as ``page: ReferencePaginationParams = Depends()`` and interchangeable with
+    the other three at :meth:`V4Page.create`, for the reason
+    :class:`ResultPaginationParams` documents. Note that :class:`V4Page` deliberately
+    declares no ``le`` on its echoed ``limit``, so a 10,000 echoes back and validates.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    the override.
+
+    See :data:`REFERENCE_DEFAULT_LIMIT` for why the default and the maximum are the same
+    number, which no other params class on the surface does.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            REFERENCE_DEFAULT_LIMIT,
+            ge=1,
+            le=REFERENCE_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{REFERENCE_DEFAULT_LIMIT}, which is above the size of both "
+                f"reference tables — so an unparameterized call returns the whole "
+                f"list and a client populating a picker needs one request. Must be "
+                f"between 1 and {REFERENCE_MAX_LIMIT} (out-of-range values are "
+                f"rejected with 422, not clamped)."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
             ),
         ),
     ) -> None:

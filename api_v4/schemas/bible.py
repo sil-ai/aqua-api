@@ -31,7 +31,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from api_v4.pagination import V4Page
 from api_v4.schemas.base import V4BaseModel
@@ -1091,3 +1091,86 @@ class TextSearchPage(V4Page[TextSearchOut]):
             next_updated_since=next_updated_since,
             alignment_assessment_id=alignment_assessment_id,
         )
+
+
+# --- Reference lists (issue #951) --------------------------------------------
+
+#: Longest ``q`` a reference list will accept. The longest name in either table is 95
+#: characters (``iso_script``; ``iso_language``'s longest is 58), so a longer term can
+#: match nothing and the bound costs a caller nothing real. It is here to keep the one
+#: free-text input on these endpoints bounded rather than to enforce a policy — the same
+#: reason :data:`TEXT_SEARCH_TERM_MAX_LENGTH` exists on the text search.
+MAX_REFERENCE_QUERY_LENGTH = 100
+
+
+class LanguageOut(V4BaseModel):
+    """One ISO 639-3 language code and its English name (``GET /v4/languages``).
+
+    **The field is still called** ``iso639``, not ``code``. It is already snake_case,
+    it is the spelling of the column and of v3's ``Language`` schema, and it says which
+    standard the value comes from — so a v3 client's existing handling carries over
+    unchanged. That leaves it asymmetric with :class:`ScriptOut`'s ``iso15924``;
+    normalizing both to ``code`` was considered and not taken, because the asymmetry is
+    the two standards being genuinely different rather than an inconsistency.
+
+    ``name`` is optional, and that is this port's one behavioural fix rather than an
+    oversight — see :class:`ScriptOut`, which carries the explanation for both.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    iso639: str = Field(
+        description=(
+            "The ISO 639-3 language code — three lowercase letters, e.g. `eng` for "
+            "English or `swh` for Swahili. This is the value `POST /v4/versions` "
+            "takes as `iso_language`."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "The language's English name, or null if the reference data does not "
+            "record one. Null is rare — no row is missing a name today — but the "
+            "column permits it, so treat the name as a label and the code as the "
+            "identifier."
+        ),
+    )
+
+
+class ScriptOut(V4BaseModel):
+    """One ISO 15924 script code and its English name (``GET /v4/scripts``).
+
+    **Why** ``name`` **is optional on both of these, when v3 declares it required.**
+    ``iso_language.name`` and ``iso_script.name`` are both plain ``Column(Text)`` with no
+    ``nullable=False`` (``database/models.py``), while v3's ``Language`` and ``Script``
+    schemas declare ``name: str``. So a single row with a NULL name makes v3's
+    ``response_model`` raise while serializing and the *whole* list endpoint answers 500
+    — not just that row. Checked against the live database: neither table holds a NULL or
+    empty name today, so the defect is latent rather than active, and v3 is frozen so it
+    keeps it.
+
+    Declaring the field optional is what stops v4 inheriting it. The alternative — keep
+    ``name: str`` and put the guarantee in a ``NOT NULL`` — is the better fix and is not
+    available: both columns are shared with frozen v3, and tightening shared DDL is what
+    closed #900 and #901. Neither table is seeded through Alembic, so nothing in this
+    repo controls whether a future reseed leaves a name blank either. Optional is
+    therefore the honest type: one null name costs a client a null check instead of
+    costing every client the endpoint.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    iso15924: str = Field(
+        description=(
+            "The ISO 15924 script code — four letters, capitalized, e.g. `Latn` for "
+            "Latin or `Cyrl` for Cyrillic. This is the value `POST /v4/versions` "
+            "takes as `iso_script`."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "The script's English name, or null if the reference data does not "
+            "record one. See `GET /v4/languages` for why this is nullable."
+        ),
+    )
