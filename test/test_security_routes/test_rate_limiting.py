@@ -1,8 +1,14 @@
 """Tests for rate limiting on sensitive auth endpoints (issues #713/#950).
 
-Verifies that the slowapi limiter is wired into `/token`, `/users`, and
-`/change-password` on both surfaces, and that exceeding the per-IP budget yields
-HTTP 429 (the primary brute-force defense).
+Verifies that the slowapi limiter is wired into the endpoints that issue tokens, create
+accounts and write passwords, and that exceeding a per-IP budget yields HTTP 429 (the
+primary brute-force defense).
+
+The two surfaces spell those endpoints differently, which is why the names are not
+listed once: v3 has `/latest/token`, `/latest/users` and `/latest/change-password`,
+while v4 has `/v4/token`, `/v4/users` and — since #950 split v3's single admin-only
+`change-password` in two — both `/v4/users/me/password` and
+`/v4/users/{user_id}/password`.
 
 The v3 assertions can only check that a limit is *registered*: the admin dependency
 runs before the limiter would reject an anonymous caller, and these tests predate any

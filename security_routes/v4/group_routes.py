@@ -2,11 +2,19 @@
 
 The Groups resource and the membership sub-resource:
 
-* ``GET /v4/groups``                              — the group catalog, paginated.
-* ``POST /v4/groups``                             — create a group.
-* ``PUT /v4/groups/{id}/members/{user_id}``       — put a user in a group.
-* ``DELETE /v4/groups/{id}/members/{user_id}``    — take a user out of a group.
-* ``DELETE /v4/groups/{id}``                      — delete a group.
+* ``GET /v4/groups``                                    — the group catalog, paginated.
+* ``POST /v4/groups``                                   — create a group.
+* ``PUT /v4/groups/{group_id}/members/{user_id}``       — put a user in a group.
+* ``DELETE /v4/groups/{group_id}/members/{user_id}``    — take a user out of a group.
+* ``DELETE /v4/groups/{group_id}``                      — delete a group.
+
+The parameter names in that list are the **declared** ones, because that list is the
+endpoint inventory and a declared name is what reaches ``/v4/openapi.json`` and any
+client generated from it. The prose below writes the parent's id as ``{id}`` instead,
+which is this codebase's shorthand throughout the v4 docstrings (``/v4/versions/{id}``,
+``/v4/assessments/{id}``) and the spelling the plan and the issue use. The routes
+declare ``{group_id}`` so the membership sub-resource does not have to name two
+different things ``id``.
 
 **All five are admin-only.** Auth is applied at the router level in
 :func:`api_v4.app.create_v4_app` (#831), so an unauthenticated request is a 401

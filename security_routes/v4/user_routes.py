@@ -2,12 +2,18 @@
 
 The Users resource, reads and writes:
 
-* ``POST /v4/users``                  — create a non-admin user (admin only).
-* ``GET /v4/users/me``                — the authenticated user, as a typed allowlist.
-* ``GET /v4/users/me/groups``         — the caller's groups, paginated ``V4Page[GroupOut]``.
-* ``POST /v4/users/me/password``      — change your own password (needs the current one).
-* ``PUT /v4/users/{id}/password``     — reset another user's password (admin only).
-* ``DELETE /v4/users/{id}``           — delete a user (admin only).
+* ``POST /v4/users``                       — create a non-admin user (admin only).
+* ``GET /v4/users/me``                     — the authenticated user, as a typed allowlist.
+* ``GET /v4/users/me/groups``              — the caller's groups, as a ``V4Page[GroupOut]``.
+* ``POST /v4/users/me/password``           — change your own password (needs the current one).
+* ``PUT /v4/users/{user_id}/password``     — reset another user's password (admin only).
+* ``DELETE /v4/users/{user_id}``           — delete a user (admin only).
+
+The parameter names in that list are the **declared** ones, because that list is the
+endpoint inventory and a declared name is what reaches ``/v4/openapi.json`` and any
+client generated from it. Prose elsewhere writes ``{id}``, which is this codebase's
+shorthand throughout the v4 docstrings (``/v4/versions/{id}``,
+``/v4/assessments/{id}``) and the spelling the plan and the issue use.
 
 Auth is applied at the router level in :func:`api_v4.app.create_v4_app` (#831,
 protected-by-default), so these handlers re-declare ``current_user`` only because
