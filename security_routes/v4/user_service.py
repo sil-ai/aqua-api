@@ -275,26 +275,35 @@ async def _reference_counts(
     return {key: count for (key, _, _), count in zip(references, row) if count}
 
 
-async def _get_user(db: AsyncSession, user_id: int) -> UserDB:
+async def _get_user(db: AsyncSession, user_id: int, *, lock: bool = False) -> UserDB:
     """Load a user by id, or raise :class:`UserNotFound`.
 
     Every caller is admin-gated, so this reports an unknown id honestly rather than
     hiding it behind the 404-for-invisible rule the rest of v4 uses: an administrator
     can already list nothing they may not see, so there is no id space to probe.
+
+    ``lock=True`` adds ``FOR UPDATE`` — see :func:`_delete_locked_row`, which is the
+    only reason it exists. A read or a password write has nothing to protect by taking
+    it.
     """
-    user = (
-        await db.execute(select(UserDB).where(UserDB.id == user_id))
-    ).scalar_one_or_none()
+    stmt = select(UserDB).where(UserDB.id == user_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    user = (await db.execute(stmt)).scalar_one_or_none()
     if user is None:
         raise UserNotFound(f"User {user_id} does not exist.")
     return user
 
 
-async def _get_group(db: AsyncSession, group_id: int) -> GroupDB:
-    """Load a group by id, or raise :class:`GroupNotFound`."""
-    group = (
-        await db.execute(select(GroupDB).where(GroupDB.id == group_id))
-    ).scalar_one_or_none()
+async def _get_group(db: AsyncSession, group_id: int, *, lock: bool = False) -> GroupDB:
+    """Load a group by id, or raise :class:`GroupNotFound`.
+
+    ``lock=True`` adds ``FOR UPDATE`` — see :func:`_delete_locked_row`.
+    """
+    stmt = select(GroupDB).where(GroupDB.id == group_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    group = (await db.execute(stmt)).scalar_one_or_none()
     if group is None:
         raise GroupNotFound(f"Group {group_id} does not exist.")
     return group
@@ -447,6 +456,66 @@ async def remove_group_member(db: AsyncSession, group_id: int, user_id: int) -> 
     return True
 
 
+async def _delete_locked_row(
+    db: AsyncSession,
+    row,
+    references: tuple[tuple[str, type, object], ...],
+    value: int,
+) -> None:
+    """ORM-delete ``row`` and commit, reporting a foreign key as :class:`StillReferenced`.
+
+    The ORM ``db.delete(row)`` rather than a bulk ``delete()`` statement is load-bearing
+    for :func:`delete_user`: a bulk delete bypasses the relationship cascade, so the
+    user's memberships would survive long enough to trip their own ``NOT NULL`` foreign
+    key.
+
+    **Why both callers load their row ``FOR UPDATE`` first.** Counting references and
+    then deleting are two statements, so on its own the check is a
+    time-of-check-to-time-of-use race: a referencing row can be created in the gap — the
+    user being deleted creating a version with their own still-valid token, or a second
+    administrator adding a member to the group being deleted — and then the delete trips
+    the foreign key and reaches the client as a catch-all 500. That is the exact failure
+    this slice criticizes v3 for, narrowed to a race window.
+
+    ``FOR UPDATE`` on the target row closes it, because of how Postgres implements
+    referential integrity: inserting a row whose foreign key points at ``users`` or
+    ``groups`` takes ``FOR KEY SHARE`` on the referenced row, and ``FOR KEY SHARE``
+    conflicts with ``FOR UPDATE``. So the racing insert blocks until this transaction
+    ends — after which it either fails on a row that is gone or proceeds against a row
+    that survived. Verified against Postgres 16 rather than reasoned from the lock
+    matrix: with the row held ``FOR UPDATE``, an insert into ``bible_version`` naming
+    that owner blocked, then completed the moment the lock was released. It covers every
+    entry in :data:`_USER_REFERENCES` and :data:`_GROUP_REFERENCES`, because all of them
+    are plain foreign keys to the locked row and so all take the same lock.
+
+    What the lock costs: a delete now *waits* on an in-flight transaction already
+    holding the row rather than failing. The wait is bounded by
+    ``AQUA_DB_STATEMENT_TIMEOUT_MS`` (60s by default) and exceeding it is a 500 — so the
+    failure mode moves from "a concurrent write turns a 409 into a 500" to "a
+    60-second-long write turns a delete into a 500". Both are deployment pathologies,
+    and the second needs something to hold a user or group row for a minute, which
+    nothing on this surface does.
+
+    **The ``IntegrityError`` branch is therefore a net, not the plan, and is not
+    expected to fire.** It is here because the cost is four lines and the alternative is
+    a 500: if the lock reasoning above is ever wrong — a reference added through
+    something other than a plain foreign key to this row, or a caller reaching this
+    function without having taken the lock — the client still gets the ``409`` the
+    situation earns.
+
+    Re-derives the counts after the rollback rather than reusing the ones already read,
+    since by definition they were wrong. They can come back **empty**, if whatever
+    created the racing reference then rolled back itself; the ``409`` is still the right
+    answer and its empty ``references`` is honest — nothing is in the way any more, so
+    the retry it invites will succeed.
+    """
+    try:
+        await db.delete(row)
+        await _commit(db)
+    except IntegrityError as exc:
+        raise StillReferenced(await _reference_counts(db, references, value)) from exc
+
+
 async def delete_group(db: AsyncSession, group_id: int) -> None:
     """Delete a group, refusing while anything still points at it (#950).
 
@@ -466,15 +535,17 @@ async def delete_group(db: AsyncSession, group_id: int) -> None:
     ``DELETE /v4/groups/{id}/members/{user_id}`` and
     ``DELETE /v4/versions/{id}/groups/{group_id}`` — so unlike :func:`delete_user`'s
     ``409`` this one always tells the caller something they can act on.
+
+    Loads the group ``FOR UPDATE`` so the count and the delete cannot race — see
+    :func:`_delete_locked_row`.
     """
-    group = await _get_group(db, group_id)
+    group = await _get_group(db, group_id, lock=True)
 
     counts = await _reference_counts(db, _GROUP_REFERENCES, group_id)
     if counts:
         raise StillReferenced(counts)
 
-    await db.delete(group)
-    await _commit(db)
+    await _delete_locked_row(db, group, _GROUP_REFERENCES, group_id)
 
 
 async def delete_user(db: AsyncSession, actor: UserDB, user_id: int) -> None:
@@ -492,17 +563,21 @@ async def delete_user(db: AsyncSession, actor: UserDB, user_id: int) -> None:
     ownership columns are the opposite — another resource is pointing *at* this user —
     so those refuse. That is the line between the two deletes in this module.
 
-    Hence the ORM ``db.delete(row)`` rather than a bulk ``delete()`` statement: a bulk
-    delete bypasses the relationship cascade, so the memberships would survive long
-    enough to trip their own ``NOT NULL`` foreign key and turn this into a 500.
+    That cascade is why the delete goes through :func:`_delete_locked_row`'s ORM
+    ``db.delete(row)`` rather than a bulk statement — see there.
 
     Refuses self-deletion. An administrator is the only caller who can reach this
     endpoint, so "delete the account I am authenticated as" is available to exactly the
     people whose loss cannot be undone from inside the API — there is no v4 endpoint
     that creates an administrator. This is a guard added on top of the port, not part
     of it: v3 permits self-deletion.
+
+    Loads the user ``FOR UPDATE`` so the count and the delete cannot race — see
+    :func:`_delete_locked_row`. Note the self-check runs first and can therefore raise
+    while holding the lock; the router turns that into a 409 and the session closes,
+    releasing it.
     """
-    user = await _get_user(db, user_id)
+    user = await _get_user(db, user_id, lock=True)
     if user.id == actor.id:
         raise CannotDeleteSelf("You cannot delete the account you are signed in as.")
 
@@ -510,8 +585,7 @@ async def delete_user(db: AsyncSession, actor: UserDB, user_id: int) -> None:
     if counts:
         raise StillReferenced(counts)
 
-    await db.delete(user)
-    await _commit(db)
+    await _delete_locked_row(db, user, _USER_REFERENCES, user_id)
 
 
 async def change_own_password(

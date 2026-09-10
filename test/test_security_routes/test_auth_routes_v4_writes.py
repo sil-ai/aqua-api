@@ -33,9 +33,10 @@ import uuid
 import pytest
 from fastapi import status
 
-from database.models import BibleVersion, BibleVersionAccess
+from database.models import Assessment, BibleVersion, BibleVersionAccess
 from database.models import Group as GroupDB
 from database.models import UserDB, UserGroup
+from security_routes.v4 import user_service
 
 PREFIX = "/v4"
 
@@ -699,6 +700,144 @@ class TestDeleteUser:
         )
         assert real.status_code == missing.status_code == 403
         assert real.json() == missing.json()
+
+
+class TestDeleteRaceIsNotA500:
+    """A reference created between the count and the delete must still be a 409.
+
+    The two are separate statements, so on its own the check is a
+    time-of-check-to-time-of-use race, and the delete would then trip the foreign key
+    and reach the client as a catch-all 500 — the exact failure this slice closes for
+    v3, narrowed to a race window. The service loads its target ``FOR UPDATE`` so the
+    race cannot happen, and keeps an ``IntegrityError`` branch as a net in case that
+    reasoning is ever wrong.
+
+    A genuine race is not reproducible in-process, so these drive the *net* directly:
+    ``_reference_counts`` is stubbed to report nothing the first time it is called,
+    which is precisely the state a lost race would leave. What the assertions care
+    about is the status code — 409, never 500.
+    """
+
+    @pytest.fixture
+    def blind_first_count(self, monkeypatch):
+        """Make the pre-check see nothing, while the net's re-derivation sees the truth.
+
+        Patching every call would test less: the 409 would carry empty ``references``
+        and could not show that the net re-reads rather than reusing the counts it
+        already had.
+        """
+        real = user_service._reference_counts
+        calls = {"n": 0}
+
+        async def counting(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {}
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(user_service, "_reference_counts", counting)
+        return calls
+
+    @pytest.fixture
+    def owned_assessment(self, test_db_session):
+        """Create an assessment owned by a given user, and remove it afterwards.
+
+        An assessment is one of the four references with no user-side ORM
+        relationship, so it is a case that really does raise a foreign-key violation
+        rather than being nulled (``bible_version.owner_id``) or cascaded
+        (``user_groups``). The fixture data does not cover it.
+        """
+        created = []
+
+        def _make(user_id):
+            assessment = Assessment(
+                revision_id=test_db_session.test_revision_id_1,
+                type="dummy",
+                owner_id=user_id,
+            )
+            test_db_session.add(assessment)
+            test_db_session.commit()
+            created.append(assessment)
+            return assessment
+
+        yield _make
+
+        for assessment in created:
+            test_db_session.delete(assessment)
+        test_db_session.commit()
+
+    def test_a_user_who_owns_an_assessment_is_a_409(
+        self, client, admin_token, make_user, owned_assessment
+    ):
+        """First without any stubbing, so the ordinary path over a hard foreign key is
+        covered on its own terms."""
+        payload, _, _ = make_user()
+        owned_assessment(payload["id"])
+        response = client.delete(
+            f"{PREFIX}/users/{payload['id']}", headers=_auth(admin_token)
+        )
+        assert response.status_code == status.HTTP_409_CONFLICT, response.text
+        body = response.json()
+        assert body["error"]["code"] == "USER_STILL_REFERENCED"
+        assert body["error"]["details"]["references"]["assessments"] == 1
+
+    def test_a_lost_race_on_a_user_is_a_409_not_a_500(
+        self,
+        client,
+        admin_token,
+        make_user,
+        owned_assessment,
+        test_db_session,
+        blind_first_count,
+    ):
+        payload, _, _ = make_user()
+        owned_assessment(payload["id"])
+        response = client.delete(
+            f"{PREFIX}/users/{payload['id']}", headers=_auth(admin_token)
+        )
+        assert response.status_code == status.HTTP_409_CONFLICT, response.text
+        body = response.json()
+        assert body["error"]["code"] == "USER_STILL_REFERENCED"
+        # The net re-read the counts after the rollback rather than reusing the empty
+        # ones that let the delete through.
+        assert body["error"]["details"]["references"]["assessments"] == 1
+        assert blind_first_count["n"] == 2
+        test_db_session.expire_all()
+        assert (
+            test_db_session.query(UserDB).filter(UserDB.id == payload["id"]).count()
+            == 1
+        ), "the failed delete must have rolled back cleanly"
+
+    def test_a_lost_race_on_a_group_is_a_409_not_a_500(
+        self,
+        client,
+        admin_token,
+        make_user,
+        make_group,
+        test_db_session,
+        blind_first_count,
+    ):
+        """The group side fails differently — SQLAlchemy tries to null
+        ``user_groups.group_id``, which is ``NOT NULL`` — but that is still an
+        ``IntegrityError`` and must still be a 409."""
+        payload, _, _ = make_user()
+        group = make_group()
+        client.put(
+            f"{PREFIX}/groups/{group['id']}/members/{payload['id']}",
+            headers=_auth(admin_token),
+        )
+        response = client.delete(
+            f"{PREFIX}/groups/{group['id']}", headers=_auth(admin_token)
+        )
+        assert response.status_code == status.HTTP_409_CONFLICT, response.text
+        body = response.json()
+        assert body["error"]["code"] == "GROUP_STILL_REFERENCED"
+        assert body["error"]["details"]["references"]["members"] == 1
+        test_db_session.expire_all()
+        assert (
+            test_db_session.query(GroupDB).filter(GroupDB.id == group["id"]).count()
+            == 1
+        ), "the failed delete must have rolled back cleanly"
 
 
 class TestChangeOwnPassword:
