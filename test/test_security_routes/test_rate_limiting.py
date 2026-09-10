@@ -1,8 +1,13 @@
-"""Tests for rate limiting on sensitive auth endpoints (issue #713).
+"""Tests for rate limiting on sensitive auth endpoints (issues #713/#950).
 
 Verifies that the slowapi limiter is wired into `/token`, `/users`, and
-`/change-password`, and that exceeding the per-IP budget on `/token` yields
+`/change-password` on both surfaces, and that exceeding the per-IP budget yields
 HTTP 429 (the primary brute-force defense).
+
+The v3 assertions can only check that a limit is *registered*: the admin dependency
+runs before the limiter would reject an anonymous caller, and these tests predate any
+admin token being available here. The v4 ones (#950) drive a real 429 instead, because
+the shared ``admin_token`` fixture gets them past the gate.
 """
 
 import pytest
@@ -10,12 +15,22 @@ from fastapi.testclient import TestClient
 from limits import parse_many
 
 from app import app
+from database.models import UserDB
 from security_routes.admin_routes import change_password, create_user
 from security_routes.auth_routes import login_for_access_token
 from security_routes.rate_limiting import limiter
+from security_routes.v4.group_routes import (
+    add_group_member,
+    create_group,
+    delete_group,
+    remove_group_member,
+)
 from security_routes.v4.token_routes import (
     login_for_access_token as v4_login_for_access_token,
 )
+from security_routes.v4.user_routes import change_own_password as v4_change_own_password
+from security_routes.v4.user_routes import create_user as v4_create_user
+from security_routes.v4.user_routes import reset_user_password as v4_reset_user_password
 
 client = TestClient(app)
 prefix = "/latest"
@@ -230,3 +245,124 @@ def test_v4_rate_limit_answers_in_the_v4_error_envelope(
     assert "detail" not in body, body
     assert body["error"]["code"] == "TOO_MANY_REQUESTS", body
     assert "retry-after" in {h.lower() for h in response.headers}
+
+
+@pytest.fixture
+def tight_v4_user_create_limit():
+    """Tighten ``POST /v4/users`` to a budget a test can exhaust."""
+    restore = _override_route_limit(v4_create_user, "3/minute")
+    try:
+        yield
+    finally:
+        restore()
+
+
+@pytest.fixture
+def tight_v4_password_limits():
+    """Tighten *both* v4 password endpoints to the same small budget.
+
+    Same reason as ``tight_shared_token_limit``: ``shared_limit`` makes them draw on
+    one counter, but each route still holds its own ``Limit`` object carrying the
+    *value*, so overriding one would leave the other at the env default and the
+    shared bucket would not fill at the rate the test expects.
+    """
+    restores = [
+        _override_route_limit(v4_change_own_password, "3/minute"),
+        _override_route_limit(v4_reset_user_password, "3/minute"),
+    ]
+    try:
+        yield
+    finally:
+        for restore in restores:
+            restore()
+
+
+def _admin_auth(admin_token):
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+def test_v4_create_user_is_rate_limited(
+    test_db_session, admin_token, tight_v4_user_create_limit
+):
+    """v3 throttles account creation at 5/minute; v4 must not ship it open.
+
+    Every attempt here is a 409 on a username that already exists, which keeps the
+    test from creating rows while still proving that *rejected* requests count
+    against the budget — an attacker probing for taken usernames gets no free ride.
+    """
+    body = {"username": "testuser1", "password": "sentinel-swordfish-42"}
+    for _ in range(3):
+        response = client.post("/v4/users", json=body, headers=_admin_auth(admin_token))
+        assert response.status_code == 409, response.text
+
+    response = client.post("/v4/users", json=body, headers=_admin_auth(admin_token))
+    assert response.status_code == 429, response.text
+    assert response.json()["error"]["code"] == "TOO_MANY_REQUESTS"
+
+
+def test_v4_password_writes_share_one_per_ip_budget(
+    test_db_session, admin_token, tight_v4_password_limits
+):
+    """The two halves of v3's one ``POST /change-password`` must not get a budget each.
+
+    #950 split it into a self-service ``POST /v4/users/me/password`` and an admin
+    ``PUT /v4/users/{id}/password``. Without ``shared_limit`` that split would have
+    doubled the per-IP budget for writing a password. Spend the whole budget on the
+    self-service half with a wrong current password — which changes nothing — then
+    assert the admin half is already refusing.
+    """
+    for _ in range(3):
+        response = client.post(
+            "/v4/users/me/password",
+            json={
+                "current_password": "not-the-current-one",
+                "new_password": "sentinel-swordfish-42",
+            },
+            headers=_admin_auth(admin_token),
+        )
+        assert response.status_code == 403, response.text
+
+    admin_id = (
+        test_db_session.query(UserDB).filter(UserDB.username == "admin").first().id
+    )
+    response = client.put(
+        f"/v4/users/{admin_id}/password",
+        json={"new_password": "sentinel-swordfish-42"},
+        headers=_admin_auth(admin_token),
+    )
+    assert response.status_code == 429, response.text
+
+
+def test_v4_write_429_carries_retry_after_and_the_v4_envelope(
+    test_db_session, admin_token, tight_v4_user_create_limit
+):
+    """The 429 on a write is shaped like every other v4 error, header included.
+
+    Already pinned for ``/v4/token``; re-asserted on a *write* because that route is
+    public and these are not, so they reach the limiter through a different
+    dependency stack and could in principle be handled elsewhere.
+    """
+    body = {"username": "testuser1", "password": "sentinel-swordfish-42"}
+    for _ in range(3):
+        client.post("/v4/users", json=body, headers=_admin_auth(admin_token))
+
+    response = client.post("/v4/users", json=body, headers=_admin_auth(admin_token))
+    assert response.status_code == 429, response.text
+    assert "detail" not in response.json(), response.text
+    assert "retry-after" in {h.lower() for h in response.headers}
+
+
+def test_v4_group_writes_are_not_rate_limited():
+    """Stated as a decision rather than left to inference.
+
+    v3 throttles account creation and password writes and nothing else, and the
+    throttles exist for credential brute-forcing and unauthenticated signup. Group and
+    membership writes are admin-only with nothing to guess, so they carry no limit —
+    if that changes, this test is what has to change with it.
+    """
+    for func in (add_group_member, remove_group_member, create_group, delete_group):
+        key = _route_limit_key(func)
+        assert not limiter._route_limits.get(key), (
+            f"{key} has acquired a rate limit; decide whether that is intended and "
+            "update this test"
+        )

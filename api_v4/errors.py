@@ -235,32 +235,40 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 
 #: The documented error surface of an authenticated v4 domain route (#928).
 #:
-#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 31
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 42
 #: per-route ``responses=`` decorators that would drift apart.
 #:
 #: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
 #: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
 #: only "you can see this but may not modify it" — a *write-path* status. Counted over
-#: the surface, it is reachable on 9 of the 34 domain operations and unreachable on 25:
+#: the surface, it is reachable on 17 of the 42 domain operations and unreachable on 25:
 #: every read, including all thirteen non-delete assessment reads and all four verse
-#: reads. Publishing it on all 34 told clients that any v4 call can be forbidden, which
-#: is false for the large majority and is the sort of thing a generated client turns
-#: into dead error-handling. So the nine writes declare it themselves, via
+#: reads. Publishing it on all 42 would tell clients that any v4 call can be forbidden,
+#: which is false for the large majority and is the sort of thing a generated client
+#: turns into dead error-handling. So the seventeen declare it themselves, via
 #: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
-#: operations declaring it is exactly those nine.
+#: operations declaring it is exactly those seventeen.
 #:
-#: "Write-path status" is the right generalization but not a law: ``PATCH
-#: /v4/assessments/{id}/critique-issues/{issue_id}`` is a **write that declares no 403**,
-#: because it authorizes by read access rather than ownership (#896) — resolving a
-#: critique issue is shared review work, so everyone who can see the issue may resolve it
-#: and a caller who cannot gets the 404. So the nine are the writes that can raise it,
-#: not every write.
+#: "Write-path status" is the right generalization but not a law, and it bends in both
+#: directions. ``PATCH /v4/assessments/{id}/critique-issues/{issue_id}`` is a **write
+#: that declares no 403**, because it authorizes by read access rather than ownership
+#: (#896) — resolving a critique issue is shared review work, so everyone who can see
+#: the issue may resolve it and a caller who cannot gets the 404. ``GET /v4/groups`` is a
+#: **read that declares one**, because it is admin-only (#833). So the seventeen are the
+#: operations that can raise it, not the writes.
+#:
+#: The #950 auth writes took the count from nine to seventeen in one slice: all eight are
+#: admin-gated, and ``require_admin`` is a 403. One of them means something else by it —
+#: ``POST /v4/users/me/password`` answers 403 when ``current_password`` is wrong, where
+#: the caller *is* the owner — so that route declares its own wording rather than this
+#: set's. See ``_WRONG_PASSWORD_RESPONSE`` in
+#: :mod:`security_routes.v4.user_routes`.
 #:
 #: The four that remain are all genuinely universal except ``404``, which is unreachable
-#: on the 6 operations that look nothing up (``GET /me``, ``GET /me/groups``,
-#: ``GET /groups``, and the version and assessment collection reads). That residue is
-#: small and a ``404`` on a collection read misleads nobody; it is not worth six more
-#: decorators.
+#: on the 8 operations that look nothing up (``GET /me``, ``GET /me/groups``,
+#: ``GET /groups``, ``POST /users``, ``POST /groups``, ``POST /users/me/password``, and
+#: the version and assessment collection reads). That residue is small and a ``404`` on a
+#: collection read or a create misleads nobody; it is not worth eight more decorators.
 #:
 #: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
 #: the generator only injects that when the route documents no ``422`` of its own
@@ -352,6 +360,45 @@ _MAX_DETAILS_DEPTH = 24
 #: Key under which a truncated dict records the entries it dropped. Deliberately not a
 #: plausible field name.
 _OMITTED_KEY = "..."
+
+#: Field names whose value must never appear in an error body, matched case-insensitively
+#: against dict keys and against every element of a validation error's ``loc`` (#950).
+#:
+#: ``details`` is bounded but was not *filtered*, and a 422 echoes the value it rejected
+#: back under ``input`` — so before this set existed, ``POST /v4/users`` with a password
+#: below the 8-character floor answered with that password in the response body. Three
+#: distinct shapes reach it, which is why the redaction below is not one rule:
+#:
+#: 1. the field's own error (``string_too_short`` at ``loc: ["body", "password"]``,
+#:    ``input`` the password),
+#: 2. a **sibling's** error (``missing`` at ``loc: ["body", "username"]``, whose
+#:    ``input`` is the whole parent object, password included), and
+#: 3. a body that is not an object at all (``loc: ["body"]``, ``input`` whatever was
+#:    sent).
+#:
+#: Exact names rather than a substring test, so a field that merely *mentions* a secret
+#: without carrying one — a ``password_changed_at`` timestamp, say — still reports
+#: normally. **Add to this set when a new field carries a credential**; #831's API keys
+#: are the next ones due.
+_SECRET_FIELD_NAMES = frozenset(
+    {
+        "password",
+        "current_password",
+        "new_password",
+        "hashed_password",
+    }
+)
+
+
+def _redacted_secret() -> str:
+    """Marker replacing a value :data:`_SECRET_FIELD_NAMES` says must not be echoed.
+
+    Says the value was withheld and why, rather than omitting the key: a caller
+    debugging a rejected password needs to know the server saw *something* there. It
+    quotes no length, unlike :func:`_omitted_value` — a length is itself a fact about a
+    credential, and the whole point here is to state nothing about the value.
+    """
+    return "<redacted>"
 
 
 def _omitted_value(size: int) -> str:
@@ -534,6 +581,10 @@ def _bounded_json_safe(value, budget: int, depth: int = 0):
             if spent >= budget:
                 kept[_OMITTED_KEY] = _omitted_tail(len(value) - index, "key")
                 break
+            # Checked before the key is rebound below, and before the value is walked
+            # at all: a redacted value is never descended into, so a secret cannot be
+            # reached through it either.
+            is_secret = isinstance(key, str) and key.lower() in _SECRET_FIELD_NAMES
             # The key goes through the same rule as everything else. It has to:
             # Pydantic's ``union_tag_not_found`` puts the caller's raw dict in
             # ``input``, so on ``POST /v4/assessments/{id}/similar-verses`` an
@@ -541,7 +592,11 @@ def _bounded_json_safe(value, budget: int, depth: int = 0):
             # key without bounding it emitted it in full.
             key, key_cost = _bounded_json_safe(key, max(budget - spent, 0), depth + 1)
             spent += key_cost
-            item, cost = _bounded_json_safe(item, max(budget - spent, 0), depth + 1)
+            if is_secret:
+                item = _redacted_secret()
+                cost = len(item)
+            else:
+                item, cost = _bounded_json_safe(item, max(budget - spent, 0), depth + 1)
             kept[key] = item
             spent += cost
         return kept, spent
@@ -782,6 +837,44 @@ async def _handle_http_exception(request: fastapi.Request, exc: StarletteHTTPExc
     )
 
 
+def _redacted_validation_errors(errors: list) -> list:
+    """``errors`` with every ``input`` that could carry a credential replaced (#950).
+
+    The two shapes :func:`_bounded_json_safe`'s key rule cannot see, because in both of
+    them the secret is the value of a key named ``input``:
+
+    * **``loc`` names a secret field** — the field's own failure, e.g.
+      ``string_too_short`` at ``["body", "password"]``. Any element of ``loc`` counts,
+      so a password nested inside a sub-model is covered too.
+    * **``loc`` is exactly ``("body",)``** — the body was not the shape the model
+      wanted, so ``input`` is the *entire* request body and there is no field name to
+      match on. Redacted on every endpoint rather than only the credential-bearing
+      ones, since this handler does not know which route it is answering for. The cost
+      is small: ``type`` and ``msg`` still say what was wrong with the body's shape
+      ("Input should be a valid dictionary or object"), and only the echo of what was
+      sent goes.
+
+    The sibling case — ``missing`` on one field echoing a parent object that holds the
+    password — needs neither rule: there the secret sits under its own key, so the walk
+    in :func:`_bounded_json_safe` redacts it.
+
+    Copies the error dicts it changes rather than mutating them, because
+    ``exc.errors()`` is memoised on the exception and something downstream (a logger,
+    a middleware) may read it again after this handler returns.
+    """
+    redacted = []
+    for error in errors:
+        loc = tuple(error.get("loc", ()))
+        touches_secret = any(
+            isinstance(part, str) and part.lower() in _SECRET_FIELD_NAMES
+            for part in loc
+        )
+        if "input" in error and (touches_secret or loc == ("body",)):
+            error = {**error, "input": _redacted_secret()}
+        redacted.append(error)
+    return redacted
+
+
 async def _handle_validation_error(
     request: fastapi.Request, exc: RequestValidationError
 ):
@@ -793,7 +886,7 @@ async def _handle_validation_error(
         # ValueError under `ctx`) and non-finite floats echoed back under `input`;
         # _error_response jsonable-encodes details and scrubs those floats, so they
         # are made JSON-safe there.
-        details={"errors": exc.errors()},
+        details={"errors": _redacted_validation_errors(exc.errors())},
     )
 
 

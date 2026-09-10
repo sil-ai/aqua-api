@@ -55,10 +55,17 @@ V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
 #: 403 is deliberately absent — see :class:`TestForbiddenIsWriteOnly`.
 DOMAIN_ERROR_STATUSES = frozenset({"401", "404", "422", "500"})
 
-#: The nine operations that can actually answer 403, enumerated by walking each
+#: The seventeen operations that can actually answer 403, enumerated by walking each
 #: handler and its helpers for ``status.HTTP_403_FORBIDDEN`` (and for a ``require_admin``
 #: dependency). Written out rather than computed so the test states the expected
 #: surface instead of re-deriving whatever the code currently does.
+#:
+#: The auth writes (#950) took it from nine to seventeen in one slice, because every one
+#: of them is admin-gated and ``require_admin`` is a 403. Two of the eight are worth
+#: noting for what they are *not*: ``POST /v4/users/me/password``'s 403 is a wrong
+#: ``current_password`` rather than a privilege failure — the caller owns the row — and
+#: it is the only 403 on the surface that means that. ``GET /v4/users/me`` and
+#: ``GET /v4/users/me/groups`` gained none, being self-scoped.
 FORBIDDEN_OPERATIONS = frozenset(
     {
         ("post", "/versions"),
@@ -70,6 +77,15 @@ FORBIDDEN_OPERATIONS = frozenset(
         ("delete", "/revisions/{revision_id}"),
         ("delete", "/assessments/{assessment_id}"),
         ("get", "/groups"),
+        # The #950 auth writes: all admin-only, plus the one non-privilege 403.
+        ("post", "/users"),
+        ("post", "/users/me/password"),
+        ("put", "/users/{user_id}/password"),
+        ("delete", "/users/{user_id}"),
+        ("post", "/groups"),
+        ("put", "/groups/{group_id}/members/{user_id}"),
+        ("delete", "/groups/{group_id}/members/{user_id}"),
+        ("delete", "/groups/{group_id}"),
     }
 )
 
@@ -337,16 +353,18 @@ class TestPublishedErrorContract:
 
 
 class TestForbiddenIsWriteOnly:
-    """403 is declared on the nine operations that can raise it, and nowhere else.
+    """403 is declared on the seventeen operations that can raise it, and nowhere else.
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 9 of the 34 domain operations, unreachable on 25.
+    write-path status: reachable on 17 of the 42 domain operations, unreachable on 25.
 
-    "Write-path" is the generalization, not the rule. The resolution ``PATCH`` on
-    ``/critique-issues/{issue_id}`` is a write that declares no 403, because it
-    authorizes by read access rather than ownership (#896) — so this set is the writes
-    that can raise a 403, not every write.
+    "Write-path" is the generalization, not the rule, and it now bends in both
+    directions. The resolution ``PATCH`` on ``/critique-issues/{issue_id}`` is a write
+    that declares no 403, because it authorizes by read access rather than ownership
+    (#896). ``GET /v4/groups`` is a *read* that declares one, because it is admin-only
+    (#833). So this set is the operations that can raise a 403, and the enumeration is
+    the contract — not any rule about verbs.
 
     It briefly *was* in the shared set, which published it on all 34. This class is what
     keeps it out: a client generated from the schema would otherwise carry dead

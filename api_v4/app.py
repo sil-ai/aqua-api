@@ -138,7 +138,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # dedupes the dependency, so it runs once per request.
     #
     # ``responses=`` rides along for the same reason the dependency does: one
-    # declaration covering every domain route beats 33 that drift. See
+    # declaration covering every domain route beats 42 that drift. See
     # V4_ERROR_RESPONSES for what it declares and why the union is deliberate.
     for domain_router in (
         version_router,
