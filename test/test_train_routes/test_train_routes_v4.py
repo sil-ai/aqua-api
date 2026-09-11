@@ -38,9 +38,11 @@ from datetime import date, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobState
 from api_v4.schemas.predict import PredictApp
+from api_v4.schemas.training import TrainingJobDetail, TrainingJobOut
 from database.models import (
     AlignmentTopSourceScores,
     Assessment,
@@ -855,6 +857,47 @@ class TestJobList:
 
 class TestJobDetail:
     """``GET /v4/training-jobs/{job_id}``: the job merged with the envelope."""
+
+    def test_the_detail_model_publishes_its_own_state_and_error(self):
+        """Both fields the two bases share must be re-declared, not inherited.
+
+        ``TrainingJobDetail`` inherits from ``TrainingJobOut`` *and* ``JobEnvelope``, and
+        Pydantic resolves a field defined on both from whichever base is listed first —
+        so an un-redeclared ``state`` or ``error`` silently publishes the list row's
+        wording, which is wrong for this model twice over: ``state`` is never null here,
+        and ``error`` can never carry ``TRAINING_JOB_STATE_UNAVAILABLE`` because an
+        unreadable state answers 500 instead of this body. Nothing fails at runtime when
+        that happens — only the published schema is wrong — so it needs a test.
+        """
+        detail = TrainingJobDetail.model_json_schema()
+        row = TrainingJobOut.model_json_schema()
+
+        assert "state" in detail["required"]
+        assert "$ref" in detail["properties"]["state"]  # not the nullable anyOf
+        assert "null" in str(row["properties"]["state"])
+
+        # The bug this guards is that the two descriptions become *identical*, because
+        # the detail model silently took the row's. Comparing them catches that without
+        # depending on either one's wording.
+        assert (
+            detail["properties"]["error"]["description"]
+            != row["properties"]["error"]["description"]
+        )
+        assert "JOB_FAILED" in detail["properties"]["error"]["description"]
+
+    def test_the_envelope_validator_is_still_enforced(self):
+        """Re-declaring the two fields must not cost the invariant they carry."""
+        with pytest.raises(ValidationError):
+            TrainingJobDetail(
+                job_id="1",
+                id=1,
+                type=TrainingType.tfidf,
+                state=JobState.FAILED,
+                source_revision_id=1,
+                target_revision_id=2,
+                source_version_id=3,
+                target_version_id=4,
+            )
 
     def test_a_queued_job_polls_as_202(self, client, regular_token1, db_session, pair):
         job = _make_job(db_session, pair, status="queued")

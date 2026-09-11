@@ -319,13 +319,19 @@ class TrainingJobDetail(TrainingJobOut, JobEnvelope):
     """The body of ``GET /v4/training-jobs/{job_id}``: the job *plus* the envelope.
 
     Adds :class:`~api_v4.jobs.JobEnvelope`'s ``job_id`` and ``result`` to
-    :class:`TrainingJobOut`, whose ``state`` and ``error`` are the envelope's own — which
-    is why ``state`` is re-declared below rather than inherited: the list row makes it
-    nullable and the envelope does not, and the envelope's rule is the one that holds
-    here.
+    :class:`TrainingJobOut`.
+
+    **Both fields the two bases share are re-declared below, and neither is optional to
+    re-declare.** ``state`` and ``error`` mean narrower things here than on the list row,
+    and Pydantic resolves a field it finds on two bases from whichever is listed *first*
+    — ``TrainingJobOut`` — so an inherited field would silently publish the list row's
+    wording in this model's schema. That is not a theoretical risk: it shipped in review.
+    A field added to both bases later needs the same treatment.
 
     All four envelope keys are always present, ``"error": null`` included, so the read
-    must **not** carry ``response_model_exclude_none=True``.
+    must **not** carry ``response_model_exclude_none=True``. The envelope's
+    ``model_validator`` is inherited and still runs, so ``error`` is non-null exactly when
+    ``state`` is ``FAILED``.
 
     ``result`` is inherited untyped and is null in every state. A finished training run's
     output is the trained artifacts, which are read per verse through
@@ -338,6 +344,18 @@ class TrainingJobDetail(TrainingJobOut, JobEnvelope):
             "The job's current public state; branch on this. Never null here: a job "
             "whose state cannot be read answers `TRAINING_JOB_STATE_UNAVAILABLE` instead "
             "of this body."
+        ),
+    )
+    error: V4ErrorDetail | None = Field(
+        default=None,
+        description=(
+            "Why the job failed — the same {code, message, details} object the v4 error "
+            "envelope uses, with the generic `JOB_FAILED` code and the runner's own "
+            "prose as its message. Non-null exactly when state is FAILED. Unlike the "
+            "list row's field, this one never carries "
+            "`TRAINING_JOB_STATE_UNAVAILABLE`: a job whose state cannot be read answers "
+            "that as a 500 rather than as this body. Note that a FAILED poll is still "
+            "HTTP 200 — reading the job succeeded, the job did not."
         ),
     )
 
