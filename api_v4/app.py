@@ -78,6 +78,7 @@ from bible_routes.v4.language_routes import router as language_router
 from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.verse_routes import router as verse_router
 from bible_routes.v4.version_routes import router as version_router
+from predict_routes.v4.predict_routes import router as predict_router
 from security_routes.v4.dependencies import get_current_user_v4
 from security_routes.v4.group_routes import router as group_router
 from security_routes.v4.token_routes import router as token_router
@@ -157,6 +158,12 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         agent_router,
         user_router,
         group_router,
+        # Registered after the resource domains for the same reason the reference lists
+        # are registered after it: the four predict operations append to the published
+        # schema rather than shifting the paths above them. Its ``/predictions`` prefix
+        # is its own -- no other router declares a path under it, so ordering is not
+        # load-bearing for matching either.
+        predict_router,
         # Registered last so the two reference lists append to the published schema
         # rather than shifting the paths after them, and so "Reference" sorts to the
         # bottom of /v4/docs — it is supporting data for the routers above, not a
