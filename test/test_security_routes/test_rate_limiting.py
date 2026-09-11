@@ -1,4 +1,4 @@
-"""Tests for rate limiting on sensitive auth endpoints (issues #713/#950).
+"""Tests for rate limiting on sensitive auth endpoints (issues #713/#950/#959).
 
 Verifies that the slowapi limiter is wired into the endpoints that issue tokens, create
 accounts and write passwords, and that exceeding a per-IP budget yields HTTP 429 (the
@@ -14,6 +14,13 @@ The v3 assertions can only check that a limit is *registered*: the admin depende
 runs before the limiter would reject an anonymous caller, and these tests predate any
 admin token being available here. The v4 ones (#950) drive a real 429 instead, because
 the shared ``admin_token`` fixture gets them past the gate.
+
+The token endpoints are the exception to all of that, since #959: they hold no slowapi
+decorator at all, because one would charge the budget before the handler ran and so
+count the successful logins that ordinary service traffic is made of. Their tests drive
+the endpoints and assert on status codes rather than inspecting ``_route_limits`` — with
+one deliberate exception, ``test_token_endpoints_carry_no_slowapi_decorator``, which is
+there to catch a well-meaning reinstatement of the decorator.
 """
 
 import pytest
@@ -24,7 +31,7 @@ from app import app
 from database.models import UserDB
 from security_routes.admin_routes import change_password, create_user
 from security_routes.auth_routes import login_for_access_token
-from security_routes.rate_limiting import limiter
+from security_routes.rate_limiting import TOKEN_FAILURE_LIMIT, limiter
 from security_routes.v4.group_routes import (
     add_group_member,
     create_group,
@@ -82,66 +89,131 @@ def _override_route_limit(func, new_limit: str):
     return restore
 
 
+GOOD = {"username": "testuser1", "password": "password1"}
+BAD = {"username": "testuser1", "password": "wrongpassword"}
+
+
 @pytest.fixture
 def tight_token_limit():
-    restore = _override_route_limit(login_for_access_token, "3/minute")
+    """Shrink the failed-login budget both token endpoints spend, then clear it.
+
+    One fixture covers v3 and v4 because since #959 there is literally one
+    ``Limit`` object between them — no decorator, so no per-route copy of the value
+    to keep in step. ``limiter.reset()`` on the way in *and* out is what keeps these
+    tests order-independent: the counter lives in module-level storage shared by
+    every test in the process, and any other module that fetches a token with bad
+    credentials would otherwise leave it part-spent.
+    """
+    original = TOKEN_FAILURE_LIMIT.limit
+    TOKEN_FAILURE_LIMIT.limit = parse_many("3/minute")[0]
+    limiter.reset()
     try:
         yield
     finally:
-        restore()
+        TOKEN_FAILURE_LIMIT.limit = original
+        limiter.reset()
 
 
-def test_token_endpoint_rate_limited_on_success(test_db_session, tight_token_limit):
-    """Successful /token calls count toward the per-IP budget."""
-    for _ in range(3):
-        response = client.post(
-            f"{prefix}/token",
-            data={"username": "testuser1", "password": "password1"},
-        )
+def test_successful_logins_never_spend_the_budget(test_db_session, tight_token_limit):
+    """The regression #959 is about: a service that authenticates correctly.
+
+    Ten in a row against a budget of three. Before the fix the limiter ran as a
+    decorator, ahead of ``authenticate_user``, so the fourth of these was a 429 and
+    ordinary service traffic locked itself out of the API.
+    """
+    for _ in range(10):
+        response = client.post(f"{prefix}/token", data=GOOD)
         assert response.status_code == 200, response.text
 
-    response = client.post(
-        f"{prefix}/token",
-        data={"username": "testuser1", "password": "password1"},
-    )
-    assert response.status_code == 429, response.text
-    assert "Too many requests" in response.json().get("detail", "")
+
+def test_one_bad_credential_is_a_401_not_a_429(test_db_session, tight_token_limit):
+    """A single wrong password must still read as a wrong password."""
+    response = client.post(f"{prefix}/token", data=BAD)
+    assert response.status_code == 401, response.text
 
 
 def test_token_endpoint_rate_limited_on_failed_logins(
     test_db_session, tight_token_limit
 ):
-    """Brute-force attempts (401s) also count toward the per-IP budget,
-    so an attacker cannot bypass the limit by always sending bad creds.
+    """Brute-force attempts are what the budget is for, and they still cap.
+
+    Three failures are spent inside the budget and answer 401; the fourth is over it
+    and answers 429. That boundary is the whole defense, so it is asserted at both
+    ends rather than just at the 429.
     """
     for _ in range(3):
-        response = client.post(
-            f"{prefix}/token",
-            data={"username": "testuser1", "password": "wrongpassword"},
-        )
+        response = client.post(f"{prefix}/token", data=BAD)
         assert response.status_code == 401, response.text
 
-    response = client.post(
-        f"{prefix}/token",
-        data={"username": "testuser1", "password": "wrongpassword"},
-    )
+    response = client.post(f"{prefix}/token", data=BAD)
     assert response.status_code == 429, response.text
+
+
+def test_successes_still_work_once_the_failure_budget_is_spent(
+    test_db_session, tight_token_limit
+):
+    """The property that makes a shared egress IP safe to key on.
+
+    Every Modal worker leaves from the same address pool, so one container holding a
+    stale password must not be able to take the others down with it. Exhaust the
+    budget on failures, confirm further failures are refused, then show a correct
+    credential is still served.
+    """
+    for _ in range(4):
+        client.post(f"{prefix}/token", data=BAD)
+
+    assert client.post(f"{prefix}/token", data=BAD).status_code == 429
+
+    response = client.post(f"{prefix}/token", data=GOOD)
+    assert response.status_code == 200, response.text
+
+
+def test_interleaved_successes_do_not_bring_the_429_forward(
+    test_db_session, tight_token_limit
+):
+    """Successes between failures must not shorten the runway.
+
+    Three failures fit in the budget however many good logins are mixed in with
+    them, which is what "only failures are counted" has to mean when both kinds of
+    traffic arrive from one IP at once.
+    """
+    for _ in range(3):
+        assert client.post(f"{prefix}/token", data=GOOD).status_code == 200
+        assert client.post(f"{prefix}/token", data=BAD).status_code == 401
+
+    assert client.post(f"{prefix}/token", data=GOOD).status_code == 200
+    assert client.post(f"{prefix}/token", data=BAD).status_code == 429
 
 
 def test_rate_limit_response_includes_retry_headers(test_db_session, tight_token_limit):
     """The 429 response should carry the standard ``Retry-After`` header
-    so well-behaved clients know when to back off."""
+    so well-behaved clients know when to back off.
+
+    Worth pinning again after #959: the header is computed from
+    ``request.state.view_rate_limit``, which slowapi's decorator used to set and
+    ``register_failed_login`` now has to set by hand.
+    """
     for _ in range(3):
-        client.post(
-            f"{prefix}/token",
-            data={"username": "testuser1", "password": "wrongpassword"},
-        )
-    response = client.post(
-        f"{prefix}/token",
-        data={"username": "testuser1", "password": "wrongpassword"},
-    )
+        client.post(f"{prefix}/token", data=BAD)
+    response = client.post(f"{prefix}/token", data=BAD)
     assert response.status_code == 429, response.text
+    assert "Too many requests" in response.json().get("detail", "")
     assert "retry-after" in {h.lower() for h in response.headers}
+
+
+def test_token_endpoints_carry_no_slowapi_decorator():
+    """Neither token route may regain a ``@limiter`` decorator.
+
+    A decorator runs before the handler, so re-adding one would silently restore the
+    #959 behaviour — successful logins charged against a brute-force budget — while
+    every other test here kept passing.
+    """
+    for func in (login_for_access_token, v4_login_for_access_token):
+        key = _route_limit_key(func)
+        assert not limiter._route_limits.get(key), (
+            f"{key} has regained a slowapi decorator; it would charge successful "
+            "logins against the brute-force budget again (#959)"
+        )
 
 
 def test_users_endpoint_has_rate_limit_registered():
@@ -163,71 +235,46 @@ def test_change_password_endpoint_has_rate_limit_registered():
     assert limits, f"Expected a slowapi route limit on {func_name}"
 
 
-@pytest.fixture
-def tight_shared_token_limit():
-    """Tighten *both* token endpoints to the same small budget.
-
-    ``shared_limit`` makes v3 and v4 draw on one counter, but each route still
-    carries its own ``Limit`` object holding the *value*. Overriding only one of
-    them would leave the other at the env default, so the shared bucket would not
-    fill at the rate the test expects.
-    """
-    restores = [
-        _override_route_limit(login_for_access_token, "3/minute"),
-        _override_route_limit(v4_login_for_access_token, "3/minute"),
-    ]
-    try:
-        yield
-    finally:
-        for restore in restores:
-            restore()
-
-
-def test_v4_token_endpoint_is_rate_limited(test_db_session, tight_shared_token_limit):
+def test_v4_token_endpoint_is_rate_limited(test_db_session, tight_token_limit):
     """v4's /token must be throttled too.
 
     It was added after #713 and shares ``authenticate_user`` with v3, so leaving it
     open would have moved brute-force one path to the left rather than closing it.
     """
     for _ in range(3):
-        response = client.post(
-            "/v4/token",
-            data={"username": "testuser1", "password": "wrongpassword"},
-        )
+        response = client.post("/v4/token", data=BAD)
         assert response.status_code == 401, response.text
 
-    response = client.post(
-        "/v4/token",
-        data={"username": "testuser1", "password": "wrongpassword"},
-    )
+    response = client.post("/v4/token", data=BAD)
     assert response.status_code == 429, response.text
 
 
-def test_v3_and_v4_token_share_one_per_ip_budget(
-    test_db_session, tight_shared_token_limit
+def test_v4_successful_logins_never_spend_the_budget(
+    test_db_session, tight_token_limit
 ):
+    """#959 again, on the surface new clients are being migrated to."""
+    for _ in range(10):
+        response = client.post("/v4/token", data=GOOD)
+        assert response.status_code == 200, response.text
+
+
+def test_v3_and_v4_token_share_one_per_ip_budget(test_db_session, tight_token_limit):
     """The two token endpoints must not each get their own budget.
 
-    slowapi scopes a plain ``@limiter.limit`` per decorated endpoint, so without
-    ``shared_limit`` an attacker could double their attempts per minute simply by
-    alternating between ``/latest/token`` and ``/v4/token``. Spend the whole budget
-    on v4, then assert v3 is already refusing.
+    Scoping per decorated endpoint would let an attacker double their attempts per
+    minute simply by alternating between ``/latest/token`` and ``/v4/token``. Both
+    routes name ``TOKEN_LIMIT_SCOPE``, so spending the whole budget on v4 must leave
+    v3 already refusing.
     """
-    for _ in range(3):
-        client.post(
-            "/v4/token",
-            data={"username": "testuser1", "password": "wrongpassword"},
-        )
+    for _ in range(4):
+        client.post("/v4/token", data=BAD)
 
-    response = client.post(
-        f"{prefix}/token",
-        data={"username": "testuser1", "password": "wrongpassword"},
-    )
+    response = client.post(f"{prefix}/token", data=BAD)
     assert response.status_code == 429, response.text
 
 
 def test_v4_rate_limit_answers_in_the_v4_error_envelope(
-    test_db_session, tight_shared_token_limit
+    test_db_session, tight_token_limit
 ):
     """v4's 429 must use v4's envelope, not v3's ``{"detail": ...}``.
 
@@ -237,15 +284,9 @@ def test_v4_rate_limit_answers_in_the_v4_error_envelope(
     also pins the header v4 would otherwise silently drop while v3 kept it.
     """
     for _ in range(3):
-        client.post(
-            "/v4/token",
-            data={"username": "testuser1", "password": "wrongpassword"},
-        )
+        client.post("/v4/token", data=BAD)
 
-    response = client.post(
-        "/v4/token",
-        data={"username": "testuser1", "password": "wrongpassword"},
-    )
+    response = client.post("/v4/token", data=BAD)
     assert response.status_code == 429, response.text
     body = response.json()
     assert "detail" not in body, body

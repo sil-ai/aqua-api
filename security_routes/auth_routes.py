@@ -16,7 +16,7 @@ from database.models import UserDB, UserGroup
 from models import Group, Token, User
 from utils.logging_config import setup_logger
 
-from .rate_limiting import TOKEN_LIMIT_SCOPE, TOKEN_RATE_LIMIT, limiter
+from .rate_limiting import register_failed_login
 from .utilities import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ALGORITHM,
@@ -86,7 +86,6 @@ async def get_current_user(
 
 
 @router.post("/token", response_model=Token)
-@limiter.shared_limit(TOKEN_RATE_LIMIT, scope=TOKEN_LIMIT_SCOPE)
 async def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -94,6 +93,7 @@ async def login_for_access_token(
 ):
     user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
+        register_failed_login(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

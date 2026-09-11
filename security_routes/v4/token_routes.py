@@ -58,11 +58,7 @@ from api_v4.errors import V4APIError, V4ErrorResponse
 from api_v4.schemas.security import TokenOut
 from database.dependencies import get_db
 from security_routes.auth_routes import authenticate_user, create_access_token
-from security_routes.rate_limiting import (
-    TOKEN_LIMIT_SCOPE,
-    TOKEN_RATE_LIMIT,
-    limiter,
-)
+from security_routes.rate_limiting import register_failed_login
 from security_routes.utilities import ACCESS_TOKEN_EXPIRE_MINUTES
 
 router = fastapi.APIRouter(tags=["Auth"])
@@ -87,17 +83,18 @@ router = fastapi.APIRouter(tags=["Auth"])
         status.HTTP_429_TOO_MANY_REQUESTS: {
             "model": V4ErrorResponse,
             "description": (
-                "Too many token requests from this IP. The per-IP budget is shared "
-                "with v3's ``/latest/token`` — the limiter keys on the client address, "
-                "not the API version, so an attacker cannot double their attempts by "
-                "alternating between the two surfaces. ``code`` is "
-                "``TOO_MANY_REQUESTS`` and ``Retry-After`` carries the back-off in "
-                "seconds."
+                "Too many *failed* token requests from this IP. Only a rejected "
+                "credential is charged against the budget, so authenticating "
+                "correctly never leads here however often you do it (#959). The "
+                "budget is shared with v3's ``/latest/token`` — the limiter keys on "
+                "the client address, not the API version, so an attacker cannot "
+                "double their attempts by alternating between the two surfaces. "
+                "``code`` is ``TOO_MANY_REQUESTS`` and ``Retry-After`` carries the "
+                "back-off in seconds."
             ),
         },
     },
 )
-@limiter.shared_limit(TOKEN_RATE_LIMIT, scope=TOKEN_LIMIT_SCOPE)
 async def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -110,6 +107,7 @@ async def login_for_access_token(
     """
     user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
+        register_failed_login(request)
         # One code and one message for both "no such user" and "wrong password":
         # distinguishing them would let an unauthenticated caller enumerate valid
         # usernames. v3 collapses them the same way.
