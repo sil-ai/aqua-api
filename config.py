@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     # corpus and several GB for another. This is a *per-worker* budget —
     # multiply by WEB_CONCURRENCY for the container total, and size it against
     # the host's memory.
+    #
+    # It bounds the *retained* encoders, not peak RSS: the entry just stored is
+    # never evicted (so a single oversized encoder can exceed the budget on its
+    # own, pinning the cache at one entry), and a miss transiently holds the
+    # decoded vocabularies and the raw .npy bytes alongside the loaded matrix.
+    # Eviction and the over-budget case are both logged.
     tfidf_encoder_cache_max_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
 
     # --- Observability / Loki -------------------------------------------

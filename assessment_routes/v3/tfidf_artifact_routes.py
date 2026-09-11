@@ -1143,32 +1143,48 @@ async def pull_tfidf_artifacts(
 # assessment, keyed alongside the artifact run's created_at so a re-push
 # (which bumps created_at) transparently invalidates the stale entry.
 #
-# Values are (created_at, encoder, nbytes). The cache is read and mutated only
-# from the event-loop thread, and the mutation block in _get_encoder contains
-# no awaits, so it is atomic with respect to other coroutines in this worker —
-# no lock needed even though eviction now iterates the dict.
+# Values are (created_at, encoder, nbytes). Misses are serialized by
+# _ENCODER_LOCK below, so rehydration, insertion and eviction cannot interleave
+# with another coroutine on this worker.
 _ENCODER_CACHE: Dict[int, tuple] = {}
 
-# CPython per-str overhead, for approximating vocabulary dict footprints.
-_STR_OVERHEAD_BYTES = 49
+# Held across the whole miss path (re-check, load, rehydrate, insert, evict).
+# Without it, N concurrent requests for the same assessment each rehydrate and
+# hold a full encoder live while the cache accounts for one — the budget below
+# would bound the retained set while peak memory ran N times higher. A cold
+# worker taking a burst is exactly that case, and exactly the OOM this cache is
+# being bounded to prevent. Serializing is cheap: hits never take the lock, and
+# a miss is a ~100-200ms rebuild that would otherwise be duplicated anyway.
+_ENCODER_LOCK = asyncio.Lock()
+
+# Per vocabulary entry: CPython's str overhead (49B, exact for ASCII) plus the
+# int term index (28B). Non-ASCII terms cost more than this, so the estimate is
+# a floor rather than a bound.
+_VOCAB_ENTRY_OVERHEAD_BYTES = 49 + 28
 
 
 def _encoder_nbytes(encoder: tuple) -> int:
     """Approximate the resident size of a rehydrated encoder.
 
     The 300×n_features SVD components matrix dominates and is measured exactly;
-    the two vocabularies are approximated from their key contents plus CPython
-    per-string and per-dict overhead. Approximate is enough — this only has to
-    keep the cache budget in the right order of magnitude.
+    the vocabularies are approximated from their key contents plus per-entry
+    overhead. Each vectorizer holds *two* full-size vocabulary dicts, not one:
+    sklearn's ``idf_`` setter calls ``_validate_vocabulary()``, which builds
+    ``vocabulary_`` alongside the ``vocabulary`` we passed to the constructor.
+
+    The result is a floor, not a bound — see _VOCAB_ENTRY_OVERHEAD_BYTES.
     """
     word_vec, char_vec, svd = encoder
     total = svd.components_.nbytes
     for vec in (word_vec, char_vec):
         total += vec.idf_.nbytes
-        vocabulary = vec.vocabulary or {}
-        total += sys.getsizeof(vocabulary)
-        total += sum(len(term) for term in vocabulary)
-        total += _STR_OVERHEAD_BYTES * len(vocabulary)
+        vocabulary = vec.vocabulary
+        # x2 for the vocabulary_ copy, which holds the same keys.
+        total += 2 * (
+            sys.getsizeof(vocabulary)
+            + sum(len(term) for term in vocabulary)
+            + _VOCAB_ENTRY_OVERHEAD_BYTES * len(vocabulary)
+        )
     return total
 
 
@@ -1241,39 +1257,85 @@ async def _get_encoder(db: AsyncSession, assessment_id: int) -> tuple:
     if cached is not None and cached[0] == run.created_at:
         return cached[1]
 
-    vectorizer_rows = (
-        await db.scalars(
-            select(TfidfVectorizerArtifact).where(
-                TfidfVectorizerArtifact.assessment_id == assessment_id
+    async with _ENCODER_LOCK:
+        # Re-check: a concurrent miss may have rehydrated this same encoder
+        # while we waited for the lock, in which case reuse it rather than
+        # paying the rebuild twice.
+        cached = _ENCODER_CACHE.get(assessment_id)
+        if cached is not None and cached[0] == run.created_at:
+            return cached[1]
+
+        vectorizer_rows = (
+            await db.scalars(
+                select(TfidfVectorizerArtifact).where(
+                    TfidfVectorizerArtifact.assessment_id == assessment_id
+                )
             )
+        ).all()
+        by_kind = {v.kind: v for v in vectorizer_rows}
+        svd = await db.scalar(
+            select(TfidfSvd).where(TfidfSvd.assessment_id == assessment_id)
         )
-    ).all()
-    by_kind = {v.kind: v for v in vectorizer_rows}
-    svd = await db.scalar(
-        select(TfidfSvd).where(TfidfSvd.assessment_id == assessment_id)
-    )
-    if "word" not in by_kind or "char" not in by_kind or svd is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Incomplete TF-IDF artifacts for assessment {assessment_id}",
+        if "word" not in by_kind or "char" not in by_kind or svd is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Incomplete TF-IDF artifacts for assessment {assessment_id}",
+            )
+
+        encoder = await asyncio.to_thread(
+            _rehydrate_encoder,
+            (by_kind["word"].vocabulary, by_kind["word"].idf, by_kind["word"].params),
+            (by_kind["char"].vocabulary, by_kind["char"].idf, by_kind["char"].params),
+            (svd.components_npy, svd.n_components),
         )
+        # Size it on the worker thread too: the vocabulary scan is small next to
+        # the rebuild, but it is the same kind of work and does not belong on
+        # the event loop.
+        nbytes = await asyncio.to_thread(_encoder_nbytes, encoder)
 
-    encoder = await asyncio.to_thread(
-        _rehydrate_encoder,
-        (by_kind["word"].vocabulary, by_kind["word"].idf, by_kind["word"].params),
-        (by_kind["char"].vocabulary, by_kind["char"].idf, by_kind["char"].params),
-        (svd.components_npy, svd.n_components),
-    )
-    # Re-insert at the end so the FIFO order tracks time of rehydration, then
-    # evict oldest-first until the cache fits its byte budget. The entry just
-    # stored always survives, even if it alone exceeds the budget: evicting it
-    # would mean rebuilding it on the very next request.
-    _ENCODER_CACHE.pop(assessment_id, None)
-    _ENCODER_CACHE[assessment_id] = (run.created_at, encoder, _encoder_nbytes(encoder))
+        # Re-insert at the end so the FIFO order tracks time of rehydration, then
+        # evict oldest-first until the cache fits its byte budget. The entry just
+        # stored always survives, even if it alone exceeds the budget: evicting it
+        # would mean rebuilding it on the very next request.
+        _ENCODER_CACHE.pop(assessment_id, None)
+        _ENCODER_CACHE[assessment_id] = (run.created_at, encoder, nbytes)
 
-    total = sum(entry[2] for entry in _ENCODER_CACHE.values())
-    while total > settings.tfidf_encoder_cache_max_bytes and len(_ENCODER_CACHE) > 1:
-        total -= _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)))[2]
+        budget = settings.tfidf_encoder_cache_max_bytes
+        total = sum(entry[2] for entry in _ENCODER_CACHE.values())
+        evicted = 0
+        while total > budget and len(_ENCODER_CACHE) > 1:
+            total -= _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)))[2]
+            evicted += 1
+
+        if evicted:
+            logger.info(
+                "tfidf encoder cache evicted %d entr%s",
+                evicted,
+                "y" if evicted == 1 else "ies",
+                extra={
+                    "assessment_id": assessment_id,
+                    "evicted": evicted,
+                    "entry_bytes": nbytes,
+                    "cache_bytes": total,
+                    "cache_entries": len(_ENCODER_CACHE),
+                    "budget_bytes": budget,
+                },
+            )
+        if nbytes > budget:
+            # The cache is now pinned at one entry and every other assessment
+            # will miss. Sizing signal for TFIDF_ENCODER_CACHE_MAX_BYTES.
+            logger.warning(
+                "tfidf encoder for assessment %d is %d bytes, over the whole "
+                "%d-byte cache budget; cache degraded to a single entry",
+                assessment_id,
+                nbytes,
+                budget,
+                extra={
+                    "assessment_id": assessment_id,
+                    "entry_bytes": nbytes,
+                    "budget_bytes": budget,
+                },
+            )
     return encoder
 
 
