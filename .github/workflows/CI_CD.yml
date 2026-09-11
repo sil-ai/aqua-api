@@ -189,3 +189,54 @@ jobs:
 
             echo "✅ Deployment completed!"
           ENDSSH
+
+      # `up -d` returning 0 only means the containers were created. Ask the app
+      # itself whether it is serving before calling the deploy a success.
+      - name: Verify the app is live
+        run: |
+          if [ "${{ github.ref_name }}" = "release" ]; then
+            DROPLET_IP=${{ secrets.DROPLET_IP_RELEASE }}
+          else
+            DROPLET_IP=${{ secrets.DROPLET_IP_MAIN }}
+          fi
+
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DROPLET_USER }}@$DROPLET_IP << 'ENDSSH'
+            set -e
+            cd aqua-api
+            COMPOSE="--env-file .env --env-file .env.deploy"
+
+            # The API is bound to loopback, so probe it from the droplet itself.
+            # It needs a moment to boot: retry for up to two minutes.
+            echo "Waiting for /health..."
+            for i in $(seq 1 24); do
+              if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null; then
+                echo "API is live (after ${i} attempts)."
+                break
+              fi
+              if [ "$i" = "24" ]; then
+                echo "API never answered /health."
+                sudo docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 api
+                exit 1
+              fi
+              sleep 5
+            done
+
+            # nginx is the public entrypoint; if it is down, so is the site.
+            echo "Checking nginx..."
+            curl -fsS --max-time 5 -o /dev/null http://127.0.0.1/ || {
+              echo "nginx is not answering on port 80."
+              sudo docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 nginx
+              exit 1
+            }
+
+            # Nothing should have died on the way up.
+            DOWN=$(sudo docker compose $COMPOSE -f docker-compose.prod.yml ps \
+              --status exited --status dead --format '{{.Name}}')
+            if [ -n "$DOWN" ]; then
+              echo "These containers are not running:"
+              echo "$DOWN"
+              exit 1
+            fi
+
+            echo "Deployment verified."
+          ENDSSH
