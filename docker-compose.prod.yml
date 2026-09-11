@@ -3,7 +3,9 @@ services:
     image: ${DO_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Loopback only — nginx reaches it over the compose network, so there is
+      # no reason to expose it (unencrypted) on the droplet's public IP.
+      - "127.0.0.1:8000:8000"
     # Only the app config/secrets in .env are injected into the container
     # (exactly the set the CI/CD writes). Deploy-time interpolation vars
     # (DO_REGISTRY, IMAGE_NAME, IMAGE_TAG, METRICS_*, PROJECT_NAME, HOSTNAME)
@@ -43,7 +45,6 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/docker-entrypoint.sh:/docker-entrypoint.d/40-generate-htpasswd.sh:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /var/www/certbot:/var/www/certbot:ro
       - reload-signal:/reload:ro
@@ -51,7 +52,8 @@ services:
     environment:
       - METRICS_USERNAME=${METRICS_USERNAME:-prometheus}
       - METRICS_PASSWORD=${METRICS_PASSWORD}
-    # Reload nginx only when certbot renews the cert (see nginx/reload-on-renewal.sh).
+    # Writes the /metrics basic-auth file, then reloads nginx only when certbot
+    # renews the cert (see nginx/reload-on-renewal.sh).
     command: ["/bin/sh", "/reload-on-renewal.sh"]
     depends_on:
       - api
