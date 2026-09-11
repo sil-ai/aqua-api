@@ -412,7 +412,7 @@ async def run_fanout(
 
     async def call_one(app: PredictApp) -> tuple[PredictApp, PredictAppResult]:
         started = time.perf_counter()
-        timeout_s = PER_APP_TIMEOUT_S.get(app, DEFAULT_PER_APP_TIMEOUT_S)
+        timeout_s = timeout_for(app)
         try:
             fn = _predict_fn(app.value, modal_env)
             data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
@@ -439,6 +439,16 @@ async def run_fanout(
         )
 
     return dict(await asyncio.gather(*(call_one(app) for app in apps)))
+
+
+def timeout_for(app: PredictApp) -> float:
+    """The wall-clock ceiling for one call to ``app``.
+
+    Shared by the fan-out and the standalone semantic-similarity endpoint so the same
+    app cannot be given two different ceilings depending on which door it was called
+    through.
+    """
+    return PER_APP_TIMEOUT_S.get(app, DEFAULT_PER_APP_TIMEOUT_S)
 
 
 def _elapsed_ms(started: float) -> int:
@@ -690,9 +700,19 @@ async def semantic_similarity(request: SimilarityRequest, modal_env: str) -> flo
             "modal_env": modal_env,
         },
     )
+    timeout_s = timeout_for(PredictApp.semantic_similarity)
     try:
         fn = _predict_fn(PredictApp.semantic_similarity.value, modal_env)
-        result = await fn.remote.aio(payload)
+        result = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        # Bounded here rather than left to Modal's own ceiling. The app declares no
+        # function timeout, so without this the wait falls back to Modal's default of
+        # 300s — five minutes of a held worker on a request a client is sitting on
+        # synchronously, and five times what the same app gets through the fan-out.
+        logger.warning(f"semantic similarity timed out after {timeout_s}s")
+        raise InferenceUnavailable(
+            PredictApp.semantic_similarity.value, f"timeout after {timeout_s}s"
+        ) from exc
     except Exception as exc:
         logger.error(
             f"semantic similarity inference failed: {type(exc).__name__}: {exc}",

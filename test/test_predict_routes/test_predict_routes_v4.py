@@ -33,6 +33,8 @@ What each group pins down:
   comparisons, including the entry point v3 called and the runner no longer defines.
 """
 
+import asyncio
+import inspect
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -145,7 +147,12 @@ def _modal_mock(results_by_app=None, spawn_id_by_app=None, spawn_error=None):
             if isinstance(configured, BaseException):
                 raise configured
             if callable(configured):
-                return configured(payload)
+                produced = configured(payload)
+                # Awaited when the test supplied a coroutine function, so a mock can
+                # model a slow or hanging app and not just a value.
+                if inspect.isawaitable(produced):
+                    return await produced
+                return produced
             return configured
 
         fn.remote.aio = remote
@@ -1043,6 +1050,38 @@ class TestSemanticSimilarity:
         assert (
             response.json()["error"]["details"]["reason"]
             == "No fine-tuned model found for 1_2"
+        )
+
+    def test_a_hanging_app_is_bounded_and_becomes_503(
+        self, client, regular_token1, db_session
+    ):
+        """The standalone call gets the same ceiling the fan-out gives the same app.
+
+        The runner declares no Modal-side timeout on this function, so without a bound
+        here the wait falls back to Modal's own default — far longer than the fan-out
+        would have allowed for identical work.
+        """
+
+        async def never_returns(payload):
+            await asyncio.sleep(30)
+
+        mock = _modal_mock({"semantic-similarity": never_returns})
+        with patch.object(predict_service, "DEFAULT_PER_APP_TIMEOUT_S", 0.05):
+            response = _post(
+                client, regular_token1, self._request(db_session), mock, path=self.PATH
+            )
+        assert response.status_code == 503, response.text
+        assert _error_code(response) == "INFERENCE_UNAVAILABLE"
+
+    def test_the_two_dispatch_paths_share_one_ceiling(self):
+        """Pinned because the asymmetry is easy to reintroduce: two call sites, one rule."""
+        assert (
+            predict_service.timeout_for(predict_service.PredictApp.agent_critique)
+            == 300.0
+        )
+        assert (
+            predict_service.timeout_for(predict_service.PredictApp.semantic_similarity)
+            == predict_service.DEFAULT_PER_APP_TIMEOUT_S
         )
 
     def test_an_unreachable_app_is_503(self, client, regular_token1, db_session):
