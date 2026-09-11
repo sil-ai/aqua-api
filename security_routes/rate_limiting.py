@@ -4,44 +4,70 @@ Uses slowapi (a Starlette/FastAPI port of flask-limiter) to throttle login,
 user registration, and password change endpoints by client IP. This mitigates
 credential brute-force attacks against `/token` (issue #713).
 
-Limits and the storage backend are configurable via environment variables
-so they can be tuned without code changes (e.g. raised in tests, or
-pointed at Redis in production).
+Limits are configurable via environment variables so they can be tuned
+without code changes (e.g. raised in tests).
 
-The token endpoints count failures only
----------------------------------------
-The two ``/token`` routes carry no ``@limiter`` decorator. A decorator runs
-*before* the endpoint body, so it charges every request against the budget —
-including the ones that present correct credentials — and a service
-authenticating normally exhausts its own allowance and starts getting 429s
-(#959). The threat in #713 is credential *guessing*, which is entirely about
-attempts that fail, so the routes call :func:`register_failed_login` on their
-401 path instead. A correct credential is never refused, at any volume.
+The token endpoints: two failure tiers, no decorator
+----------------------------------------------------
+Neither ``/token`` route carries a ``@limiter`` decorator. A decorator charges
+every request, successes included, so a service authenticating normally
+exhausts its own allowance and starts collecting 429s — that was #959, and it
+broke ordinary CI traffic. But "charge only failures" on its own is not a cap:
+a limit controls only the work it runs *before*, and a counter bumped after
+``authenticate_user`` has already returned cannot stop the next guess from
+being evaluated. So the routes carry two budgets, both keyed on the client
+address, both spent only by failures, differing in *when* they are consulted:
 
-The key stays the client address rather than the submitted username, even
-though brute-force is per-account. A username is attacker-chosen, so keying on
-it would let one caller spray a single common password across thousands of
-accounts without ever filling a bucket, and would let that same caller decide
-how many counters we allocate in the in-process store. The cost of the address
-key — callers sharing one egress IP (every Modal worker, say) drawing on one
-bucket — now applies only to their *failed* attempts, which is the behaviour
-the threat model wants anyway.
+``TOKEN_SOFT_FAILURE_LIMIT`` (``AUTH_TOKEN_FAILURE_LIMIT``, default 5/minute)
+    Charged after the fact by :func:`register_failed_login`, which raises the
+    429 that ends a run of bad passwords. It never blocks a credential check,
+    so while it is spent a correct credential is still served — one container
+    holding a stale password costs its egress IP this tier and nothing else.
+
+``TOKEN_HARD_FAILURE_LIMIT`` (``AUTH_TOKEN_HARD_FAILURE_LIMIT``, default
+60/minute)
+    Checked by :func:`check_token_failure_gate` as the first statement of both
+    handlers, before any database or bcrypt work. This is the real cap: once an
+    address has failed 60 times in a minute, further token requests from it are
+    refused outright and **a correct credential is refused too**. That is the
+    property #959's fix gave away and this tier buys back; there is no way to
+    honour every correct credential and also bound guessing, because honouring
+    a credential means evaluating it. The default is twelve times the soft
+    budget, so a fleet that is merely misconfigured — several containers each
+    retrying a stale password a few times a minute — stays well clear of it,
+    while a single address is held to about one guess per second. At bcrypt
+    cost 12 (~154 ms) that is roughly a sixth of one worker's hashing capacity,
+    so a flood cannot crowd out the rest of the container even before the
+    threadpool offload in ``authenticate_user``.
+
+A healthy fleet generates approximately zero failures, so neither tier ever
+fires for it however much traffic it puts through ``/token``. That is #959's
+property, and it is the one that has to survive.
+
+The key is the client address, not the submitted username. A username is
+attacker-chosen: keying on it would let one caller spray a single common
+password across thousands of accounts without ever filling a bucket, and would
+hand that caller control over how many counters the in-process store
+allocates. (A composite address-and-username key enforced pre-auth would avoid
+both of those; it is not what is built here, and the coarse address gate above
+is what bounds guessing.)
 
 Deployment notes
 ----------------
-* By default ``slowapi`` keeps counters in-process, so each uvicorn worker
-  maintains its own state and the effective per-IP budget is roughly
+* ``slowapi`` keeps counters in-process, so each uvicorn worker maintains its
+  own state and the effective per-address budget is roughly
   ``N_workers * limit``. ``N_workers`` is a property of the deployment, not of
   this file — uvicorn's worker count is set in the Dockerfile and is tunable
-  per environment — so the real ceiling is some multiple of the number below,
+  per environment — so the real ceiling is some multiple of the numbers below,
   and which worker a request lands on is not something the caller controls.
-  ``AUTH_RATE_LIMIT_STORAGE_URI`` is what fixes that, by pointing slowapi at
-  shared storage (e.g. ``redis://host:6379/0``). **Nothing in this repository
-  sets it, and there is no Redis in this deployment to point it at**, so the
-  per-worker counters are what is actually in force and the multiplied ceiling
-  is the real one. Since the token budget is now spent only by failed logins,
-  that multiplier inflates an attacker's guess budget and nothing else — it no
-  longer reaches legitimate traffic, which is what made it urgent.
+  Shared storage via ``AUTH_RATE_LIMIT_STORAGE_URI`` is the textbook fix and is
+  **not usable here as things stand**: nothing in this repository sets it, the
+  ``redis`` package is not installed so constructing the limiter with a
+  ``redis://`` URI fails outright, and slowapi 0.1.9 has no async storage path
+  — so even with the package present every token attempt, and every
+  decorator-limited request, would put a blocking network round trip on the
+  event loop. Treat the multiplied ceiling as the number in force, and read the
+  hard tier as ``N_workers * 60`` failures per minute per address.
 * ``get_remote_address`` returns the direct socket peer. Behind a proxy
   (nginx, Cloudflare, etc.) every request looks like it came from the
   proxy IP, which would let one attacker block everyone. Make sure the
@@ -60,15 +86,20 @@ from slowapi.wrappers import Limit
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-# Per-IP limits. Default is 5 req/min per the issue's recommendation. Tests
-# override these via env to avoid tripping during normal happy-path traffic.
-TOKEN_RATE_LIMIT = os.getenv("AUTH_TOKEN_RATE_LIMIT", "5/minute")
+# Per-address limits. The two token budgets are spelled ``..._FAILURE_LIMIT``
+# because that is what they now count. The old ``AUTH_TOKEN_RATE_LIMIT`` is
+# deliberately not read any more: it meant requests per minute, and an operator who
+# raised it to work around #959 would otherwise have silently been granting the same
+# number of *guesses* per minute. Dropping the name means such a deployment falls
+# back to the tighter default here, which is the safe direction.
+TOKEN_FAILURE_RATE_LIMIT = os.getenv("AUTH_TOKEN_FAILURE_LIMIT", "5/minute")
+TOKEN_HARD_FAILURE_RATE_LIMIT = os.getenv("AUTH_TOKEN_HARD_FAILURE_LIMIT", "60/minute")
 USERS_RATE_LIMIT = os.getenv("AUTH_USERS_RATE_LIMIT", "5/minute")
 CHANGE_PASSWORD_RATE_LIMIT = os.getenv("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "5/minute")
 
-# Optional shared storage (e.g. ``redis://host:6379/0``). Empty / unset =>
-# in-process memory storage, fine for single-worker / dev but lets each
-# uvicorn worker keep its own counter in production.
+# Optional shared storage. Empty / unset => in-process memory storage, which is what
+# runs everywhere; see the module docstring for why the alternative is not reachable
+# from here today.
 _STORAGE_URI = os.getenv("AUTH_RATE_LIMIT_STORAGE_URI", "")
 
 _limiter_kwargs = {"key_func": get_remote_address}
@@ -84,12 +115,13 @@ if _STORAGE_URI:
 # the 429 below, which is the only header that matters for back-off.
 limiter = Limiter(**_limiter_kwargs)
 
-# One bucket per IP for *all* token endpoints. Scoping by the decorated endpoint —
-# which is what a plain ``@limiter.limit`` does — would give v3's ``/latest/token`` and
-# v4's ``/v4/token`` a budget each, and an attacker could double their attempts by
-# alternating surfaces. Both routes name this scope instead, so they draw down the same
-# counter (#713).
+# One pair of buckets per address for *all* token endpoints. Scoping by the decorated
+# endpoint — which is what a plain ``@limiter.limit`` does — would give v3's
+# ``/latest/token`` and v4's ``/v4/token`` a budget each, and an attacker could double
+# their attempts by alternating surfaces. Both routes name these scopes instead, so they
+# draw down the same counters (#713).
 TOKEN_LIMIT_SCOPE = "auth-token"
+TOKEN_HARD_LIMIT_SCOPE = "auth-token-hard"
 
 # The same device for v4's account-creation and password writes (#950). Two things to
 # know about these:
@@ -115,36 +147,89 @@ TOKEN_LIMIT_SCOPE = "auth-token"
 USERS_LIMIT_SCOPE = "auth-users"
 PASSWORD_LIMIT_SCOPE = "auth-password"
 
-# The token budget, as a slowapi ``Limit`` rather than a decorator, because the token
-# routes spend it by hand on their 401 path (see the module docstring). ``Limit`` is
-# what ``RateLimitExceeded`` wants, so building one here means the 429 reaching either
-# surface's handler is indistinguishable from a decorator's.
-TOKEN_FAILURE_LIMIT = Limit(
-    limit=parse(TOKEN_RATE_LIMIT),
-    key_func=get_remote_address,
-    scope=TOKEN_LIMIT_SCOPE,
-    per_method=False,
-    methods=None,
-    error_message=None,
-    exempt_when=None,
-    cost=1,
-    override_defaults=False,
+
+#: The 429's human-readable text. v3's handler writes it into the body itself; v4's
+#: takes ``exc.detail``, which ``RateLimitExceeded`` fills from the ``Limit``'s
+#: ``error_message`` — and, when that is None, from ``str(limit.limit)`` instead. So
+#: leaving it unset published the configured budget ("5 per 1 minute") to anonymous
+#: callers on v4, telling an attacker exactly how fast they may guess.
+RATE_LIMIT_MESSAGE = "Too many requests. Please slow down and try again shortly."
+
+
+def _token_limit(raw: str, scope: str) -> Limit:
+    """Build one of the token budgets as a slowapi ``Limit``.
+
+    A ``Limit`` rather than a bare ``RateLimitItem`` because it is what
+    ``RateLimitExceeded`` takes, so a 429 raised by hand below is indistinguishable
+    from one a decorator would have raised and both surfaces' handlers shape it the
+    way they always have.
+    """
+    return Limit(
+        limit=parse(raw),
+        key_func=get_remote_address,
+        scope=scope,
+        per_method=False,
+        methods=None,
+        error_message=RATE_LIMIT_MESSAGE,
+        exempt_when=None,
+        cost=1,
+        override_defaults=False,
+    )
+
+
+TOKEN_SOFT_FAILURE_LIMIT = _token_limit(TOKEN_FAILURE_RATE_LIMIT, TOKEN_LIMIT_SCOPE)
+TOKEN_HARD_FAILURE_LIMIT = _token_limit(
+    TOKEN_HARD_FAILURE_RATE_LIMIT, TOKEN_HARD_LIMIT_SCOPE
 )
 
 
-def register_failed_login(request: Request) -> None:
-    """Charge one failed token attempt, raising 429 once the budget is spent.
+def _refuse(request: Request, lim: Limit) -> None:
+    """Raise the 429 for ``lim``, leaving behind what ``Retry-After`` is computed from.
 
-    Called only after ``authenticate_user`` has rejected the credentials, so the
-    caller's next line is a 401 — unless this raises first, which is what turns a
-    run of failures into the 429 that stops a brute-force. ``view_rate_limit`` is
-    the tuple slowapi's decorator would have left on the request; both 429 handlers
-    read it to compute ``Retry-After``.
+    ``view_rate_limit`` is the tuple slowapi's decorator would have set; both 429
+    handlers read it off the request to work out the back-off.
     """
-    args = [TOKEN_FAILURE_LIMIT.key_func(request), TOKEN_FAILURE_LIMIT.scope]
-    request.state.view_rate_limit = (TOKEN_FAILURE_LIMIT.limit, args)
-    if not limiter.limiter.hit(TOKEN_FAILURE_LIMIT.limit, *args):
-        raise RateLimitExceeded(TOKEN_FAILURE_LIMIT)
+    request.state.view_rate_limit = (lim.limit, [lim.key_func(request), lim.scope])
+    raise RateLimitExceeded(lim)
+
+
+def check_token_failure_gate(request: Request) -> None:
+    """Refuse a token request outright when the hard failure budget is spent.
+
+    The first statement of both token handlers, so that an address which has already
+    failed its way through the hard budget gets no further credential evaluated — no
+    database round trip, no bcrypt, and no chance of guessing right. ``test`` checks
+    the counter without charging it, because a request refused here did not fail a
+    login; :func:`register_failed_login` is what fills this bucket.
+    """
+    if not limiter.enabled:
+        return
+    lim = TOKEN_HARD_FAILURE_LIMIT
+    if not limiter.limiter.test(lim.limit, lim.key_func(request), lim.scope):
+        _refuse(request, lim)
+
+
+def register_failed_login(request: Request) -> None:
+    """Charge one failed token attempt to both budgets, raising 429 once either is spent.
+
+    Called after ``authenticate_user`` has rejected the credentials, so the caller's
+    next line is a 401 unless this raises first. Both buckets are charged before
+    either is allowed to raise, so a 429 never costs the hard gate an attempt it
+    should have recorded.
+    """
+    if not limiter.enabled:
+        return
+    hard, soft = TOKEN_HARD_FAILURE_LIMIT, TOKEN_SOFT_FAILURE_LIMIT
+    within_hard = limiter.limiter.hit(
+        hard.limit, hard.key_func(request), hard.scope, cost=hard.cost
+    )
+    within_soft = limiter.limiter.hit(
+        soft.limit, soft.key_func(request), soft.scope, cost=soft.cost
+    )
+    if not within_soft:
+        _refuse(request, soft)
+    if not within_hard:
+        _refuse(request, hard)
 
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
@@ -153,12 +238,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
     Attaches a ``Retry-After`` header (in seconds, per RFC 7231) computed
     from the limit's window so well-behaved clients know when to back off.
     """
-    response = JSONResponse(
-        status_code=429,
-        content={
-            "detail": "Too many requests. Please slow down and try again shortly."
-        },
-    )
+    response = JSONResponse(status_code=429, content={"detail": RATE_LIMIT_MESSAGE})
     retry_after = _retry_after_seconds(request, exc)
     if retry_after is not None:
         response.headers["Retry-After"] = str(retry_after)

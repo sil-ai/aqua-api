@@ -78,9 +78,10 @@ app = fastapi.FastAPI(
 
 # Wire slowapi limiter so the throttles on /token, /users and /change-password
 # throttle brute-force attempts by IP (issue #713). /users and /change-password
-# carry @limiter decorators; /token spends its budget from inside the handler so
-# that only failed logins are charged (#959). Both paths need this state: the 429
-# handler reads app.state.limiter to compute Retry-After.
+# carry @limiter decorators; /token spends two budgets from inside the handler
+# instead, so that only failed logins are charged (#959) — see
+# security_routes.rate_limiting. Both paths need this state: the 429 handler reads
+# app.state.limiter to compute Retry-After.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 

@@ -29,6 +29,20 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
+# A real bcrypt hash, at the same cost factor ``hash_password`` produces, of a random
+# string that was discarded the moment it was generated. ``authenticate_user`` verifies
+# against it when no user row matches, so an unknown username costs exactly what a known
+# one does and cannot be told apart by response time (see that function's docstring).
+#
+# Checked in rather than derived at import on purpose: hashing at cost 12 takes ~154ms,
+# and paying that in every process — each uvicorn worker, every CLI entry point, every
+# pytest collection — to produce a value with no secret in it would be a pointless tax
+# on startup.
+NO_SUCH_USER_PASSWORD_HASH = (
+    "$2b$12$EsRqTKXXl7fzmRXmPE1/Z.eDv.A1w1ZOpVUe.wvvTLOfm4kYXzCNm"
+)
+
+
 # Password hashing and verification
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     hashed_password_bytes = hashed_password.encode()
