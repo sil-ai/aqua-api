@@ -357,7 +357,7 @@ class TestForbiddenIsWriteOnly:
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 17 of the 44 domain operations, unreachable on 27.
+    write-path status: reachable on 17 of the 48 domain operations, unreachable on 31.
 
     "Write-path" is the generalization, not the rule, and it now bends in both
     directions. The resolution ``PATCH`` on ``/critique-issues/{issue_id}`` is a write
