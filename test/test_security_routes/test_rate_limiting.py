@@ -622,7 +622,7 @@ def test_each_token_tier_reads_its_own_setting():
     ) == ["7 per 1 minute", "77 per 1 minute"]
 
 
-def test_one_addresss_failures_do_not_lock_out_another(
+def test_one_address_failures_do_not_lock_out_another(
     test_db_session, tight_soft_token_limit
 ):
     """The soft tier is keyed per address, not globally.
