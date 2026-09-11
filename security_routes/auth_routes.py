@@ -51,9 +51,15 @@ async def authenticate_user(username: str, password: str, db: AsyncSession):
     loop for that long, so a burst of failed logins stalls every endpoint the worker
     serves, not just this one.
     """
-    stmt = select(UserDB).where(UserDB.username == username)
-    result = await db.execute(stmt)
-    user = result.scalars().first()
+    # A NUL byte makes asyncpg raise CharacterNotInRepertoireError, which would
+    # escape as a 500 before either budget is charged — an unbounded, unauthenticated
+    # source of DB round trips and ~8KB tracebacks (cf. #954). No username can
+    # contain one, so treat it as a miss and let it fall through to the ordinary,
+    # charged 401 with the dummy-hash timing intact.
+    user = None
+    if "\x00" not in username:
+        result = await db.execute(select(UserDB).where(UserDB.username == username))
+        user = result.scalars().first()
     hashed = user.hashed_password if user else NO_SUCH_USER_PASSWORD_HASH
     matched = await run_in_threadpool(verify_password, password, hashed)
     if not user or not matched:

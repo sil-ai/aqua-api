@@ -818,3 +818,22 @@ def test_v4_group_writes_are_not_rate_limited():
             f"{key} has acquired a rate limit; decide whether that is intended and "
             "update this test"
         )
+
+
+def test_a_nul_byte_username_is_a_charged_401_not_an_uncaught_500(
+    test_db_session, tight_soft_token_limit
+):
+    """A NUL byte must not escape as a 500 that charges neither budget.
+
+    asyncpg raises CharacterNotInRepertoireError on a NUL in a query parameter
+    (cf. #954). Before the guard in authenticate_user that surfaced as a 500
+    raised ahead of register_failed_login, leaving an unauthenticated caller an
+    unbounded source of DB round trips — the one bound the decorator used to
+    provide for free.
+    """
+    nul = {"username": "admin\x00", "password": "whatever"}
+    for _ in range(SOFT):
+        assert client.post(f"{prefix}/token", data=nul).status_code == 401
+
+    # And it spends the budget like any other failure, rather than bypassing it.
+    assert client.post(f"{prefix}/token", data=nul).status_code == 429
