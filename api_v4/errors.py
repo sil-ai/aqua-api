@@ -235,15 +235,15 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 
 #: The documented error surface of an authenticated v4 domain route (#928).
 #:
-#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 42
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 44
 #: per-route ``responses=`` decorators that would drift apart.
 #:
 #: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
 #: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
 #: only "you can see this but may not modify it" — a *write-path* status. Counted over
-#: the surface, it is reachable on 17 of the 42 domain operations and unreachable on 25:
+#: the surface, it is reachable on 17 of the 44 domain operations and unreachable on 27:
 #: every read, including all thirteen non-delete assessment reads and all four verse
-#: reads. Publishing it on all 42 would tell clients that any v4 call can be forbidden,
+#: reads. Publishing it on all 44 would tell clients that any v4 call can be forbidden,
 #: which is false for the large majority and is the sort of thing a generated client
 #: turns into dead error-handling. So the seventeen declare it themselves, via
 #: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
@@ -265,10 +265,11 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 #: :mod:`security_routes.v4.user_routes`.
 #:
 #: The four that remain are all genuinely universal except ``404``, which is unreachable
-#: on the 8 operations that look nothing up (``GET /me``, ``GET /me/groups``,
-#: ``GET /groups``, ``POST /users``, ``POST /groups``, ``POST /users/me/password``, and
-#: the version and assessment collection reads). That residue is small and a ``404`` on a
-#: collection read or a create misleads nobody; it is not worth eight more decorators.
+#: on the 10 operations that look nothing up (``GET /me``, ``GET /me/groups``,
+#: ``GET /groups``, ``POST /users``, ``POST /groups``, ``POST /users/me/password``, the
+#: version and assessment collection reads, and — added by #951 — ``GET /languages`` and
+#: ``GET /scripts``, which take no id at all). That residue is small and a ``404`` on a
+#: collection read or a create misleads nobody; it is not worth ten more decorators.
 #:
 #: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
 #: the generator only injects that when the route documents no ``422`` of its own

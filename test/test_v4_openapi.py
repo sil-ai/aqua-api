@@ -357,7 +357,7 @@ class TestForbiddenIsWriteOnly:
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 17 of the 42 domain operations, unreachable on 25.
+    write-path status: reachable on 17 of the 44 domain operations, unreachable on 27.
 
     "Write-path" is the generalization, not the rule, and it now bends in both
     directions. The resolution ``PATCH`` on ``/critique-issues/{issue_id}`` is a write
@@ -391,8 +391,20 @@ class TestForbiddenIsWriteOnly:
             assert ref == V4_ERROR_REF, f"{method.upper()} {path}"
 
     def test_no_read_of_a_collection_claims_403(self, schema):
-        """The clearest cases, spelled out: a plain list cannot be forbidden."""
-        for path in ("/versions", "/revisions", "/assessments", "/users/me"):
+        """The clearest cases, spelled out: a plain list cannot be forbidden.
+
+        The two reference lists (#951) are the plainest of the lot — unscoped reads over
+        static tables with no owner and no admin gate, so they are the first v4
+        additions in a while that declare no 403 at all.
+        """
+        for path in (
+            "/versions",
+            "/revisions",
+            "/assessments",
+            "/users/me",
+            "/languages",
+            "/scripts",
+        ):
             assert "403" not in schema["paths"][path]["get"]["responses"], path
 
 

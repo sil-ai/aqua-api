@@ -74,6 +74,7 @@ from api_v4.errors import (
 )
 from api_v4.meta_routes import router as meta_router
 from assessment_routes.v4.assessment_routes import router as assessment_router
+from bible_routes.v4.language_routes import router as language_router
 from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.verse_routes import router as verse_router
 from bible_routes.v4.version_routes import router as version_router
@@ -138,7 +139,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # dedupes the dependency, so it runs once per request.
     #
     # ``responses=`` rides along for the same reason the dependency does: one
-    # declaration covering every domain route beats 42 that drift. See
+    # declaration covering every domain route beats 44 that drift. See
     # V4_ERROR_RESPONSES for what it declares and why the union is deliberate.
     for domain_router in (
         version_router,
@@ -156,6 +157,13 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         agent_router,
         user_router,
         group_router,
+        # Registered last so the two reference lists append to the published schema
+        # rather than shifting the paths after them, and so "Reference" sorts to the
+        # bottom of /v4/docs — it is supporting data for the routers above, not a
+        # domain of its own. It is the only prefixless router in this loop; see
+        # bible_routes/v4/language_routes.py for why /languages and /scripts share
+        # one router despite sharing no path prefix.
+        language_router,
     ):
         v4_app.include_router(
             domain_router,
