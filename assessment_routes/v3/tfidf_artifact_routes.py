@@ -1153,8 +1153,20 @@ _ENCODER_CACHE: Dict[int, tuple] = {}
 # hold a full encoder live while the cache accounts for one — the budget below
 # would bound the retained set while peak memory ran N times higher. A cold
 # worker taking a burst is exactly that case, and exactly the OOM this cache is
-# being bounded to prevent. Serializing is cheap: hits never take the lock, and
-# a miss is a ~100-200ms rebuild that would otherwise be duplicated anyway.
+# being bounded to prevent. Serializing is cheap in encoder work: hits never
+# take the lock, and a miss is a ~100-200ms rebuild that would otherwise be
+# duplicated anyway. It is not free in connections — get_db holds the session
+# for the whole request and the run lookup below has already checked one out,
+# so queued waiters each pin a pool slot while they wait. At pool_size 5 +
+# overflow 10 a cold-worker burst can hold a worker's whole pool for a few
+# seconds; raise AQUA_DB_POOL_SIZE if that shows up as get_db checkout
+# timeouts. Loading the artifact rows inside the lock is deliberate: hoisting
+# them out would put N copies of the multi-MB components blob in flight, which
+# is the memory problem this lock exists to stop.
+#
+# Bound to whichever event loop first contends on it (CPython's uncontended
+# fast path never looks at the loop), which is fine for one loop per worker but
+# will bite a test that drives concurrent misses across per-request loops.
 _ENCODER_LOCK = asyncio.Lock()
 
 # Per vocabulary entry: CPython's str overhead (49B, exact for ASCII) plus the
@@ -1168,20 +1180,24 @@ def _encoder_nbytes(encoder: tuple) -> int:
 
     The 300×n_features SVD components matrix dominates and is measured exactly;
     the vocabularies are approximated from their key contents plus per-entry
-    overhead. Each vectorizer holds *two* full-size vocabulary dicts, not one:
-    sklearn's ``idf_`` setter calls ``_validate_vocabulary()``, which builds
-    ``vocabulary_`` alongside the ``vocabulary`` we passed to the constructor.
+    overhead. Each vectorizer holds two vocabulary *dicts* — sklearn's ``idf_``
+    setter calls ``_validate_vocabulary()``, which builds ``vocabulary_``
+    alongside the ``vocabulary`` we passed in — but that is a shallow copy, so
+    the keys and values are shared and only the hash table is duplicated.
 
-    The result is a floor, not a bound — see _VOCAB_ENTRY_OVERHEAD_BYTES.
+    The result is a floor, not a bound: non-ASCII terms cost more than
+    _VOCAB_ENTRY_OVERHEAD_BYTES assumes.
     """
     word_vec, char_vec, svd = encoder
     total = svd.components_.nbytes
     for vec in (word_vec, char_vec):
         total += vec.idf_.nbytes
         vocabulary = vec.vocabulary
-        # x2 for the vocabulary_ copy, which holds the same keys.
-        total += 2 * (
-            sys.getsizeof(vocabulary)
+        # vocabulary_ is a shallow dict() copy: a second hash table over the
+        # *same* key and value objects, so only the container doubles. For
+        # ASCII keys this reproduces the true cost exactly.
+        total += (
+            2 * sys.getsizeof(vocabulary)
             + sum(len(term) for term in vocabulary)
             + _VOCAB_ENTRY_OVERHEAD_BYTES * len(vocabulary)
         )

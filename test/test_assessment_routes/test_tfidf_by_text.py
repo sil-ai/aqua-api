@@ -587,9 +587,11 @@ def clean_encoder_cache():
 
 def _sized_encoder(n_features: int, vocab_size: int = 50):
     """Build an encoder tuple whose components matrix has n_features columns."""
-    vocabulary = {f"t{i}": i for i in range(vocab_size)}
     vectorizers = []
     for analyzer in ("word", "char"):
+        # Distinct dicts per analyzer, as the two artifact rows give in
+        # production — sharing one would have _encoder_nbytes size it twice.
+        vocabulary = {f"{analyzer}{i}": i for i in range(vocab_size)}
         vec = TfidfVectorizer(analyzer=analyzer, vocabulary=vocabulary)
         vec.idf_ = np.ones(vocab_size, dtype=float)
         vectorizers.append(vec)
@@ -627,15 +629,19 @@ def test_encoder_nbytes_counts_both_vocabularies():
     """Vocabulary growth is counted, for both dicts sklearn keeps per vectorizer.
 
     ``idf_``'s setter calls ``_validate_vocabulary()``, which builds a second
-    full-size ``vocabulary_`` beside the one passed to the constructor — so
-    1000 extra terms cost twice over, in each of the two vectorizers.
+    ``vocabulary_`` beside the one passed to the constructor — but as a shallow
+    ``dict()`` copy, so the keys and values are shared and only the hash table
+    doubles. The upper bound below is what fails if that is counted twice.
     """
     small = tfidf_routes._encoder_nbytes(_sized_encoder(500, vocab_size=50))
     large = tfidf_routes._encoder_nbytes(_sized_encoder(500, vocab_size=1050))
 
     per_term = tfidf_routes._VOCAB_ENTRY_OVERHEAD_BYTES
-    # 2 vectorizers x 2 dicts each x 1000 terms, plus the idf_ float per term.
-    assert large - small >= 2 * 2 * 1000 * per_term + 2 * 1000 * 8
+    # 1000 extra terms in each of the two vectorizers, counted once each
+    # (shared objects), plus the idf_ float per term.
+    assert large - small >= 2 * 1000 * per_term + 2 * 1000 * 8
+    # But not twice each — that would mean vocabulary_ was double-counted.
+    assert large - small < 2 * 2 * 1000 * per_term
 
 
 def test_encoder_cache_evicts_oldest_until_within_the_budget(
@@ -654,6 +660,9 @@ def test_encoder_cache_evicts_oldest_until_within_the_budget(
 
     stale = _sized_encoder(1000)
     stale_bytes = tfidf_routes._encoder_nbytes(stale)
+    # The budget below leaves room for two stale entries but not three plus the
+    # real one; that arithmetic only picks out two evictions while this holds.
+    assert real_bytes < 2 * stale_bytes
     for stale_id in (-1, -2, -3):
         cache[stale_id] = (
             datetime(2020, 1, 1, tzinfo=timezone.utc),
