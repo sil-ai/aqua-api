@@ -55,7 +55,7 @@ V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
 #: 403 is deliberately absent — see :class:`TestForbiddenIsWriteOnly`.
 DOMAIN_ERROR_STATUSES = frozenset({"401", "404", "422", "500"})
 
-#: The seventeen operations that can actually answer 403, enumerated by walking each
+#: The eighteen operations that can actually answer 403, enumerated by walking each
 #: handler and its helpers for ``status.HTTP_403_FORBIDDEN`` (and for a ``require_admin``
 #: dependency). Written out rather than computed so the test states the expected
 #: surface instead of re-deriving whatever the code currently does.
@@ -66,6 +66,10 @@ DOMAIN_ERROR_STATUSES = frozenset({"401", "404", "422", "500"})
 #: ``current_password`` rather than a privilege failure — the caller owns the row — and
 #: it is the only 403 on the surface that means that. ``GET /v4/users/me`` and
 #: ``GET /v4/users/me/groups`` gained none, being self-scoped.
+#:
+#: Training (#895) added exactly one, which is the whole slice's 403 surface: its delete
+#: is owner-or-admin, and every one of its five reads answers 404 for a job the caller
+#: cannot see rather than distinguishing "not yours" from "no such id".
 FORBIDDEN_OPERATIONS = frozenset(
     {
         ("post", "/versions"),
@@ -86,6 +90,8 @@ FORBIDDEN_OPERATIONS = frozenset(
         ("put", "/groups/{group_id}/members/{user_id}"),
         ("delete", "/groups/{group_id}/members/{user_id}"),
         ("delete", "/groups/{group_id}"),
+        # The #895 training slice's only 403: the job delete is owner-or-admin.
+        ("delete", "/training-jobs/{job_id}"),
     }
 )
 
@@ -261,14 +267,18 @@ class TestPublishedErrorContract:
             ("/revisions/{revision_id}", "patch", "400"),
             ("/assessments", "post", "409"),
             ("/assessments", "post", "503"),
+            ("/training-sessions", "post", "409"),
+            ("/training-jobs/{job_id}", "delete", "409"),
         ],
     )
     def test_per_route_statuses_are_declared(self, schema, path, method, code):
         """The statuses only *some* operations answer, declared on those operations.
 
-        These are the five operations that raise beyond the shared floor — found by
+        These are the operations that raise beyond the shared floor — found by
         walking the AST for ``status.HTTP_*`` in each handler and its helpers, not by
-        reading for them. Leaving them out would have reproduced this PR's own defect:
+        reading for them. The two training entries are one conflict each:
+        ``POST /v4/training-sessions`` when every requested app already had an active
+        job, and the delete when the job is not terminal (or cannot be shown to be). Leaving them out would have reproduced this PR's own defect:
         ``create_assessment``'s docstring promises a 409 and a 503, and the schema said
         neither.
         """
@@ -353,11 +363,11 @@ class TestPublishedErrorContract:
 
 
 class TestForbiddenIsWriteOnly:
-    """403 is declared on the seventeen operations that can raise it, and nowhere else.
+    """403 is declared on the eighteen operations that can raise it, and nowhere else.
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 17 of the 48 domain operations, unreachable on 31.
+    write-path status: reachable on 18 of the 54 domain operations, unreachable on 36.
 
     "Write-path" is the generalization, not the rule, and it now bends in both
     directions. The resolution ``PATCH`` on ``/critique-issues/{issue_id}`` is a write
@@ -404,6 +414,7 @@ class TestForbiddenIsWriteOnly:
             "/users/me",
             "/languages",
             "/scripts",
+            "/training-jobs",
         ):
             assert "403" not in schema["paths"][path]["get"]["responses"], path
 
