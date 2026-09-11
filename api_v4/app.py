@@ -83,6 +83,8 @@ from security_routes.v4.dependencies import get_current_user_v4
 from security_routes.v4.group_routes import router as group_router
 from security_routes.v4.token_routes import router as token_router
 from security_routes.v4.user_routes import router as user_router
+from train_routes.v4.train_routes import job_router as training_job_router
+from train_routes.v4.train_routes import session_router as training_session_router
 
 
 def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
@@ -164,6 +166,13 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         # is its own -- no other router declares a path under it, so ordering is not
         # load-bearing for matching either.
         predict_router,
+        # The two training routers, on the same terms: ``/training-sessions`` and
+        # ``/training-jobs`` are distinct prefixes that no other router declares a path
+        # under, so ordering is not load-bearing for matching. They are two routers rather
+        # than one because a job's session is metadata on the job, not its parent — the
+        # column is nullable — so the jobs collection is addressed in its own right.
+        training_session_router,
+        training_job_router,
         # Registered last so the two reference lists append to the published schema
         # rather than shifting the paths after them, and so "Reference" sorts to the
         # bottom of /v4/docs — it is supporting data for the routers above, not a
