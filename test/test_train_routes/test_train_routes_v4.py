@@ -426,6 +426,13 @@ class TestSubmit:
 
         Built by v3's ``_build_runner_train_config`` so the payload has one definition
         shared with the surface the runner was written against.
+
+        Asserted as an equality against ``assessment_id`` and **not** as an inequality
+        against the job id. ``training_job.id`` and ``assessment.id`` are independent
+        sequences, so the two can hold the same number — they did on a fresh CI database,
+        where ``assert 158 != 158`` failed an earlier version of this test. That
+        coincidence is itself the reason the slice insists the two are different id
+        spaces rather than different values.
         """
         configs = []
         response = _submit(
@@ -440,7 +447,6 @@ class TestSubmit:
         job = session["jobs"][0]
         assert len(configs) == 1
         assert configs[0]["id"] == job["assessment_id"]
-        assert configs[0]["id"] != job["id"]
         assert configs[0]["is_training"] is True
         # revision_id is the side being trained, reference_id what it is trained against.
         assert configs[0]["revision_id"] == pair["target_revision_id"]
@@ -958,22 +964,25 @@ class TestJobDetail:
         assert response.status_code == 200
         assert response.json()["error"]["message"] == "The job failed."
 
-    def test_the_two_ids_are_both_reported_and_are_different(
+    def test_both_ids_are_reported_and_only_one_addresses_this_job(
         self, client, regular_token1, db_session, pair
     ):
-        """The dual-id observability, pinned: one job seen twice, not two jobs."""
+        """The dual-id observability, pinned: one job seen twice, not two jobs.
+
+        The two ids are different *spaces*, not different numbers — ``training_job.id``
+        and ``assessment.id`` are independent sequences and can hold the same value, as a
+        fresh CI database duly demonstrated. So the claim asserted here is the one that
+        actually holds: whatever ``/training-jobs/{assessment_id}`` answers, it is not
+        this job. Usually that is a 404; on a collision it is some *other* job that
+        genuinely has that id.
+        """
         job = _make_job(db_session, pair)
         body = client.get(f"{JOBS}/{job.id}", headers=_auth(regular_token1)).json()
         assert body["job_id"] == str(job.id)
         assert body["assessment_id"] == job.assessment_id
-        assert str(body["assessment_id"]) != body["job_id"]
-        # And the assessment id is not addressable on this surface.
-        assert (
-            client.get(
-                f"{JOBS}/{job.assessment_id}", headers=_auth(regular_token1)
-            ).status_code
-            == 404
-        )
+
+        probe = client.get(f"{JOBS}/{job.assessment_id}", headers=_auth(regular_token1))
+        assert probe.status_code == 404 or probe.json()["job_id"] != str(job.id)
 
     def test_a_training_row_is_not_served_by_the_assessments_surface(
         self, client, regular_token1, db_session, pair
