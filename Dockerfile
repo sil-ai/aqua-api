@@ -56,7 +56,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # Sep 11 prod outages: each worker carries its own TF-IDF encoder cache. Per
 # worker the floor is ~190MB of interpreter and imports (more once sklearn
 # imports lazily on the first TF-IDF request), and the cache adds at least
-# TFIDF_ENCODER_CACHE_MAX_BYTES (256MB default, see config.py) — "at least"
+# TFIDF_ENCODER_CACHE_MAX_BYTES (768MB default, see config.py) — "at least"
 # because an encoder larger than the whole budget is retained rather than
 # evicted, so the real ceiling is per-worker max(budget, largest encoder).
 #

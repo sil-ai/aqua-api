@@ -705,7 +705,7 @@ def test_encoder_cache_keeps_entries_that_fit(
     cache[-1] = (datetime(2020, 1, 1, tzinfo=timezone.utc), stale, stale_bytes)
 
     # Generous, but still tied to the real sizes rather than an arbitrary
-    # number that would also pass under the 256MB default.
+    # number that would also pass under the shipped default.
     monkeypatch.setattr(
         settings, "tfidf_encoder_cache_max_bytes", 100 * (stale_bytes + 1)
     )
