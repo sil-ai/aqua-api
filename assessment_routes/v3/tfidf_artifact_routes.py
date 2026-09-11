@@ -5,6 +5,7 @@ import base64
 import binascii
 import io
 import socket
+import sys
 import time
 import uuid
 from typing import Dict, List, Literal, Union
@@ -18,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from assessment_routes.v3.results_query_routes import build_vector_literal
+from config import settings
 from database.dependencies import get_db
 from database.models import (
     Assessment,
@@ -1139,15 +1141,35 @@ async def pull_tfidf_artifacts(
 # Rehydrating the SVD components matrix + building the two vectorizers is the
 # only real per-request cost (~100-200ms). Cache the rebuilt encoder per
 # assessment, keyed alongside the artifact run's created_at so a re-push
-# (which bumps created_at) transparently invalidates the stale entry. No lock:
-# concurrent writers store identical objects, and nothing iterates the dict.
+# (which bumps created_at) transparently invalidates the stale entry.
+#
+# Values are (created_at, encoder, nbytes). The cache is read and mutated only
+# from the event-loop thread, and the mutation block in _get_encoder contains
+# no awaits, so it is atomic with respect to other coroutines in this worker —
+# no lock needed even though eviction now iterates the dict.
 _ENCODER_CACHE: Dict[int, tuple] = {}
 
-# Cap on cached encoders per worker. Each entry holds two vectorizers plus a
-# 300×n_features components matrix, so an unbounded cache could accumulate one
-# (potentially large) encoder per assessment ever queried. FIFO-evict the
-# oldest once full — encoders are cheap to rebuild on the next request.
-_ENCODER_CACHE_MAXSIZE = 32
+# CPython per-str overhead, for approximating vocabulary dict footprints.
+_STR_OVERHEAD_BYTES = 49
+
+
+def _encoder_nbytes(encoder: tuple) -> int:
+    """Approximate the resident size of a rehydrated encoder.
+
+    The 300×n_features SVD components matrix dominates and is measured exactly;
+    the two vocabularies are approximated from their key contents plus CPython
+    per-string and per-dict overhead. Approximate is enough — this only has to
+    keep the cache budget in the right order of magnitude.
+    """
+    word_vec, char_vec, svd = encoder
+    total = svd.components_.nbytes
+    for vec in (word_vec, char_vec):
+        total += vec.idf_.nbytes
+        vocabulary = vec.vocabulary or {}
+        total += sys.getsizeof(vocabulary)
+        total += sum(len(term) for term in vocabulary)
+        total += _STR_OVERHEAD_BYTES * len(vocabulary)
+    return total
 
 
 def _rehydrate_encoder(word, char, svd) -> tuple:
@@ -1242,13 +1264,16 @@ async def _get_encoder(db: AsyncSession, assessment_id: int) -> tuple:
         (by_kind["char"].vocabulary, by_kind["char"].idf, by_kind["char"].params),
         (svd.components_npy, svd.n_components),
     )
-    if (
-        assessment_id not in _ENCODER_CACHE
-        and len(_ENCODER_CACHE) >= _ENCODER_CACHE_MAXSIZE
-    ):
-        # Evict the oldest entry (dicts preserve insertion order).
-        _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)), None)
-    _ENCODER_CACHE[assessment_id] = (run.created_at, encoder)
+    # Re-insert at the end so the FIFO order tracks time of rehydration, then
+    # evict oldest-first until the cache fits its byte budget. The entry just
+    # stored always survives, even if it alone exceeds the budget: evicting it
+    # would mean rebuilding it on the very next request.
+    _ENCODER_CACHE.pop(assessment_id, None)
+    _ENCODER_CACHE[assessment_id] = (run.created_at, encoder, _encoder_nbytes(encoder))
+
+    total = sum(entry[2] for entry in _ENCODER_CACHE.values())
+    while total > settings.tfidf_encoder_cache_max_bytes and len(_ENCODER_CACHE) > 1:
+        total -= _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)))[2]
     return encoder
 
 

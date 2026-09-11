@@ -125,6 +125,16 @@ class Settings(BaseSettings):
     missing_words_missing_threshold: float = 0.15
     missing_words_match_threshold: float = 0.2
 
+    # --- TF-IDF encoder cache -------------------------------------------
+    # Byte budget for the per-worker cache of rehydrated TF-IDF encoders in
+    # assessment_routes.v3.tfidf_artifact_routes. The previous count-based cap
+    # bounded nothing useful: an entry is dominated by a 300 x n_features SVD
+    # components matrix, so the same 32 entries are a few hundred MB for one
+    # corpus and several GB for another. This is a *per-worker* budget —
+    # multiply by WEB_CONCURRENCY for the container total, and size it against
+    # the host's memory.
+    tfidf_encoder_cache_max_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
+
     # --- Observability / Loki -------------------------------------------
     # A real bool so pydantic parses "true"/"false"/"1"/"0" correctly, instead
     # of the bool(os.getenv(...)) footgun where any non-empty string is truthy.

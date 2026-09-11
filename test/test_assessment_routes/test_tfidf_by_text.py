@@ -10,6 +10,7 @@ semantics.
 
 import base64
 import io
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -18,6 +19,8 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
+import assessment_routes.v3.tfidf_artifact_routes as tfidf_routes
+from config import settings
 from database.models import Assessment, TfidfPcaVector, VerseReference, VerseText
 
 prefix = "v3"
@@ -562,3 +565,84 @@ def test_by_texts_exclude_book_without_vrefs_rejected(
     )
     assert resp.status_code == 422
     assert "exclude_book" in str(resp.json()["detail"])
+
+
+# ---------------------------------------------------------------------------
+# encoder cache budget
+# ---------------------------------------------------------------------------
+
+
+def _sized_encoder(n_features: int, vocab_size: int = 50):
+    """Build an encoder tuple whose components matrix has n_features columns."""
+    vocabulary = {f"t{i}": i for i in range(vocab_size)}
+    vectorizers = []
+    for analyzer in ("word", "char"):
+        vec = TfidfVectorizer(analyzer=analyzer, vocabulary=vocabulary)
+        vec.idf_ = np.ones(vocab_size, dtype=float)
+        vectorizers.append(vec)
+    svd = TruncatedSVD(n_components=300)
+    svd.components_ = np.zeros((300, n_features), dtype=float)
+    return (*vectorizers, svd)
+
+
+def test_encoder_nbytes_tracks_the_components_matrix():
+    """Sizing is dominated by, and exact on, the 300xn_features SVD matrix."""
+    small = tfidf_routes._encoder_nbytes(_sized_encoder(500))
+    large = tfidf_routes._encoder_nbytes(_sized_encoder(1000))
+
+    # The only difference is 500 extra float64 columns across 300 components.
+    assert large - small == 300 * 500 * 8
+    # And that term genuinely dominates the vocabulary overhead.
+    assert small > 300 * 500 * 8
+
+
+def test_encoder_cache_evicts_oldest_until_within_budget(
+    client, regular_token1, encoded_tfidf_assessment, monkeypatch
+):
+    """Older entries are evicted so the cache respects its byte budget."""
+    assessment_id = encoded_tfidf_assessment["assessment_id"]
+    cache = tfidf_routes._ENCODER_CACHE
+    cache.clear()
+
+    # Two stale entries, inserted first so they are the FIFO eviction targets.
+    for stale_id in (-1, -2):
+        cache[stale_id] = (datetime(2020, 1, 1, tzinfo=timezone.utc), object(), 10**9)
+    monkeypatch.setattr(settings, "tfidf_encoder_cache_max_bytes", 1024)
+
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_text",
+        json={
+            "assessment_id": assessment_id,
+            "text": encoded_tfidf_assessment["corpus"][0],
+            "limit": 5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # The freshly-stored encoder survives even though it alone exceeds the
+    # budget; everything older is gone.
+    assert list(cache) == [assessment_id]
+
+
+def test_encoder_cache_keeps_multiple_entries_under_a_generous_budget(
+    client, regular_token1, encoded_tfidf_assessment, monkeypatch
+):
+    """A budget with room to spare evicts nothing."""
+    assessment_id = encoded_tfidf_assessment["assessment_id"]
+    cache = tfidf_routes._ENCODER_CACHE
+    cache.clear()
+    cache[-1] = (datetime(2020, 1, 1, tzinfo=timezone.utc), object(), 1024)
+    monkeypatch.setattr(settings, "tfidf_encoder_cache_max_bytes", 10**9)
+
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_text",
+        json={
+            "assessment_id": assessment_id,
+            "text": encoded_tfidf_assessment["corpus"][0],
+            "limit": 5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert sorted(cache) == sorted([-1, assessment_id])
