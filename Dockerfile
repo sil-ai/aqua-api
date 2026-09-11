@@ -46,6 +46,14 @@ ENV PYTHONPATH=/app:$PYTHONPATH
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
+# Worker count. Left to $WEB_CONCURRENCY (uvicorn reads it only when --workers
+# is absent) so it can be sized to the host without a rebuild. 8 workers on a
+# 4 vCPU / 8GB host was the memory amplifier behind the Sep 9 and Sep 11 prod
+# outages: each worker carries its own TF-IDF encoder cache, so the container
+# footprint is this number times TFIDF_ENCODER_CACHE_MAX_BYTES plus ~190MB of
+# interpreter and imports per worker.
+ENV WEB_CONCURRENCY=4
+
 # Keep-alive must exceed the App Runner ingress idle timeout (120s) with margin;
 # uvicorn's 5s default races the ingress's connection reuse and yields sporadic 502s.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "8", "--timeout-keep-alive", "130"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "130"]
