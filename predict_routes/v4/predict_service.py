@@ -515,9 +515,18 @@ async def spawn_slow_agent(
         completed_at=completed_at,
         owner_id=user.id,
     )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
+    try:
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        # The same guard every v4 write path uses: never leave the shared session in an
+        # aborted-transaction state. It matters more here than most, because the very
+        # next statement is a ``refresh`` — without the rollback a failed commit
+        # surfaces as ``PendingRollbackError`` from that line and buries whatever
+        # actually went wrong.
+        await db.rollback()
+        raise
     return job
 
 
@@ -596,18 +605,24 @@ async def _finish(
     concurrent polls answer identically instead of one reporting a result it then
     failed to store.
     """
-    await db.execute(
-        update(PredictJobRow)
-        .where(PredictJobRow.id == job.id, PredictJobRow.status == "running")
-        .values(
-            status=status,
-            result=result,
-            error=error,
-            completed_at=datetime.now(timezone.utc),
+    try:
+        await db.execute(
+            update(PredictJobRow)
+            .where(PredictJobRow.id == job.id, PredictJobRow.status == "running")
+            .values(
+                status=status,
+                result=result,
+                error=error,
+                completed_at=datetime.now(timezone.utc),
+            )
         )
-    )
-    await db.commit()
-    await db.refresh(job)
+        await db.commit()
+        await db.refresh(job)
+    except Exception:
+        # See ``spawn_slow_agent`` for why the rollback is not optional next to a
+        # ``refresh``.
+        await db.rollback()
+        raise
     return job
 
 

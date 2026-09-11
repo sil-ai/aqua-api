@@ -61,6 +61,8 @@ the same reason: a code derived from prose is worse than a generic code honestly
 labelled. The prose still reaches the client as the error's ``message``.
 """
 
+__version__ = "v4"
+
 import asyncio
 import contextlib
 
