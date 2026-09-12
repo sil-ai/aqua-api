@@ -156,13 +156,23 @@ class Settings(BaseSettings):
     # `max_df`/`min_df` matter more than verse count. char_wb 3-6grams dominate.
     #
     # 768MB therefore holds ONE encoder at the large end with room to spare, not two:
-    # two of the largest would want ~980MB. Raising it to fit two is a trap, because
-    # the transient cost of a miss scales with the same number — a rehydrate briefly
-    # holds the raw .npy bytes AND the loaded array AND the decoded vocabularies, so
-    # ~910MB for a 427MB encoder. The lock serialises misses within a worker but not
-    # across them, so at WEB_CONCURRENCY=4 steady state is ~2.7GB while four
-    # simultaneous cold misses on large encoders reach ~6.3GB of an 8GB host. That
-    # headroom is the constraint, not the cache itself.
+    # two of the largest would want ~980MB. Raising it to fit two would be a trap,
+    # because a *miss* costs far more than the entry it produces. Measured against
+    # assessment 31201 (RSS, step by step, this estimator alongside):
+    #
+    #     baseline (interpreter + imports)      140 MB
+    #     + vocabularies decoded from JSONB     256 MB   (+116)
+    #     + components blob resident          1,507 MB   (+1,251)
+    #     + rehydrated, blob still held       2,007 MB   (+501)
+    #     => one miss costs ~1.9GB above baseline, for a 489MB entry
+    #
+    # The +501MB step matches this estimator's 489MB within 2.5%, so the cache
+    # accounting is sound — what it does not and cannot cover is the transient. The
+    # dominant term is materialising the blob, and _rehydrate_encoder holds the raw
+    # bytes, a BytesIO copy and the loaded array at once. _ENCODER_LOCK serialises
+    # misses within a worker but NOT across them, so concurrent cold misses, not
+    # cache accumulation, are what actually threaten an 8GB host. Budget for the
+    # miss, not the entry.
     #
     # The test fixtures fit 300 synthetic documents over a 24-word vocabulary — about
     # a thousandth of this — so no test can surface a sizing error here. The eviction
