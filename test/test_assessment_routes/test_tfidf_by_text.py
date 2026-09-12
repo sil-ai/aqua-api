@@ -10,6 +10,7 @@ semantics.
 
 import base64
 import io
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
@@ -18,6 +19,8 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
+import assessment_routes.v3.tfidf_artifact_routes as tfidf_routes
+from config import settings
 from database.models import Assessment, TfidfPcaVector, VerseReference, VerseText
 
 prefix = "v3"
@@ -562,3 +565,150 @@ def test_by_texts_exclude_book_without_vrefs_rejected(
     )
     assert resp.status_code == 422
     assert "exclude_book" in str(resp.json()["detail"])
+
+
+# ---------------------------------------------------------------------------
+# encoder cache budget
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_encoder_cache():
+    """Isolate the module-global encoder cache around a test.
+
+    Mirrors ``_clear_fn_cache`` in test_predict_routes_v4. Not autouse: the
+    other tests in this file benefit from the warm cache, and clearing it for
+    each would pay a fresh ~100-200ms rehydration every time.
+    """
+    tfidf_routes._ENCODER_CACHE.clear()
+    yield tfidf_routes._ENCODER_CACHE
+    tfidf_routes._ENCODER_CACHE.clear()
+
+
+def _sized_encoder(n_features: int, vocab_size: int = 50):
+    """Build an encoder tuple whose components matrix has n_features columns."""
+    vectorizers = []
+    for analyzer in ("word", "char"):
+        # Distinct dicts per analyzer, as the two artifact rows give in
+        # production — sharing one would have _encoder_nbytes size it twice.
+        vocabulary = {f"{analyzer}{i}": i for i in range(vocab_size)}
+        vec = TfidfVectorizer(analyzer=analyzer, vocabulary=vocabulary)
+        vec.idf_ = np.ones(vocab_size, dtype=float)
+        vectorizers.append(vec)
+    svd = TruncatedSVD(n_components=300)
+    svd.components_ = np.zeros((300, n_features), dtype=float)
+    return (*vectorizers, svd)
+
+
+def _encode_once(client, token, fixture):
+    """Drive one by_text request, which populates the cache as a side effect."""
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_text",
+        json={
+            "assessment_id": fixture["assessment_id"],
+            "text": fixture["corpus"][0],
+            "limit": 5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_encoder_nbytes_tracks_the_components_matrix():
+    """Sizing is exact on the 300xn_features SVD matrix, which dominates."""
+    small = tfidf_routes._encoder_nbytes(_sized_encoder(500))
+    large = tfidf_routes._encoder_nbytes(_sized_encoder(1000))
+
+    # The only difference is 500 extra float64 columns across 300 components.
+    assert large - small == 300 * 500 * 8
+    # And that term dominates: everything else is a small fraction of it.
+    assert small - 300 * 500 * 8 < 300 * 500 * 8
+
+
+def test_encoder_nbytes_counts_both_vocabularies():
+    """Vocabulary growth is counted, for both dicts sklearn keeps per vectorizer.
+
+    ``idf_``'s setter calls ``_validate_vocabulary()``, which builds a second
+    ``vocabulary_`` beside the one passed to the constructor — but as a shallow
+    ``dict()`` copy, so the keys and values are shared and only the hash table
+    doubles. The upper bound below is what fails if that is counted twice.
+    """
+    small = tfidf_routes._encoder_nbytes(_sized_encoder(500, vocab_size=50))
+    large = tfidf_routes._encoder_nbytes(_sized_encoder(500, vocab_size=1050))
+
+    per_term = tfidf_routes._VOCAB_ENTRY_OVERHEAD_BYTES
+    # 1000 extra terms in each of the two vectorizers, counted once each
+    # (shared objects), plus the idf_ float per term.
+    assert large - small >= 2 * 1000 * per_term + 2 * 1000 * 8
+    # But not twice each — that would mean vocabulary_ was double-counted.
+    assert large - small < 2 * 2 * 1000 * per_term
+
+
+def test_encoder_cache_evicts_oldest_until_within_the_budget(
+    client, regular_token1, encoded_tfidf_assessment, clean_encoder_cache, monkeypatch
+):
+    """Eviction is driven by measured bytes, and stops as soon as it fits."""
+    assessment_id = encoded_tfidf_assessment["assessment_id"]
+    cache = clean_encoder_cache
+
+    # Learn what the real encoder costs, measured the way the cache must
+    # measure it — reading _encoder_nbytes rather than the stored number, so a
+    # regression that stores the wrong size cannot scale both sides to match.
+    _encode_once(client, regular_token1, encoded_tfidf_assessment)
+    real_bytes = tfidf_routes._encoder_nbytes(cache[assessment_id][1])
+    cache.clear()
+
+    stale = _sized_encoder(1000)
+    stale_bytes = tfidf_routes._encoder_nbytes(stale)
+    # The budget below leaves room for two stale entries but not three plus the
+    # real one; that arithmetic only picks out two evictions while this holds.
+    assert real_bytes < 2 * stale_bytes
+    for stale_id in (-1, -2, -3):
+        cache[stale_id] = (
+            datetime(2020, 1, 1, tzinfo=timezone.utc),
+            stale,
+            stale_bytes,
+        )
+
+    # Room for two stale entries, but not once the real encoder lands.
+    monkeypatch.setattr(
+        settings,
+        "tfidf_encoder_cache_max_bytes",
+        2 * stale_bytes + real_bytes // 2,
+    )
+    _encode_once(client, regular_token1, encoded_tfidf_assessment)
+
+    # Exactly as many oldest entries as needed, and no more.
+    assert list(cache) == [-3, assessment_id]
+
+
+def test_an_encoder_larger_than_the_whole_budget_is_still_cached(
+    client, regular_token1, encoded_tfidf_assessment, clean_encoder_cache, monkeypatch
+):
+    """The entry just stored survives alone-over-budget.
+
+    Evicting it would mean rebuilding it on the very next request.
+    """
+    monkeypatch.setattr(settings, "tfidf_encoder_cache_max_bytes", 1)
+    _encode_once(client, regular_token1, encoded_tfidf_assessment)
+
+    assert list(clean_encoder_cache) == [encoded_tfidf_assessment["assessment_id"]]
+
+
+def test_encoder_cache_keeps_entries_that_fit(
+    client, regular_token1, encoded_tfidf_assessment, clean_encoder_cache, monkeypatch
+):
+    """A budget with room to spare evicts nothing."""
+    cache = clean_encoder_cache
+    stale = _sized_encoder(500)
+    stale_bytes = tfidf_routes._encoder_nbytes(stale)
+    cache[-1] = (datetime(2020, 1, 1, tzinfo=timezone.utc), stale, stale_bytes)
+
+    # Generous, but still tied to the real sizes rather than an arbitrary
+    # number that would also pass under the shipped default.
+    monkeypatch.setattr(
+        settings, "tfidf_encoder_cache_max_bytes", 100 * (stale_bytes + 1)
+    )
+    _encode_once(client, regular_token1, encoded_tfidf_assessment)
+
+    assert sorted(cache) == sorted([-1, encoded_tfidf_assessment["assessment_id"]])
