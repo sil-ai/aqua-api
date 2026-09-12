@@ -1204,6 +1204,49 @@ def _encoder_nbytes(encoder: tuple) -> int:
     return total
 
 
+# The .npy header is a magic string plus a short dict repr, padded for alignment —
+# comfortably under 4KB for any array we store.
+_NPY_HEADER_PROBE_BYTES = 4096
+
+
+def _components_from_npy(components_npy: bytes) -> np.ndarray:
+    """View a stored .npy payload as an array without copying it.
+
+    ``np.load(io.BytesIO(blob))`` copies twice — once into the BytesIO and again
+    into the array it builds. On a real corpus the components matrix is hundreds
+    of MB (staging's largest is 427MB at 373,272 features), so those two copies
+    dominate the cost of a cache miss: measured end to end, a miss cost ~1.9GB of
+    RSS to produce a 489MB entry.
+
+    Parsing the header off the first few KB and viewing the payload in place drops
+    both copies. The result is read-only and keeps ``components_npy`` alive as its
+    base, which is what we want — the encoder is meant to retain it. sklearn only
+    matmuls against ``components_`` in ``transform``, and numpy is happy to do that
+    from a read-only buffer.
+
+    Falls back to ``np.load`` for the shapes this cannot view directly: a Fortran
+    ordered payload, or a .npy version whose header reader we do not have.
+    """
+    header = io.BytesIO(components_npy[:_NPY_HEADER_PROBE_BYTES])
+    version = np.lib.format.read_magic(header)
+    read_header = {
+        (1, 0): np.lib.format.read_array_header_1_0,
+        (2, 0): np.lib.format.read_array_header_2_0,
+    }.get(version)
+    if read_header is None:
+        return np.load(io.BytesIO(components_npy), allow_pickle=False)
+
+    shape, fortran_order, dtype = read_header(header)
+    if fortran_order:
+        return np.load(io.BytesIO(components_npy), allow_pickle=False)
+    return np.frombuffer(
+        components_npy,
+        dtype=dtype,
+        count=int(np.prod(shape)),
+        offset=header.tell(),
+    ).reshape(shape)
+
+
 def _rehydrate_encoder(word, char, svd) -> tuple:
     """Rebuild (word_vec, char_vec, svd) from stored artifact values.
 
@@ -1233,7 +1276,7 @@ def _rehydrate_encoder(word, char, svd) -> tuple:
     char_vec = _vectorizer(*char)
 
     components_npy, n_components = svd
-    components = np.load(io.BytesIO(components_npy), allow_pickle=False)
+    components = _components_from_npy(components_npy)
     truncated = TruncatedSVD(n_components=n_components)
     truncated.components_ = components
     return word_vec, char_vec, truncated
