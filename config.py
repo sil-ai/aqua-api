@@ -140,23 +140,33 @@ class Settings(BaseSettings):
     # decoded vocabularies and the raw .npy bytes alongside the loaded matrix.
     # Eviction and the over-budget case are both logged.
     #
-    # The default is sized from measured Bible-scale encoders, not guessed. Fitting
-    # aqua-assessments' production config (word 1-2gram max_df=0.12, char_wb 3-6gram
-    # max_df=0.3, both min_df=2) over real Bibles and measuring with
-    # _encoder_nbytes at the float32 wire dtype the push actually stores:
+    # The default is sized from the artifacts actually stored in staging, not from
+    # the test fixtures and not from a guess. Largest rows in `tfidf_svd` there,
+    # all float32 (the dtype aqua-assessments pushes by default):
     #
-    #     KJV (English), 36,694 verses  -> 173,585 features -> 236 MB
-    #     swh-ONEN (Swahili), 31,098    -> 217,042 features -> 297 MB
+    #     assessment 31201 -> 373,272 features -> 427MB components -> ~490MB encoder
+    #     assessment 26862 -> 360,493 features -> 413MB components
+    #     assessment 25368 -> 285,280 features -> 326MB components
+    #     assessment 18181 -> 260,285 features -> 298MB components
     #
-    # char_wb 3-6grams dominate the feature count (98k-142k of those). 768MB holds
-    # two such encoders, so a worker alternating between two assessments stops
-    # rebuilding on every request. Per-worker peak during a miss is roughly this
-    # budget + ~550MB transient (raw .npy bytes, the loaded matrix, and the decoded
-    # vocabularies) + ~190MB interpreter; the miss path is serialised per worker, so
-    # only one transient is live at a time. At WEB_CONCURRENCY=4 on an 8GB host that
-    # is ~3.8GB steady and ~6GB if every worker misses at once. Lower it if the host
-    # is smaller — the test fixtures' 300-document corpus is nothing like this, so
-    # the eviction logs are the only real sizing signal.
+    # (`_encoder_nbytes` adds ~60MB of vocabulary overhead on top of the components
+    # blob at that feature count.) For comparison, fitting the same production config
+    # locally over a KJV and a Swahili Bible gives only 173k-217k features / 236-297MB,
+    # so even a whole-Bible fit understates what real assessments reach — corpus and
+    # `max_df`/`min_df` matter more than verse count. char_wb 3-6grams dominate.
+    #
+    # 768MB therefore holds ONE encoder at the large end with room to spare, not two:
+    # two of the largest would want ~980MB. Raising it to fit two is a trap, because
+    # the transient cost of a miss scales with the same number — a rehydrate briefly
+    # holds the raw .npy bytes AND the loaded array AND the decoded vocabularies, so
+    # ~910MB for a 427MB encoder. The lock serialises misses within a worker but not
+    # across them, so at WEB_CONCURRENCY=4 steady state is ~2.7GB while four
+    # simultaneous cold misses on large encoders reach ~6.3GB of an 8GB host. That
+    # headroom is the constraint, not the cache itself.
+    #
+    # The test fixtures fit 300 synthetic documents over a 24-word vocabulary — about
+    # a thousandth of this — so no test can surface a sizing error here. The eviction
+    # and over-budget log lines in _get_encoder are the only real signal.
     tfidf_encoder_cache_max_bytes: int = Field(default=768 * 1024 * 1024, gt=0)
 
     # --- Observability / Loki -------------------------------------------

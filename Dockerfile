@@ -59,6 +59,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # TFIDF_ENCODER_CACHE_MAX_BYTES (768MB default, see config.py) — "at least"
 # because an encoder larger than the whole budget is retained rather than
 # evicted, so the real ceiling is per-worker max(budget, largest encoder).
+# Real staging encoders run to ~490MB, and a rehydrate transiently costs about
+# twice the components blob on top of the cache, so raising the worker count
+# and the budget together is how the 8GB host runs out.
 #
 # NOTE this lowers the probability of that OOM; it does not make the outage
 # self-healing. uvicorn's multiprocess supervisor forks workers once and never
