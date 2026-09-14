@@ -136,8 +136,11 @@ class InvalidReference(RevisionServiceError):
     """
 
     #: FK-backed request fields, surfaced in the error details as a hint about which
-    #: inputs can trigger this.
-    FIELDS = ("back_translation",)
+    #: inputs can trigger this. These are **wire** field names, not ORM attributes —
+    #: they are echoed to the client as ``details.fields`` for it to act on, so they
+    #: track the request schema (#925 renamed ``back_translation`` to
+    #: ``back_translation_id`` there).
+    FIELDS = ("back_translation_id",)
 
 
 class InvalidVerseText(RevisionServiceError):
@@ -407,20 +410,20 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
     so the error mapping can be precise about whose fault a failure is:
 
     * The **revision flush** maps ``IntegrityError`` to :class:`InvalidReference`. Sound
-      because ``back_translation`` is the only client-supplied FK on that row —
+      because ``back_translation_id`` is the only client-supplied FK on that row —
       ``bible_version_id`` was already resolved and authorized above — so it is the only
       constraint a client can break here.
     * The **verse inserts** deliberately carry *no* ``IntegrityError`` translation.
       ``verse_text.verse_reference`` is a FK to ``verse_reference.full_verse_id``, so a
       failure there means the reference table no longer matches ``fixtures/vref.txt`` —
       server-side data drift, not client input. Mapping it to a 400
-      ``INVALID_REFERENCE`` would tell the client to fix ``back_translation``, which is
+      ``INVALID_REFERENCE`` would tell the client to fix ``back_translation_id``, which is
       not the problem, and would bury a condition that ought to page someone. It falls
       through to the #828 catch-all 500 on purpose: **do not add a handler here.**
 
     Raises :class:`VersionNotVisible` (unknown / inaccessible / soft-deleted parent),
     :class:`InvalidVerseText` (undecodable or non-vref-aligned text) and
-    :class:`InvalidReference` (a ``back_translation`` id that does not exist).
+    :class:`InvalidReference` (a ``back_translation_id`` that does not exist).
     """
     await _require_visible_version(db, user, data.version_id)
     verses = decode_verse_text(data.text.content_base64)
@@ -430,7 +433,7 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
         name=data.name,
         date=date.today(),
         published=data.published,
-        back_translation_id=data.back_translation,
+        back_translation_id=data.back_translation_id,
         machine_translation=data.machine_translation,
     )
     # Stage 1: the revision row only. Scoping the IntegrityError translation to this
@@ -439,7 +442,7 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
         db.add(new_revision)
         await db.flush()
     except IntegrityError as exc:
-        # Client input referenced a non-existent FK target (back_translation).
+        # Client input referenced a non-existent FK target (back_translation_id).
         await db.rollback()
         raise InvalidReference() from exc
     except BaseException:
@@ -520,16 +523,21 @@ async def _get_revision_for_write(
     return revision
 
 
-#: Patchable ``RevisionPatch`` field -> ``BibleRevision`` ORM attribute. Exhaustive
-#: over the schema's fields, and :func:`update_revision` indexes it *directly* (no
-#: ``.get``): a field added to ``RevisionPatch`` without a mapping must fail loudly
-#: instead of being silently dropped — the failure mode behind v3's phantom
-#: ``is_reference``. ``test_revision_routes_v4`` pins the two together.
+#: Patchable ``RevisionPatch`` field -> ``BibleRevision`` ORM attribute. The keys are
+#: wire/schema field names (they come from ``model_dump()``), the values are ORM
+#: attributes. Exhaustive over the schema's fields, and :func:`update_revision`
+#: indexes it *directly* (no ``.get``): a field added to ``RevisionPatch`` without a
+#: mapping must fail loudly instead of being silently dropped — the failure mode
+#: behind v3's phantom ``is_reference``. ``test_revision_routes_v4`` pins the two
+#: together.
+#:
+#: Every entry is an identity mapping since #925 renamed ``back_translation`` to
+#: ``back_translation_id``, the only field here whose wire name differed from its
+#: column. Keep the indirection: it is what makes an unmapped new field raise.
 _PATCH_FIELD_TO_COLUMN = {
     "name": "name",
     "published": "published",
-    # The one request field whose ORM attribute is spelled differently.
-    "back_translation": "back_translation_id",
+    "back_translation_id": "back_translation_id",
     "machine_translation": "machine_translation",
 }
 
@@ -549,8 +557,8 @@ async def update_revision(
     SQLAlchemy emits no ``UPDATE`` when no attribute actually changes.
 
     Raises :class:`RevisionNotFound` / :class:`RevisionAccessForbidden` from the shared
-    gate, and :class:`InvalidReference` when a patched ``back_translation`` points at a
-    revision that does not exist.
+    gate, and :class:`InvalidReference` when a patched ``back_translation_id`` points at
+    a revision that does not exist.
     """
     revision = await _get_revision_for_write(db, user, revision_id)
 

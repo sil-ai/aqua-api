@@ -2169,7 +2169,8 @@ async def _tfidf_encoder(db: AsyncSession, assessment_id: int) -> tuple:
     exists to expose and is reused rather than reimplemented. It reads the fitted word and
     char vectorizers and the SVD components out of the artifact tables, rebuilds the
     sklearn objects on a worker thread, and memoises the result per assessment
-    (``tfidf_artifact_routes.py:1144``; at most 32, oldest evicted, keyed on the run's
+    (``tfidf_artifact_routes.py``'s ``_ENCODER_CACHE``; bounded per worker by
+    ``TFIDF_ENCODER_CACHE_MAX_BYTES``, oldest evicted, keyed on the run's
     ``created_at`` so a re-push invalidates the stale entry transparently). Rebuilding any
     of that here would be a bug rather than a duplication — the same reasoning this module
     already records for importing v3's dedup and dispatch helpers.

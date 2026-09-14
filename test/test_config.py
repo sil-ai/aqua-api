@@ -114,8 +114,10 @@ def test_valid_pool_config_coerced_to_int(
 
 
 # (env var, an out-of-range value that must fail the field's lower bound).
-# pool_recycle permits -1 (SQLAlchemy "disable") and statement_timeout permits
-# 0 (Postgres "no limit"), so their rejection cases sit below those sentinels.
+# Covers every bounded integer setting, not just the pool ones: pool_recycle
+# permits -1 (SQLAlchemy "disable") and statement_timeout permits 0 (Postgres
+# "no limit"), so their rejection cases sit below those sentinels, while the
+# strictly-positive fields reject 0 as well.
 _OUT_OF_RANGE = [
     ("AQUA_DB_POOL_SIZE", "0"),
     ("AQUA_DB_POOL_SIZE", "-1"),
@@ -123,6 +125,8 @@ _OUT_OF_RANGE = [
     ("AQUA_DB_POOL_TIMEOUT", "0"),
     ("AQUA_DB_POOL_RECYCLE", "-2"),
     ("AQUA_DB_STATEMENT_TIMEOUT_MS", "-1"),
+    ("TFIDF_ENCODER_CACHE_MAX_BYTES", "0"),
+    ("TFIDF_ENCODER_CACHE_MAX_BYTES", "-1"),
 ]
 
 

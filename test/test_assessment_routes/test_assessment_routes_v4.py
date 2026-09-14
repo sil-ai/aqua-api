@@ -2173,9 +2173,11 @@ class TestPollShape:
         assert body["reference_id"] == reference_id
         assert body["type"] == "agent-critique"
         assert body["owner_id"] == _user_id(db_session, "testuser1")
-        assert body["requested_time"] is not None
-        assert body["start_time"] == started.isoformat()
-        assert body["end_time"] is None
+        # Wire names are the ``_at`` spellings (#925); ``start_time=started`` above is
+        # the ORM column, which keeps v3's name.
+        assert body["requested_at"] is not None
+        assert body["started_at"] == started.isoformat()
+        assert body["ended_at"] is None
         assert body["deleted"] is False
         assert body["updated_at"] is not None
 
@@ -2389,7 +2391,7 @@ class TestList:
         assert body["total"] == 3
         assert body["limit"] == DEFAULT_LIMIT
         assert body["offset"] == 0
-        # Ordered by id ascending, not v3's requested_time descending.
+        # Ordered by id ascending, not v3's requested_time-descending column order.
         assert [item["id"] for item in body["items"]] == sorted(created)
 
     def test_pagination_walks_the_collection(
@@ -2941,7 +2943,10 @@ class TestReadSchemaContract:
             for p in _route("list_assessments").dependant.query_params
             if p.alias == "type"
         )
-        assert AssessmentType in get_args(param.type_)
+        # fastapi's ModelField wraps a pydantic FieldInfo rather than exposing a
+        # v1-style `.type_` since fastapi 0.137 (#937); the annotation lives on
+        # `field_info` now.
+        assert AssessmentType in get_args(param.field_info.annotation)
 
 
 SERVED_TYPES = ("word-alignment", "semantic-similarity", "sentence-length")
@@ -11407,7 +11412,9 @@ class TestScoreComparisonContract:
         against = next(
             param for param in route.dependant.query_params if param.name == "against"
         )
-        assert against.required is True
+        # fastapi's ModelField no longer exposes a v1-style `.required` since
+        # fastapi 0.137 (#937); ask the wrapped FieldInfo instead.
+        assert against.field_info.is_required() is True
         assert _against_bounds("get_assessment_score_comparison")["min_length"] == 1
 
     def test_the_route_uses_the_result_pagination_dependency(self):

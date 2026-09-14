@@ -1,52 +1,54 @@
-"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891/#892, epic #842).
+"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891/#892/#925, epic #842).
 
 The Bible-domain slices on the v4 surface are Versions, Revisions, and Verses &
 text. These schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
 **snake_case** (issue #830): every field's canonical name is its snake_case Python
-attribute, and that is what v4 emits.
+attribute, that is what v4 emits, and it is the only spelling v4 accepts.
 
-Legacy v3 spellings that were camelCase (``forwardTranslation``,
-``backTranslation``, ``machineTranslation``) are accepted on *input* via a
-``validation_alias`` of ``AliasChoices(<snake_case>, <legacy camelCase>)`` so
-existing callers can migrate without a flag day. Two properties matter, and both
-are load-bearing for the #830 goal:
+There used to be input aliases, and the reason they went is worth keeping. The
+camelCase v3 spellings (``forwardTranslation``, ``backTranslation``,
+``machineTranslation``) plus one snake_case one (``bible_version_id`` for
+``RevisionCreate.version_id``, the name v3's *response* used) were accepted on
+input via ``validation_alias`` so callers migrating off v3 would not face a flag
+day. All eleven were withdrawn in #925, because the allowance never applied: v4
+has no clients, so nothing was mid-migration. And since ``validation_alias`` is
+input-only, the aliases were accepted-but-undocumented — only the canonical name
+ever reached ``/v4/openapi.json``. Undocumented input that nobody sends is not a
+contract, just a second spelling to support forever.
 
-* ``validation_alias`` (not a plain ``alias``) is input-only, so responses keep
-  emitting snake_case — see the :class:`V4BaseModel` docstring for why a plain
-  ``alias`` would leak the legacy name back onto the wire.
-* Listing the **snake_case name first** in ``AliasChoices`` makes it the property
-  name in the generated OpenAPI request schema (FastAPI serializes schemas with
-  ``by_alias=True``, and Pydantic uses the first choice), so ``/v4/openapi.json``
-  documents the canonical snake_case field while still accepting the legacy name.
-  A bare ``validation_alias="machineTranslation"`` would validate fine but
-  document only the *deprecated* spelling — the opposite of #830.
+Two things to know before adding an alias back:
+
+* The mechanism still exists and still works — see :class:`V4BaseModel` and
+  ``test/test_v4_base_model.py``. What #925 withdrew is its *use* here.
+* If a legacy name ever does need accepting, use ``validation_alias`` (input-only)
+  rather than a plain ``alias``, which FastAPI would serialize straight back onto
+  the wire with ``by_alias=True`` — the exact thing #830 standardized away from.
+  With ``AliasChoices``, list the snake_case name first, or the generated OpenAPI
+  request schema documents only the deprecated spelling.
 """
 
-# Aliased because ``RevisionOut`` has a field *named* ``date``. In a class body the
-# value assignment is stored before the annotation is evaluated, so a bare
-# ``date: date | None = None`` resolves ``date`` to the just-stored ``None`` and raises
-# ``TypeError: unsupported operand type(s) for |`` at import time.
-from datetime import date as date_type
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from api_v4.pagination import V4Page
 from api_v4.schemas.base import V4BaseModel
 
-#: Shared by ``VersionCreate`` and ``VersionPatch``. ``back_translation_id`` is a
-#: FK to ``bible_version.id`` but ``forward_translation_id`` is a plain Integer
-#: column (``database/models.py``), so the two adjacent, identically-typed request
-#: fields validate differently: a non-existent ``back_translation`` is rejected
-#: with ``INVALID_REFERENCE`` on flush, while a non-existent
-#: ``forward_translation`` is stored and echoed back. That is why
+#: Shared by ``VersionCreate`` and ``VersionPatch``. Both fields now carry the
+#: ``_id`` suffix of the column behind them (#925), but they still validate
+#: differently, which is the genuinely surprising part: ``back_translation_id`` is
+#: a FK to ``bible_version.id`` while ``forward_translation_id`` is a plain Integer
+#: column with no constraint at all (``database/models.py``). So of these two
+#: adjacent, identically-typed request fields, a non-existent
+#: ``back_translation_id`` is rejected with ``INVALID_REFERENCE`` on flush, while a
+#: non-existent ``forward_translation_id`` is stored and echoed back. That is why
 #: ``InvalidReference.FIELDS`` omits it. Surfaced as a field description so a
 #: client can tell which of the two is checked without reading the schema.
 FORWARD_TRANSLATION_DESCRIPTION = (
-    "Id of the forward-translation version. Unlike back_translation, this field is "
-    "not backed by a foreign key, so a non-existent id is accepted and stored as "
+    "Id of the forward-translation version. Unlike back_translation_id, this field "
+    "is not backed by a foreign key, so a non-existent id is accepted and stored as "
     "given rather than rejected."
 )
 
@@ -54,8 +56,20 @@ FORWARD_TRANSLATION_DESCRIPTION = (
 class VersionCreate(V4BaseModel):
     """Request body for ``POST /v4/versions`` (issue #826: JSON-only bodies).
 
-    Snake_case is canonical; the three formerly-camelCase fields also accept
-    their legacy v3 spelling on input via ``validation_alias``.
+    Snake_case is the only accepted spelling. The legacy input aliases were
+    withdrawn in #925; the module docstring records which they were and why they
+    went. They are named there rather than here because this docstring *is* the
+    published schema description, and re-printing a withdrawn spelling in
+    ``/v4/openapi.json`` would document the thing #830 removed.
+
+    **Closed allowlist** (``extra="forbid"``), matching :class:`VersionPatch` and
+    :class:`~api_v4.schemas.assessment.AssessmentCreate`. An unrecognized key is a
+    422, never silently dropped, so neither a misspelled ``abbrevation`` nor one of
+    the withdrawn legacy spellings can come back as a 201 carrying a default the
+    caller never asked for. Withdrawing the aliases in #925 is what made this
+    necessary rather than merely tidy: while they were accepted the old spelling
+    still wrote the right column, and afterwards it would have been discarded in
+    silence.
     """
 
     name: str
@@ -71,32 +85,35 @@ class VersionCreate(V4BaseModel):
     iso_script: str = Field(max_length=4)
     abbreviation: str
     rights: str | None = None
-    # Legacy v3 camelCase names accepted on input; canonical (and emitted) name
-    # stays snake_case. snake_case is listed first in AliasChoices so it is the
-    # name documented in the OpenAPI schema (see the module docstring).
-    forward_translation: int | None = Field(
+    # Both FKs carry their column's ``_id`` suffix (#925). Without it,
+    # ``back_translation`` named two different id spaces across the surface — a
+    # *version* here, a *revision* on ``RevisionCreate`` — and a client could not
+    # tell which from the field name.
+    forward_translation_id: int | None = Field(
         default=None,
-        validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
         description=FORWARD_TRANSLATION_DESCRIPTION,
     )
-    back_translation: int | None = Field(
-        default=None,
-        validation_alias=AliasChoices("back_translation", "backTranslation"),
-    )
-    machine_translation: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
-    )
+    back_translation_id: int | None = None
+    machine_translation: bool = False
     is_reference: bool = False
     transcribed_audio: bool = False
     # Required, mirroring v3: a version must be created into at least one group
     # the caller belongs to. An empty list is a domain error (400), a missing
     # field is a framework validation error (422) — see version_service /
     # version_routes.
-    add_to_groups: list[int]
+    #
+    # Spelled ``group_ids`` to match ``VersionOut.group_ids`` (#925), reversing an
+    # earlier ruling that kept ``add_to_groups`` on the grounds that a create-time
+    # instruction is a different concept from read state. What decided it the other
+    # way: v4 has no "remove" counterpart to contrast with — group access moved to
+    # ``PUT``/``DELETE /v4/versions/{id}/groups/{group_id}`` — so the verb was the
+    # only thing the old name carried, and an id list is what it always was.
+    group_ids: list[int]
 
     model_config = {
         **V4BaseModel.model_config,
+        # See the class docstring: unknown keys are a 422, not a silent no-op.
+        "extra": "forbid",
         "json_schema_extra": {
             "example": {
                 "name": "English King James Version",
@@ -104,7 +121,7 @@ class VersionCreate(V4BaseModel):
                 "iso_script": "Latn",
                 "abbreviation": "english_-_king_james_version",
                 "machine_translation": False,
-                "add_to_groups": [1],
+                "group_ids": [1],
             }
         },
     }
@@ -132,14 +149,14 @@ class VersionPatch(V4BaseModel):
       transferable through a field patch, and soft-delete has its own endpoint
       (``DELETE /v4/versions/{id}``). Group access likewise moved out, to the
       ``/v4/versions/{id}/groups/{group_id}`` sub-resource — so no
-      ``add_to_groups`` / ``remove_from_groups`` here either.
+      ``group_ids`` here either, nor v3's two group-mutation fields.
 
     **``str``/``bool`` annotated with a ``None`` default is deliberate** for the
     fields whose column must not become NULL (a NULL ``name`` would fail
     ``VersionOut``'s required ``str``). Pydantic does not validate defaults, so the
     field is *absent-able* while an explicit ``null`` in the body fails validation
     (422) instead of nulling the column. The genuinely nullable fields
-    (``rights``, ``forward_translation``, ``back_translation``) are typed
+    (``rights``, ``forward_translation_id``, ``back_translation_id``) are typed
     ``| None`` and *can* be cleared by sending an explicit ``null``.
 
     One cosmetic consequence, called out so nobody "fixes" it: Pydantic emits a
@@ -168,28 +185,20 @@ class VersionPatch(V4BaseModel):
     abbreviation: str = None
     # Nullable on purpose: sending an explicit null clears these.
     rights: str | None = None
-    # Legacy v3 camelCase names accepted on input, as on VersionCreate; the
-    # canonical (and emitted) spelling stays snake_case (#830).
-    forward_translation: int | None = Field(
+    # Both FKs carry their column's ``_id`` suffix, as on VersionCreate (#925).
+    forward_translation_id: int | None = Field(
         default=None,
-        validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
         description=FORWARD_TRANSLATION_DESCRIPTION,
     )
-    back_translation: int | None = Field(
-        default=None,
-        validation_alias=AliasChoices("back_translation", "backTranslation"),
-    )
-    machine_translation: bool = Field(
-        default=None,
-        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
-    )
+    back_translation_id: int | None = None
+    machine_translation: bool = None
     is_reference: bool = None
     transcribed_audio: bool = None
 
     model_config = {
         **V4BaseModel.model_config,
         # The allowlist is closed: unknown or non-patchable fields (id, owner_id,
-        # deleted, add_to_groups, ...) are a 422, never silently dropped. See the
+        # deleted, group_ids, ...) are a 422, never silently dropped. See the
         # class docstring.
         "extra": "forbid",
         "json_schema_extra": {
@@ -204,11 +213,13 @@ class VersionPatch(V4BaseModel):
 class VersionOut(V4BaseModel):
     """Response body for the ``/v4/versions`` endpoints.
 
-    Plain snake_case fields — no aliases. The router builds this from the ORM
-    row explicitly (see ``version_routes._to_out``) rather than validating the
-    ORM object, so the ORM-attribute-name differences (``forward_translation_id``
-    -> ``forward_translation``) are handled in one obvious place and this stays a
-    pure output contract.
+    Plain snake_case fields — no aliases. The router builds this from the ORM row
+    explicitly (see ``version_routes._to_out``) rather than validating the ORM
+    object, so this stays a pure output contract.
+
+    Since #925 gave the two translation FKs their ``_id`` suffix, every field here
+    is spelled exactly like the column behind it and ``_to_out`` bridges no names
+    at all — it now only shapes and coerces.
     """
 
     id: int
@@ -217,8 +228,8 @@ class VersionOut(V4BaseModel):
     iso_script: str
     abbreviation: str
     rights: str | None = None
-    forward_translation: int | None = None
-    back_translation: int | None = None
+    forward_translation_id: int | None = None
+    back_translation_id: int | None = None
     machine_translation: bool = False
     is_reference: bool = False
     transcribed_audio: bool = False
@@ -284,41 +295,56 @@ class InlineText(V4BaseModel):
         ),
     )
 
+    model_config = {
+        **V4BaseModel.model_config,
+        # Closed for the same reason as the models that carry it: an unrecognized
+        # key here would otherwise be dropped in silence, and "the upload silently
+        # ignored half my request" is the failure this whole slice avoids
+        # elsewhere. It also keeps the future discriminated union honest — a member
+        # that accepts stray keys makes a mistyped variant look valid.
+        "extra": "forbid",
+    }
+
 
 class RevisionCreate(V4BaseModel):
     """Request body for ``POST /v4/revisions`` (issues #826/#891).
 
     One JSON body, replacing v3's multipart ``file=`` upload plus its
-    ``RevisionIn = Depends()`` form/query fields. ``date`` is not a request field: it
-    is stamped server-side, exactly as v3 does.
+    ``RevisionIn = Depends()`` form/query fields. ``uploaded_date`` is not a request
+    field: it is stamped server-side, exactly as v3 does.
+
+    **Closed allowlist** (``extra="forbid"``), as on :class:`VersionCreate`, and
+    :class:`InlineText` closes too so a stray key in the nested ``text`` object is
+    caught as well. An unrecognized key is a 422 rather than a silent no-op.
+
+    One withdrawn alias would have been a hard error here regardless: it was a
+    second spelling of ``version_id``, which is required, so a body carrying only
+    the old name fails on the missing field rather than on the unknown one.
     """
 
-    # Canonical name is version_id — it matches the ``version_id`` list filter and
-    # v3's own *request* field. v3's *response* spelled the same thing
-    # ``bible_version_id`` (the ORM column name); that spelling is accepted here as
-    # an input alias so a client migrating off v3's response shape can echo it back.
-    version_id: int = Field(
-        validation_alias=AliasChoices("version_id", "bible_version_id"),
-    )
+    # Canonical — and since #925, only — name is version_id: it matches the
+    # ``version_id`` list filter and v3's own *request* field. v3's *response*
+    # spelled the same thing ``bible_version_id`` (the ORM column name), and that
+    # was accepted here as an input alias so a client could echo a v3 response
+    # back. #925 withdrew it on the evidence that no such client exists.
+    version_id: int
     name: str | None = None
     published: bool = False
     # FK to bible_revision.id (not bible_version.id — the back translation of a
     # revision is another revision), so a non-existent id is INVALID_REFERENCE on
-    # flush. Legacy camelCase accepted on input, snake_case emitted (#830).
-    back_translation: int | None = Field(
-        default=None,
-        validation_alias=AliasChoices("back_translation", "backTranslation"),
-    )
-    machine_translation: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
-    )
+    # flush. That target is exactly why #925 added the ``_id`` suffix:
+    # ``VersionCreate.back_translation_id`` points at a *version*, this one at a
+    # *revision*, and one unsuffixed name could not tell the two id spaces apart.
+    back_translation_id: int | None = None
+    machine_translation: bool = False
     # Required: a revision exists to hold verse text, and v3 equally required the
     # file. There is no create-empty-then-upload flow to preserve.
     text: InlineText
 
     model_config = {
         **V4BaseModel.model_config,
+        # See the class docstring: unknown keys are a 422, not a silent no-op.
+        "extra": "forbid",
         "json_schema_extra": {
             "example": {
                 "version_id": 1,
@@ -354,25 +380,20 @@ class RevisionPatch(V4BaseModel):
     * ``deleted`` — soft-delete has its own endpoint (``DELETE /v4/revisions/{id}``),
       and there is no un-delete.
 
-    ``date`` is likewise absent: it records when the revision was uploaded.
+    ``uploaded_date`` is likewise absent: it records when the revision was
+    uploaded.
 
     The ``bool`` fields are annotated without ``None`` while defaulting to ``None``
     — the :class:`VersionPatch` idiom: absent-able (``exclude_unset`` drops them),
     but an explicit ``null`` in the body is a 422 rather than a NULLed column.
-    ``name`` and ``back_translation`` *are* nullable on the wire, matching
+    ``name`` and ``back_translation_id`` *are* nullable on the wire, matching
     ``RevisionCreate``, so an explicit ``null`` clears them.
     """
 
     name: str | None = None
     published: bool = None
-    back_translation: int | None = Field(
-        default=None,
-        validation_alias=AliasChoices("back_translation", "backTranslation"),
-    )
-    machine_translation: bool = Field(
-        default=None,
-        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
-    )
+    back_translation_id: int | None = None
+    machine_translation: bool = None
 
     model_config = {
         **V4BaseModel.model_config,
@@ -410,13 +431,23 @@ class RevisionOut(V4BaseModel):
     id: int
     version_id: int
     name: str | None = None
+    # Renamed from a bare ``date`` in #925, which said nothing about *which* date
+    # and carried no description, leaving a reader no way to tell. The type is
+    # deliberately unchanged — see below.
+    #
     # The column is DateTime; ``_to_out`` narrows it to a date rather than letting
     # Pydantic coerce, because coercion *raises* on a datetime with a non-zero time
     # component and legacy rows are not guaranteed to be midnight. v3 emits a date
     # here too, so the wire shape is unchanged.
-    date: date_type | None = None
+    uploaded_date: date | None = Field(
+        default=None,
+        description=(
+            "Date the revision was uploaded. Stamped server-side at create time; "
+            "not a request field."
+        ),
+    )
     published: bool = False
-    back_translation: int | None = None
+    back_translation_id: int | None = None
     machine_translation: bool = False
     deleted: bool = False
     version_abbreviation: str | None = None
@@ -1060,3 +1091,87 @@ class TextSearchPage(V4Page[TextSearchOut]):
             next_updated_since=next_updated_since,
             alignment_assessment_id=alignment_assessment_id,
         )
+
+
+# --- Reference lists (issue #951) --------------------------------------------
+
+#: Longest ``q`` a reference list will accept. Checked against the live database, the
+#: longest name in either table is 95 characters — ``iso_script.Zanb``, "Zanabazar
+#: Square (Zanabazarin Dörböljin Useg, ...)"; ``iso_language``'s longest is 58 — so a
+#: longer term can match nothing and the bound costs a caller nothing real. It is here to keep the one
+#: free-text input on these endpoints bounded rather than to enforce a policy — the same
+#: reason :data:`TEXT_SEARCH_TERM_MAX_LENGTH` exists on the text search.
+MAX_REFERENCE_QUERY_LENGTH = 100
+
+
+class LanguageOut(V4BaseModel):
+    """One ISO 639-3 language code and its English name (``GET /v4/languages``).
+
+    **The field is still called** ``iso639``, not ``code``. It is already snake_case,
+    it is the spelling of the column and of v3's ``Language`` schema, and it says which
+    standard the value comes from — so a v3 client's existing handling carries over
+    unchanged. That leaves it asymmetric with :class:`ScriptOut`'s ``iso15924``;
+    normalizing both to ``code`` was considered and not taken, because the asymmetry is
+    the two standards being genuinely different rather than an inconsistency.
+
+    ``name`` is optional, and that is this port's one behavioural fix rather than an
+    oversight — see :class:`ScriptOut`, which carries the explanation for both.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    iso639: str = Field(
+        description=(
+            "The ISO 639-3 language code — three lowercase letters, e.g. `eng` for "
+            "English or `swh` for Swahili. This is the value `POST /v4/versions` "
+            "takes as `iso_language`."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "The language's English name, or null if the reference data does not "
+            "record one. Null is rare — no row is missing a name today — but the "
+            "column permits it, so treat the name as a label and the code as the "
+            "identifier."
+        ),
+    )
+
+
+class ScriptOut(V4BaseModel):
+    """One ISO 15924 script code and its English name (``GET /v4/scripts``).
+
+    **Why** ``name`` **is optional on both of these, when v3 declares it required.**
+    ``iso_language.name`` and ``iso_script.name`` are both plain ``Column(Text)`` with no
+    ``nullable=False`` (``database/models.py``), while v3's ``Language`` and ``Script``
+    schemas declare ``name: str``. So a single row with a NULL name makes v3's
+    ``response_model`` raise while serializing and the *whole* list endpoint answers 500
+    — not just that row. Checked against the live database: neither table holds a NULL or
+    empty name today, so the defect is latent rather than active, and v3 is frozen so it
+    keeps it.
+
+    Declaring the field optional is what stops v4 inheriting it. The alternative — keep
+    ``name: str`` and put the guarantee in a ``NOT NULL`` — is the better fix and is not
+    available: both columns are shared with frozen v3, and tightening shared DDL is what
+    closed #900 and #901. Neither table is seeded through Alembic, so nothing in this
+    repo controls whether a future reseed leaves a name blank either. Optional is
+    therefore the honest type: one null name costs a client a null check instead of
+    costing every client the endpoint.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    iso15924: str = Field(
+        description=(
+            "The ISO 15924 script code — four letters, capitalized, e.g. `Latn` for "
+            "Latin or `Cyrl` for Cyrillic. This is the value `POST /v4/versions` "
+            "takes as `iso_script`."
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "The script's English name, or null if the reference data does not "
+            "record one. See `GET /v4/languages` for why this is nullable."
+        ),
+    )

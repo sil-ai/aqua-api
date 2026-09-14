@@ -70,7 +70,8 @@ def get_openapi_response(client=None):
 
     This is the single fetch path shared by the contract test and this regen
     script, so both snapshot exactly what the running app serves (the custom
-    ``app.py::my_schema`` output cached on ``app.openapi_schema`` at import).
+    docs metadata is set via ``FastAPI(title=..., ...)`` in ``app.py``, so
+    ``app.openapi()`` produces it on every call, cached or not).
 
     Pass an existing ``TestClient`` — the test hands in its module-scoped
     ``client`` fixture — or omit it to build a throwaway client, which is the

@@ -23,6 +23,18 @@ os.environ.setdefault(
     "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
 )
 
+# Relax auth rate limits for the test suite. Tests share a single client IP
+# (127.0.0.1) across many fixtures and modules, so the production 5/minute
+# default would trip across normal happy-path token fetches. The dedicated
+# rate-limiting tests override the limiter directly with tighter limits.
+# The token budgets are spent only by *failed* logins now, but plenty of modules
+# assert on a 401, and the hard tier refuses everything once it fills — so both
+# still need headroom here.
+os.environ.setdefault("AUTH_TOKEN_FAILURE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_TOKEN_HARD_FAILURE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_USERS_RATE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "10000/minute")
+
 from datetime import date  # noqa: E402
 
 import bcrypt  # noqa: E402

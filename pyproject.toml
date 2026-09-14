@@ -14,16 +14,20 @@ requires-python = ">=3.11,<3.12"
 # reproducible.
 dependencies = [
     # --- Web framework / ASGI server ---
-    "fastapi==0.115.6",
-    "starlette==0.41.3",              # explicit pin carries the CVE fix (#774); also a fastapi transitive
+    # fastapi 0.115.6 capped starlette<0.42.0, which held 7 open Starlette CVEs
+    # (3 High) on the repo -- every fix for those lands at starlette>=1.3.1, past
+    # that cap. #937 bumps both past it; see the PR body for the full CVE-by-CVE
+    # accounting and the OpenAPI snapshot diff classification.
+    "fastapi==0.141.1",
+    "starlette==1.6.0",                # explicit pin; clears the CVEs tracked in #774/#937
     "uvicorn==0.17.6",
     "uvloop==0.19.0",                 # uvicorn event loop (auto-detected when installed)
     "httptools==0.6.1",               # uvicorn HTTP parser (auto-detected when installed)
     "websockets==12.0",               # uvicorn websockets protocol
     "watchgod==0.8.2",                # uvicorn --reload file watcher
-    "python-multipart==0.0.18",       # FastAPI form/file uploads (used via the framework, not imported directly)
+    "python-multipart==0.0.31",       # FastAPI form/file uploads (used via the framework, not imported directly)
     # --- Data model / validation / settings ---
-    "pydantic==2.4.2",
+    "pydantic==2.9.0",                 # forced by fastapi==0.141.1's pydantic>=2.9.0 floor (#937); still Pydantic v2
     "pydantic-settings==2.1.0",
     "email-validator==2.1.0",         # pydantic EmailStr support (used via the framework, not imported directly)
     # --- Database (async stack) ---
@@ -37,8 +41,13 @@ dependencies = [
     # once confirmed unused in production.
     "psycopg2-binary==2.9.6",
     # --- Auth ---
-    "python-jose[cryptography]==3.3.0",  # the [cryptography] extra preserves the JWT backend cryptography provides today
+    # The app only ever signs/verifies HS256 (security_routes/utilities.py), so no
+    # [crypto] extra is needed — that only matters for the RSA/ECDSA algorithms this
+    # app never uses. See #938: this replaces python-jose, which carried the repo's
+    # one critical CVE (GHSA-6c5p) and pulled in an unmaintained ecdsa dependency.
+    "pyjwt==2.13.0",
     "bcrypt==4.1.2",
+    "slowapi==0.1.9",                 # per-IP rate limiting on the auth endpoints (#713)
     # --- ML / data ---
     "numpy==1.26.3",
     "pandas==2.1.4",
@@ -46,13 +55,13 @@ dependencies = [
     "scikit-learn==1.6.1",
     # --- External services / infra ---
     "modal==1.3.5",
-    "python-dotenv==1.0.0",
+    "python-dotenv==1.2.2",
     "python-json-logger==2.0.7",
     # observability-library's LokiHandler imports `requests` at runtime but
     # under-declares it (its metadata lists only aiohttp), so it must be pinned
     # here explicitly — otherwise enabling Loki (LOKI_ENABLED=true) would fail the
     # guarded import in utils/logging_config.py and silently fall back to console.
-    "requests==2.31.0",
+    "requests==2.33.0",
     # Loki logging handler (see [tool.uv.sources]). The import in
     # utils/logging_config.py is guarded; Loki shipping is off by default (LOKI_ENABLED).
     "observability-library",

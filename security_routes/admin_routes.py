@@ -1,6 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import jwt
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +17,7 @@ from database.models import Group as GroupDB
 from database.models import UserDB, UserGroup
 from models import Group, User
 
+from .rate_limiting import CHANGE_PASSWORD_RATE_LIMIT, USERS_RATE_LIMIT, limiter
 from .utilities import ALGORITHM, SECRET_KEY, hash_password
 
 router = APIRouter()
@@ -38,12 +47,14 @@ async def get_current_admin(
                 detail="The user doesn't have enough privileges",
             )
         return user
-    except jwt.JWTError:
+    except jwt.PyJWTError:
         raise credentials_exception
 
 
 @router.post("/users", response_model=User)
+@limiter.limit(USERS_RATE_LIMIT)
 async def create_user(
+    request: Request,
     user: User = Depends(),
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -119,18 +130,13 @@ async def get_groups(
 
 @router.post("/link-user-group", status_code=status.HTTP_201_CREATED)
 async def link_user_to_group(
-    username=str,
-    groupname=str,
+    username: str = Query(..., min_length=1),
+    groupname: str = Query(..., min_length=1),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
     ),  # Ensuring only admin can link users to groups
 ):
-    if not username or not groupname:
-        raise HTTPException(
-            status_code=400, detail="Username and group name are required"
-        )
-
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
@@ -162,18 +168,13 @@ async def link_user_to_group(
 
 @router.post("/unlink-user-group", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink_user_from_group(
-    username=str,
-    groupname=str,
+    username: str = Query(..., min_length=1),
+    groupname: str = Query(..., min_length=1),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
     ),  # Ensuring only admin can unlink users from groups
 ):
-    if not username or not groupname:
-        raise HTTPException(
-            status_code=400, detail="Username and group name are required"
-        )
-
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
@@ -196,7 +197,8 @@ async def unlink_user_from_group(
 
     await db.delete(link)
     await db.commit()
-    return {"message": f"User {username} successfully unlinked from group {groupname}"}
+    # 204 responses must not include a body per RFC 7230.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/groups", status_code=status.HTTP_204_NO_CONTENT)
@@ -244,7 +246,9 @@ async def delete_user(
 
 # create a change password endpoint
 @router.post("/change-password")
+@limiter.limit(CHANGE_PASSWORD_RATE_LIMIT)
 async def change_password(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),

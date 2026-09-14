@@ -738,15 +738,19 @@ class AssessmentOut(V4BaseModel):
             "part of `result`, which carries outcomes only."
         ),
     )
-    requested_time: datetime | None = Field(
+    # The ``_at`` spelling is the v4 canon for a date-time (#925); the columns behind
+    # these three are still ``requested_time`` / ``start_time`` / ``end_time`` on a
+    # frozen v3 table, so ``_to_out`` bridges the names. Do not "fix" the divergence by
+    # renaming the columns — that needs a migration and would break v3.
+    requested_at: datetime | None = Field(
         default=None,
         description="When the run was submitted.",
     )
-    start_time: datetime | None = Field(
+    started_at: datetime | None = Field(
         default=None,
         description="When the runner started work, or null if it has not yet.",
     )
-    end_time: datetime | None = Field(
+    ended_at: datetime | None = Field(
         default=None,
         description="When the run reached a terminal state, or null if it has not.",
     )

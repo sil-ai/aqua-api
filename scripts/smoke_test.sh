@@ -73,7 +73,7 @@ if ! docker run -d --name "$CONTAINER" --pull=never \
   exit 1
 fi
 
-# Poll liveness until the app is serving (the 8 uvicorn workers need a moment
+# Poll liveness until the app is serving (the WEB_CONCURRENCY workers need a moment
 # to import the app and bind). 30 x 2s = 60s ceiling.
 echo "Waiting for /health ..."
 for i in $(seq 1 30); do
