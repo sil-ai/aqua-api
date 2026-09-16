@@ -81,7 +81,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Sequence
 
 import modal
@@ -576,7 +576,7 @@ async def create_session(
                 reference_id=source_revision.id,
                 type=training_type.value,
                 status=AssessmentStatus.queued.value,
-                requested_time=datetime.utcnow(),
+                requested_time=datetime.now(timezone.utc),
                 owner_id=user.id,
                 kwargs=options,
                 is_training=True,
@@ -591,7 +591,7 @@ async def create_session(
                 source_version_id=source_revision.bible_version_id,
                 target_version_id=target_revision.bible_version_id,
                 options=options,
-                requested_time=datetime.utcnow(),
+                requested_time=datetime.now(timezone.utc),
                 owner_id=user.id,
                 session_id=session_id,
                 assessment_id=assessment.id,
@@ -673,7 +673,7 @@ async def _dispatch_all(
     # Written directly rather than through the runner's status callback: the runner never
     # got the job, so nothing else will ever move these rows off `queued`.
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         stmt = select(Assessment).where(
             Assessment.id.in_(list(failures)), Assessment.deleted.is_not(True)
         )
@@ -821,7 +821,7 @@ async def soft_delete_job(db: AsyncSession, user: UserDB, job_id: int) -> Traini
 
     try:
         job.deleted = True
-        job.deleted_at = datetime.utcnow()
+        job.deleted_at = datetime.now(timezone.utc)
         await db.commit()
     except Exception:
         await db.rollback()
