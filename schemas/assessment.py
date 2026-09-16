@@ -12,7 +12,9 @@ import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
+
+from utils.datetime_utils import as_naive_utc
 
 from .validators import _coerce_null_bool_to_false, _validate_assessment_kwargs
 
@@ -108,6 +110,22 @@ class AssessmentOut(BaseModel):
     @classmethod
     def _coerce_deleted_null_to_false(cls, value):
         return _coerce_null_bool_to_false(value)
+
+    @field_serializer("requested_time", "start_time", "end_time", "updated_at")
+    def _serialize_naive_utc(
+        self, value: Optional[datetime.datetime]
+    ) -> Optional[datetime.datetime]:
+        """Freeze v3's datetime wire format at the naive-UTC rendering.
+
+        aqua-api#720 widened requested_time/start_time/end_time to TIMESTAMP
+        WITH TIME ZONE, so asyncpg now hands back tz-aware values and pydantic
+        would append a ``Z`` that v3 clients have never seen. The column type
+        is an internal detail; v3's bytes are not. Every datetime field is
+        listed, not just the three that were converted, so a later column
+        change cannot reopen this. Returning a datetime (not a string) keeps
+        the generated OpenAPI schema byte-identical.
+        """
+        return None if value is None else as_naive_utc(value)
 
     model_config = {
         "json_schema_extra": {

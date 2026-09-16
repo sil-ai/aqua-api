@@ -1,4 +1,5 @@
 # test_train_routes.py
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -3295,3 +3296,61 @@ def test_repost_after_assessment_terminates_succeeds(
     new_job = second.json()["training_jobs"][0]
     assert new_job["id"] != job["id"]
     assert new_job["assessment_id"] != job["assessment_id"]
+
+
+# See the matching constant in test_assessment_routes.py: v3 renders datetimes
+# with no tz designator, and the OpenAPI snapshot cannot catch a change to that.
+_NAIVE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$")
+
+_TRAINING_DATETIME_FIELDS = ("requested_time", "start_time", "end_time")
+
+
+def test_v3_training_job_datetimes_are_naive_on_the_wire(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """GET /train and GET /train/{job_id} must render datetimes without a tz
+    designator.
+
+    requested_time comes from the converted training_job column; start_time and
+    end_time are mirrored from the linked Assessment row, so all three went
+    tz-aware in #720.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "naive_wire_test"},
+    )
+    job_id = _get_first_job_id(create_resp)
+
+    # Mirror-source fields live on the linked Assessment; write them tz-aware,
+    # the way the app now does, so the read path exercises the conversion.
+    db_session.expire_all()
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    started = datetime.now(timezone.utc) - timedelta(hours=1)
+    assessment = (
+        db_session.query(Assessment).filter(Assessment.id == job.assessment_id).first()
+    )
+    assessment.start_time = started
+    assessment.end_time = started + timedelta(minutes=5)
+    db_session.commit()
+
+    headers = _auth_headers(regular_token1)
+
+    single = client.get(f"{prefix}/train/{job_id}", headers=headers)
+    assert single.status_code == 200
+    for field in _TRAINING_DATETIME_FIELDS:
+        value = single.json()[field]
+        assert value is not None, f"GET /train/{{id}} {field} unexpectedly null"
+        assert _NAIVE_ISO.match(value), f"GET /train/{{id}} {field}={value!r}"
+
+    listing = client.get(f"{prefix}/train", headers=headers)
+    assert listing.status_code == 200
+    body = next(j for j in listing.json() if j["id"] == job_id)
+    for field in _TRAINING_DATETIME_FIELDS:
+        value = body[field]
+        assert value is not None, f"GET /train {field} unexpectedly null"
+        assert _NAIVE_ISO.match(value), f"GET /train {field}={value!r}"

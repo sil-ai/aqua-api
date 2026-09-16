@@ -1,4 +1,5 @@
 # test_assessment_routes.py
+import re
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -3391,3 +3392,102 @@ def test_get_assessments_includes_null_deleted_rows(
         response = list_assessment(client, token)
         assert response.status_code == 200
         assert assessment_id in {a["id"] for a in response.json()}
+
+
+# v3's datetime wire format is frozen: no ``Z``, no ``+00:00`` — exactly what the
+# naive TIMESTAMP columns rendered before #720 widened them. The v3 OpenAPI
+# snapshot cannot catch a regression here: the field type is still date-time and
+# the example is hand-written, so the generated schema stays byte-identical while
+# the value format moves. These assertions are the only gate.
+_NAIVE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$")
+
+_ASSESSMENT_DATETIME_FIELDS = (
+    "requested_time",
+    "start_time",
+    "end_time",
+    "updated_at",
+)
+
+
+def test_v3_assessment_datetimes_are_naive_on_the_wire(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """POST and GET /assessment must render every datetime without a tz
+    designator, and all of them in the same shape.
+
+    #720 widened requested_time/start_time/end_time to TIMESTAMP WITH TIME ZONE,
+    so asyncpg hands pydantic tz-aware values while updated_at stays naive. Left
+    alone that puts two formats in one object; AssessmentOut's field serializer
+    pins them all back to the naive-UTC rendering v3 clients have always seen.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        create_response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert create_response.status_code == 200
+    created = create_response.json()[0]
+    for field in _ASSESSMENT_DATETIME_FIELDS:
+        value = created.get(field)
+        if value is not None:
+            assert _NAIVE_ISO.match(value), f"POST /assessment {field}={value!r}"
+
+    assessment_id = created["id"]
+
+    # Populate start_time/end_time the way the app now writes them — tz-aware —
+    # so the read path exercises the conversion rather than a null.
+    started = datetime.now(timezone.utc) - timedelta(hours=1)
+    assessment = (
+        db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
+    )
+    assessment.start_time = started
+    assessment.end_time = started + timedelta(minutes=5)
+    db_session.commit()
+
+    list_response = client.get(
+        f"{prefix}/assessment",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert list_response.status_code == 200
+    body = next(a for a in list_response.json() if a["id"] == assessment_id)
+
+    for field in _ASSESSMENT_DATETIME_FIELDS:
+        value = body[field]
+        assert value is not None, f"GET /assessment {field} unexpectedly null"
+        assert _NAIVE_ISO.match(value), f"GET /assessment {field}={value!r}"
+
+
+def test_v3_assessment_status_patch_datetimes_are_naive_on_the_wire(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status serves AssessmentOut too, and it is the
+    call that writes start_time/end_time, so it is the likeliest place for a
+    tz-aware value to reach the wire."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    running = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert running.status_code == 200
+    start_time = running.json()["start_time"]
+    assert start_time is not None
+    assert _NAIVE_ISO.match(start_time), f"PATCH status start_time={start_time!r}"
+
+    finished = _patch_status(client, regular_token1, aid, {"status": "finished"})
+    assert finished.status_code == 200
+    for field in _ASSESSMENT_DATETIME_FIELDS:
+        value = finished.json()[field]
+        assert value is not None, f"PATCH status {field} unexpectedly null"
+        assert _NAIVE_ISO.match(value), f"PATCH status {field}={value!r}"
