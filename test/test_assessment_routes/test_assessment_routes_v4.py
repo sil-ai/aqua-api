@@ -2214,6 +2214,36 @@ class TestPollShape:
         assert body["deleted"] is False
         assert body["updated_at"] is not None
 
+    def test_every_timestamp_renders_as_an_explicit_utc_instant(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """One body, one timestamp shape.
+
+        #720 converted requested_time/start_time/end_time to TIMESTAMP WITH TIME
+        ZONE and left updated_at naive, so these four fields read from columns of
+        two different types. Which column a field happens to come from is an
+        internal detail: a client that compares these as strings, or hands them
+        all to one strict parser, must not see two shapes in one object.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        started = datetime(2026, 8, 20, 9, 30, tzinfo=timezone.utc)
+        assessment_id = _make_assessment(
+            db_session,
+            revision_id,
+            reference_id,
+            status=AssessmentStatus.finished.value,
+            start_time=started,
+            end_time=started + timedelta(minutes=5),
+        )
+        body = _get(client, regular_token1, assessment_id).json()
+
+        for field in ("requested_at", "started_at", "ended_at", "updated_at"):
+            value = body[field]
+            assert value is not None, f"{field} unexpectedly null"
+            assert value.endswith(
+                "Z"
+            ), f"{field}={value!r} is not an explicit UTC instant"
+
     def test_progress_rides_along_as_ordinary_fields(
         self, client, regular_token1, db_session, group1_version
     ):

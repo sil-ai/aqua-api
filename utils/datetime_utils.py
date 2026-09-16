@@ -10,3 +10,18 @@ def as_naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def as_aware_utc(dt: datetime) -> datetime:
+    """Normalize a datetime for serialization as an explicit UTC instant: naive
+    input is assumed to already be UTC, per the app-wide convention, and gains
+    tzinfo; aware input is converted to UTC. The inverse of as_naive_utc().
+
+    v4 renders timestamps with an explicit designator. Only some of the columns
+    it reads are TIMESTAMP WITH TIME ZONE (#720), so without this the same
+    response body mixes `...Z` and offset-less values depending on which column
+    a field happens to come from.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
