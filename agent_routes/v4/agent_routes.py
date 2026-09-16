@@ -42,9 +42,9 @@ sub-paths, and neither can shadow the other because ``/revisions/{id}`` and
 ``/revisions/{id}/verses`` are distinct path patterns. The same holds here for
 ``/assessments/{id}`` and ``/assessments/{id}/critique-issues``, so registration order in
 :func:`api_v4.app.create_v4_app` is not load-bearing. It also gives these two their own
-tag in ``/v4/openapi.json``, and gives the rest of the agent family — ``/v4/lexeme-cards``
-and ``/v4/agent-word-alignments``, which are version-keyed reference data with no
-assessment to nest under — a package to land in.
+tag in ``/v4/openapi.json``. Nothing else in the agent family is carried to v4 — the two
+reference-data collections §15.7 planned were both reversed, one before it was built and
+one after; see :mod:`agent_routes.v4` for which, and why.
 
 **There is no ``/v4/agent/…`` namespace and no ``/v4/critiques`` collection**, which §15.7
 settled on 31 August 2026: "agent" names the process that produced a row rather than the

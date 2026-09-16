@@ -10,10 +10,15 @@ and agent translations *are* assessment results — so the router shares the
 ``/assessments`` prefix with the Assessments router while declaring only sub-paths; see
 ``agent_routes.py`` for why that is safe.
 
-Also here, on the same issue: ``lexeme_card_routes.py`` over ``lexeme_card_service.py``,
-serving ``/v4/lexeme-cards``. Version- and language-keyed reference data with no
-assessment to nest under, so a top-level collection rather than a sub-resource, and its
-own router and service because it shares no authorization with the two reads above.
+``/v4/lexeme-cards`` was built on the same issue and then **removed** (#947). §15.7 ruled
+lexeme cards version-keyed reference data and this package served them as a top-level
+collection, but the agent dictionary they hold is retired: nothing builds cards any more
+— the runner moved to the lean ICL pipeline and ``enable_word_memory`` defaults to False,
+with no field in aqua-api able to turn it on — and almost none of the cards that exist
+were ever touched by a user. Same call as ``/v4/agent-word-alignments`` below, made after
+the code landed instead of before it started. v3's ``/agent/lexeme-card`` endpoints stay
+exactly as they are, because the website's Word Cards feature reads and writes them
+through ``/latest``; don't rebuild this on v4 without checking that UI first.
 
 ``/v4/agent-word-alignments`` was **not** built. §15.7 planned it, and a caller check
 before starting reversed that: no client repo reads ``GET /agent/word-alignment`` or its

@@ -33,6 +33,8 @@ from api_v4.errors import (
     V4APIError,
     _bounded_details,
     _bounded_json_safe,
+    _redacted_secret,
+    _redacted_validation_errors,
 )
 from api_v4.schemas.assessment import SimilarVersesRequest
 from api_v4.schemas.base import V4BaseModel
@@ -77,6 +79,23 @@ _MANY = 5_000
 #: The single-character key the sized probe route puts its value under. Short and known
 #: so a test can state the boundary exactly: the value gets the budget less its key.
 _SIZED_KEY = "v"
+
+
+class _ProbeCredentials(V4BaseModel):
+    """A body carrying a password, so a rejection has something to leak (#950).
+
+    The shape ``POST /v4/users`` has: a closed body with one secret field and one
+    ordinary one. ``username`` is required and length-bounded so a test can make
+    *either* field fail while the other holds a value that must not come back.
+    """
+
+    username: str = Field(max_length=50)
+    password: str = Field(min_length=8)
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "extra": "forbid",
+    }
 
 
 class _ProbeText(V4BaseModel):
@@ -323,6 +342,22 @@ def error_app():
     @v4_app.post("/_validate_text")
     async def _validate_text(body: _ProbeText):
         return {"ok": True}
+
+    @v4_app.post("/_validate_credentials")
+    async def _validate_credentials(body: _ProbeCredentials):
+        return {"ok": True}
+
+    @v4_app.get("/_raise_error_with_a_secret_in_details")
+    async def _raise_error_with_a_secret_in_details():
+        # Defense in depth: no v4 endpoint does this, but the walk redacts it anyway
+        # so that a service which later puts a credential in `details` cannot ship
+        # one to a client.
+        raise V4APIError(
+            status_code=409,
+            code="PROBE_CONFLICT",
+            message="Probe.",
+            details={"password": "hunter2-sentinel", "user_id": 7},
+        )
 
     @v4_app.post("/_validate_floats")
     async def _validate_floats(body: _ProbeFloats):
@@ -1010,3 +1045,127 @@ def test_v3_error_shape_unchanged_freeze_regression():
     body = response.json()
     assert body == {"detail": "Not Found"}
     assert "error" not in body, "main app must not adopt the v4 error envelope"
+
+
+# --- #950: a credential must never reach an error body ---------------------------
+#
+# ``details`` was bounded but not filtered, and a 422 echoes the value it rejected
+# back under ``input``. These pin the three shapes that leaked, each by a different
+# mechanism, plus the two ways the redaction could overreach.
+
+SECRET = "hunter2-sentinel"
+
+
+def test_a_rejected_password_is_redacted_not_echoed(client):
+    """Shape 1: ``loc`` is ``["body", "password"]`` and ``input`` was the value."""
+    response = client.post(
+        "/_validate_credentials", json={"username": "u", "password": "sh0rt"}
+    )
+    assert response.status_code == 422
+    assert "sh0rt" not in response.text, response.text
+    errors = response.json()["error"]["details"]["errors"]
+    assert [error["input"] for error in errors] == [_redacted_secret()]
+    # The rest of the error survives — a caller still learns which field and why.
+    assert errors[0]["loc"] == ["body", "password"]
+    assert "at least 8" in errors[0]["msg"]
+
+
+def test_a_sibling_error_does_not_echo_the_password_beside_it(client):
+    """Shape 2, and the reason one rule was not enough.
+
+    ``username`` is missing, so pydantic reports ``missing`` at
+    ``["body", "username"]`` and attaches the *whole parent object* as ``input``.
+    Nothing in ``loc`` names a secret, so this is caught by the key rule in the walk
+    rather than by the ``loc`` rule in the handler.
+    """
+    response = client.post("/_validate_credentials", json={"password": SECRET})
+    assert response.status_code == 422
+    assert SECRET not in response.text, response.text
+    errors = response.json()["error"]["details"]["errors"]
+    assert errors[0]["input"] == {"password": _redacted_secret()}
+
+
+def test_a_body_that_is_not_an_object_is_redacted_wholesale(client):
+    """Shape 3: ``loc`` is exactly ``["body"]``, so ``input`` is everything sent and
+    there is no field name to match on."""
+    response = client.post("/_validate_credentials", json=[SECRET])
+    assert response.status_code == 422
+    assert SECRET not in response.text, response.text
+    errors = response.json()["error"]["details"]["errors"]
+    assert errors[0]["loc"] == ["body"]
+    assert errors[0]["input"] == _redacted_secret()
+
+
+def test_a_non_secret_field_is_still_echoed(client):
+    """The redaction must not become a blanket one: showing what the server actually
+    parsed is what the echo is *for*."""
+    response = client.post(
+        "/_validate_credentials", json={"username": "u" * 51, "password": SECRET}
+    )
+    assert response.status_code == 422
+    assert SECRET not in response.text, response.text
+    errors = response.json()["error"]["details"]["errors"]
+    assert errors[0]["input"] == "u" * 51
+
+
+def test_a_look_alike_field_name_is_not_redacted():
+    """Exact names, not a substring test. A ``password_changed_at`` timestamp
+    mentions a secret without carrying one, and must report normally."""
+    bounded = _bounded_details({"password_changed_at": "2026-09-10T00:00:00Z"})
+    assert bounded == {"password_changed_at": "2026-09-10T00:00:00Z"}
+
+
+def test_the_key_match_is_case_insensitive():
+    bounded = _bounded_details({"Password": SECRET, "NEW_PASSWORD": SECRET})
+    assert bounded == {
+        "Password": _redacted_secret(),
+        "NEW_PASSWORD": _redacted_secret(),
+    }
+
+
+def test_a_secret_value_is_never_walked():
+    """Redacted *before* the size path, so an enormous credential costs nothing and
+    cannot come back as a size marker naming its length — a length is itself a fact
+    about a credential."""
+    huge = "x" * (_DETAILS_BUDGET * 4)
+    bounded, cost = _bounded_json_safe({"password": huge}, _DETAILS_BUDGET)
+    assert bounded == {"password": _redacted_secret()}
+    assert "characters omitted" not in bounded["password"]
+    assert cost < 100, cost
+
+
+def test_a_secret_nested_deep_inside_details_is_still_redacted():
+    bounded = _bounded_details({"errors": [{"input": {"password": SECRET}}]})
+    assert bounded == {"errors": [{"input": {"password": _redacted_secret()}}]}
+
+
+def test_a_domain_error_cannot_ship_a_secret_in_details(client):
+    """Defense in depth. No v4 endpoint puts a credential in a ``V4APIError``, but
+    the walk is shared, so one that later did would still be redacted."""
+    response = client.get("/_raise_error_with_a_secret_in_details")
+    assert response.status_code == 409
+    assert SECRET not in response.text, response.text
+    assert response.json()["error"]["details"] == {
+        "password": _redacted_secret(),
+        "user_id": 7,
+    }
+
+
+def test_the_redaction_does_not_mutate_the_errors_it_was_given():
+    """``exc.errors()`` is memoised on the exception, so anything reading it after
+    the handler returns — a logger, a middleware — must still see the original."""
+    original = [
+        {"type": "string_too_short", "loc": ("body", "password"), "input": SECRET}
+    ]
+    redacted = _redacted_validation_errors(original)
+    assert redacted[0]["input"] == _redacted_secret()
+    assert original[0]["input"] == SECRET
+
+
+def test_an_error_without_an_input_key_does_not_gain_one():
+    """Some pydantic errors carry no ``input``. Redaction must not invent one, which
+    would put a marker where the contract says nothing at all."""
+    redacted = _redacted_validation_errors(
+        [{"type": "missing", "loc": ("body", "password"), "msg": "Field required"}]
+    )
+    assert "input" not in redacted[0]

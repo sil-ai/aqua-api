@@ -66,7 +66,6 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 import fastapi
 
 from agent_routes.v4.agent_routes import router as agent_router
-from agent_routes.v4.lexeme_card_routes import router as lexeme_card_router
 from api_v4.errors import (
     V4_ERROR_RESPONSES,
     V4_PUBLIC_ERROR_RESPONSES,
@@ -75,13 +74,17 @@ from api_v4.errors import (
 )
 from api_v4.meta_routes import router as meta_router
 from assessment_routes.v4.assessment_routes import router as assessment_router
+from bible_routes.v4.language_routes import router as language_router
 from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.verse_routes import router as verse_router
 from bible_routes.v4.version_routes import router as version_router
+from predict_routes.v4.predict_routes import router as predict_router
 from security_routes.v4.dependencies import get_current_user_v4
 from security_routes.v4.group_routes import router as group_router
 from security_routes.v4.token_routes import router as token_router
 from security_routes.v4.user_routes import router as user_router
+from train_routes.v4.train_routes import job_router as training_job_router
+from train_routes.v4.train_routes import session_router as training_session_router
 
 
 def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
@@ -139,7 +142,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # dedupes the dependency, so it runs once per request.
     #
     # ``responses=`` rides along for the same reason the dependency does: one
-    # declaration covering every domain route beats 33 that drift. See
+    # declaration covering every domain route beats 44 that drift. See
     # V4_ERROR_RESPONSES for what it declares and why the union is deliberate.
     for domain_router in (
         version_router,
@@ -155,13 +158,28 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         # patterns from ``/assessments/{id}``, so neither router can shadow the other and
         # registration order is not load-bearing. See agent_routes/v4/agent_routes.py.
         agent_router,
-        # Top-level collection on its own ``/lexeme-cards`` prefix, so unlike the two
-        # routers above it shares nothing and cannot shadow anything. Same package as
-        # ``agent_router`` because it is the same family; a different router because
-        # guide §15.7 rules lexeme cards reference data rather than assessment output.
-        lexeme_card_router,
         user_router,
         group_router,
+        # Registered after the resource domains for the same reason the reference lists
+        # are registered after it: the four predict operations append to the published
+        # schema rather than shifting the paths above them. Its ``/predictions`` prefix
+        # is its own -- no other router declares a path under it, so ordering is not
+        # load-bearing for matching either.
+        predict_router,
+        # The two training routers, on the same terms: ``/training-sessions`` and
+        # ``/training-jobs`` are distinct prefixes that no other router declares a path
+        # under, so ordering is not load-bearing for matching. They are two routers rather
+        # than one because a job's session is metadata on the job, not its parent — the
+        # column is nullable — so the jobs collection is addressed in its own right.
+        training_session_router,
+        training_job_router,
+        # Registered last so the two reference lists append to the published schema
+        # rather than shifting the paths after them, and so "Reference" sorts to the
+        # bottom of /v4/docs — it is supporting data for the routers above, not a
+        # domain of its own. It is the only prefixless router in this loop; see
+        # bible_routes/v4/language_routes.py for why /languages and /scripts share
+        # one router despite sharing no path prefix.
+        language_router,
     ):
         v4_app.include_router(
             domain_router,

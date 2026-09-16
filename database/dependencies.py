@@ -13,16 +13,19 @@ DATABASE_URL = settings.aqua_db
 # Production runs a single persistent loop per worker and benefits from
 # pooling — avoids the asyncpg+TLS handshake on every request.
 #
-# Default sizing: with 8 uvicorn workers, steady-state is ~40 conns per
-# container (8 × pool_size 5) and the burst ceiling is 120 (8 × (5 + 10)).
-# RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
-# 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
-# db.m5.large — so 120/container leaves comfortable headroom even on
-# small instance classes. NOTE: this budget is per-container — N concurrent
-# App Runner instances multiply it (2 × 120 already exceeds t3.small's ~170),
-# and there is no fleet-wide saturation alert yet. See #747. Tune the env
-# vars if running many containers or if other consumers (alembic, batch
-# jobs, replicas) eat the budget.
+# Default sizing: the worker count is WEB_CONCURRENCY (4 by default, set in
+# the Dockerfile), so steady-state is ~20 conns per container (4 × pool_size 5)
+# and the burst ceiling is 60 (4 × (5 + 10)). RDS default max_connections is
+# LEAST({DBInstanceClassMemory/9531392}, 5000) — roughly 170 on db.t3.small,
+# 340 on db.t3.medium, 675 on db.m5.large — so 60/container leaves comfortable
+# headroom even on small instance classes. NOTE: this budget is per-container
+# — N concurrent App Runner instances multiply it (3 × 60 already exceeds
+# t3.small's ~170), and there is no fleet-wide saturation alert yet. See #747.
+# The per-worker pool is deliberately unchanged, so dropping the worker count
+# from 8 to 4 halved container-wide capacity; if the get_db checkout timeouts
+# described below reappear, raise AQUA_DB_POOL_SIZE rather than the worker
+# count. Tune the env vars if running many containers or if other consumers
+# (alembic, batch jobs, replicas) eat the budget.
 #
 # An earlier 2+3 default starved /v3/textsearch (with comparison) under
 # moderate concurrency: a handful of slow searches consumed a worker's
