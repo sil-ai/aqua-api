@@ -256,16 +256,18 @@ rows. Read the differences from every other function above before changing it.
   :class:`AssessmentNotFound`.** Both are 404s; they are separate signals because the
   assessment's reachability is already settled by then. See that class.
 * **The scan is exact and scoped to the assessment, and this is a decision rather than an
-  oversight.** ``tfidf_pca_vector_ivfflat_idx`` exists — 228 GB, 18% of the database,
-  **zero** scans across five weeks of production statistics (``ASSESSMENT-STORAGE-
-  ANALYSIS.md`` §7) — and it is tempting to conclude this read should finally use it. It
-  should not. The query is always scoped to one ``assessment_id`` (at most 41,899
-  vectors, and that column is indexed), a global ANN index cannot be filtered by
-  ``assessment_id`` efficiently, ``lists = 100`` over 171 M rows means ~1.7 M vectors per
-  probe list regardless, and ivfflat returns *approximate* neighbours — so switching
-  would silently change which verses come back. Whether that index should exist at all is
-  a 228 GB storage question that belongs to the storage analysis, not to this read, which
-  neither uses nor drops it.
+  oversight.** There is no ANN index on ``tfidf_pca_vector`` to reach for:
+  ``tfidf_pca_vector_ivfflat_idx`` was dropped in #971, and the reason the planner never
+  chose it is the reason this read did not want one. It was never usable: the 2025 commit
+  that added it rewrote this query into the ``inner_product`` function form in the same
+  commit. Its zero scan count only covers the days since the last restart, so the commit
+  history is what settles that, not the statistics. The query is always scoped to one ``assessment_id`` (at most
+  41,899 vectors, and that column is indexed), a global ANN index cannot be filtered by
+  ``assessment_id`` efficiently, and ivfflat returns *approximate* neighbours — so
+  reaching for one would silently change which verses come back. ``EXPLAIN`` against live
+  data settled it while the index still existed: with the ``assessment_id`` filter the
+  planner took ``ix_tfidf_pca_vector_assessment_id`` plus a top-N heapsort at ~60 ms and
+  left the ivfflat index untouched; only dropping the filter made it switch.
 * **No cache and no materialization.** ``tfidf`` is the most expensive type to run
   (460 GB of the 610 GB added in 2026, ~110 MB per assessment), which is a reason to
   measure before adding anything here, not a reason to add it pre-emptively.
