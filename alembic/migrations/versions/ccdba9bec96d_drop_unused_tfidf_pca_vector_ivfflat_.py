@@ -5,16 +5,27 @@ Revises: b720f1c8a4d2
 Create Date: 2026-09-17 12:04:12.142858
 
 `tfidf_pca_vector_ivfflat_idx` is 246 GB — 19.4% of the 1,268 GB database — and
-`pg_stat_user_indexes.idx_scan` reports 0 scans across 54 days of production
-statistics. Its two btree siblings on the same table served 73,638 scans
-(`assessment_id`) and 3,163 (`vref`) over that window, so the table is busy; it
-is this index specifically that nothing reaches.
+`pg_stat_user_indexes.idx_scan` reports 0 scans. That counter reaches back 54
+days because `stats_reset` is null and the server's uptime is 54 days, not
+because anything changed 54 days ago: it bounds the evidence, not the idleness.
+Its two btree siblings on the same table recorded 73,638 scans (`assessment_id`)
+and 3,163 (`vref`) over that same window, so the counter is recording and the
+table is busy — it is this index specifically that nothing reaches.
 
-EXPLAIN against live data shows why. Every vector query the API issues carries a
+What settles it is the commit history, not the statistics. Commit 2d9964a added
+this index on 10 July 2025 and, in the same commit, rewrote the similarity query
+from pgvector's `<#>` operator (ascending, indexable) to `inner_product(...)`
+called as a function and ordered descending, which no ivfflat index can serve.
+It was orphaned the day it was created. The four v3/v4 call sites still using
+the function form inherit that rewrite.
+
+That leaves one call site that could use it — `assessment_service.py`'s v4
+similar-verses read, which does use operator form — and EXPLAIN against live
+data shows why it does not either. Every vector query the API issues carries a
 `WHERE assessment_id = :id` filter, and with that filter the planner takes
 `ix_tfidf_pca_vector_assessment_id` plus a top-N heapsort (~60 ms) and never
-touches the ivfflat index. Only removing the filter makes it switch. So the
-index is eligible and simply never the cheaper plan.
+touches the ivfflat index. Only removing the filter makes it switch. So on the
+one query where the index is eligible, it is simply never the cheaper plan.
 
 Dropping it takes tfidf_pca_vector from 499 GB to ~253 GB and the database from
 ~1,268 GB to ~1,022 GB.

@@ -257,9 +257,11 @@ rows. Read the differences from every other function above before changing it.
   assessment's reachability is already settled by then. See that class.
 * **The scan is exact and scoped to the assessment, and this is a decision rather than an
   oversight.** There is no ANN index on ``tfidf_pca_vector`` to reach for:
-  ``tfidf_pca_vector_ivfflat_idx`` was dropped in #971, having served zero scans in 54
-  days of production statistics, and the reason the planner never chose it is the reason
-  this read did not want it. The query is always scoped to one ``assessment_id`` (at most
+  ``tfidf_pca_vector_ivfflat_idx`` was dropped in #971, and the reason the planner never
+  chose it is the reason this read did not want one. It was never usable: the 2025 commit
+  that added it rewrote this query into the ``inner_product`` function form in the same
+  commit. Its zero scan count only covers the days since the last restart, so the commit
+  history is what settles that, not the statistics. The query is always scoped to one ``assessment_id`` (at most
   41,899 vectors, and that column is indexed), a global ANN index cannot be filtered by
   ``assessment_id`` efficiently, and ivfflat returns *approximate* neighbours — so
   reaching for one would silently change which verses come back. ``EXPLAIN`` against live

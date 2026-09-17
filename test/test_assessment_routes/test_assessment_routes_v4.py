@@ -5180,8 +5180,9 @@ class TestSimilarVersesContract:
         }
 
     def test_the_ivfflat_index_is_gone_and_the_btree_siblings_remain(self):
-        """``tfidf_pca_vector_ivfflat_idx`` was dropped in #971 — 246 GB for zero scans in
-        54 days — and this pins that it stays dropped. ``create_all`` builds whatever the
+        """``tfidf_pca_vector_ivfflat_idx`` was dropped in #971 — 246 GB, and never usable
+        since the 2025 commit that added it rewrote the query into a form no ivfflat index
+        can serve — and this pins that it stays dropped. ``create_all`` builds whatever the
         model declares, so re-adding it to ``__table_args__`` would silently rebuild it in
         every fresh database and every test run.
 
