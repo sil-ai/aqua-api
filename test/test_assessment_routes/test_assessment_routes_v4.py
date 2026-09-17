@@ -194,7 +194,7 @@ from api_v4.schemas.assessment import (
 )
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
 from assessment_routes.v3.results_query_routes import router as v3_results_router
-from assessment_routes.v4 import assessment_service
+from assessment_routes.v4 import assessment_service, tfidf_retrieval
 from assessment_routes.v4.assessment_routes import (
     _SIMILAR_VERSES_QUERY_ECHOES,
     ALIGNMENT_WORD_MAX_LENGTH,
@@ -4506,6 +4506,146 @@ def _make_duplicate_verse_text(db_session, revision_id, vref, text):
     return row.id
 
 
+#: The corpus the GET's fixtures rank over, and the reason it looks the way it does.
+#:
+#: #973 moved the GET's ranking off stored vectors and onto verse *text*, so the old
+#: fixture trick — a vector that is ``head`` on one axis, giving an inner product readable
+#: straight off the mapping — has nothing to attach to. TF-IDF cosine over real text is
+#: not readable that way, so the fixture is built for a different kind of legibility:
+#: ``GEN 1:1`` is the query point and every later verse shares **strictly fewer** of its
+#: words than the one before, so the expected ranking is the mapping's own order.
+#:
+#: Word overlap is what is controlled; the char_wb half of the encoder also contributes,
+#: which is why the assertions are about *ordering* rather than about exact values. The
+#: one exact value available by construction is the identical verse's: two identical
+#: L2-normalized rows have cosine exactly 1.
+SHORTLIST_QUERY_VREF = "GEN 1:1"
+SHORTLIST_CORPUS = {
+    "GEN 1:1": "light darkness waters firmament",
+    # four of four words -> identical vector -> cosine 1.0
+    "GEN 1:2": "light darkness waters firmament",
+    "GEN 1:3": "light darkness serpent garden",  # two of four
+    "GEN 1:4": "light chariot pharaoh harvest",  # one of four
+    "GEN 1:5": "vineyard shepherd mountain",  # none
+}
+#: :data:`SHORTLIST_CORPUS` ranked against its own query point, most similar first.
+SHORTLIST_ORDER = ["GEN 1:2", "GEN 1:3", "GEN 1:4", "GEN 1:5"]
+
+
+def _vectorizer_payload(vectorizer, analyzer, ngram_range):
+    """One ``tfidf_vectorizers`` row's columns, as the v3 push endpoint would write them.
+
+    Shared by :func:`_store_artifacts` and :func:`_store_recipe` so the two fixtures
+    cannot describe the same stored artifact differently — the POST's encoder and the
+    GET's recipe read the same rows.
+    """
+    return {
+        "vocabulary": {k: int(v) for k, v in vectorizer.vocabulary_.items()},
+        "idf": vectorizer.idf_.tolist(),
+        "params": {
+            "analyzer": analyzer,
+            "ngram_range": list(ngram_range),
+            "lowercase": True,
+            "max_df": 1.0,
+            "min_df": 1,
+        },
+    }
+
+
+def _store_recipe(db_session, assessment_id, version_id, corpus):
+    """Fit and store the two vectorizers the GET reranks with — and **no SVD row**.
+
+    Deliberately no ``tfidf_svd``. The GET's ranking never loads one, and
+    sil-ai/aqua-assessments#471 stops pushing one at all, so a fixture that stored an SVD
+    would hide a path that had silently come to depend on it. This is also what makes
+    these fixtures a live check that the read works in the post-#471 world.
+
+    ``n_components`` on the run row is still written because the column is ``NOT NULL``;
+    nothing on this path reads it.
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    word = TfidfVectorizer(
+        analyzer="word", ngram_range=(1, 2), lowercase=True, max_df=1.0, min_df=1
+    )
+    char = TfidfVectorizer(
+        analyzer="char_wb", ngram_range=(3, 6), lowercase=True, max_df=1.0, min_df=1
+    )
+    word.fit(corpus)
+    char.fit(corpus)
+    db_session.add(
+        TfidfArtifactRun(
+            assessment_id=assessment_id,
+            source_version_id=version_id,
+            n_components=VECTOR_DIMENSIONS,
+            n_word_features=len(word.vocabulary_),
+            n_char_features=len(char.vocabulary_),
+            n_corpus_vrefs=len(corpus),
+            sklearn_version="1.6.1",
+        )
+    )
+    db_session.commit()
+    db_session.add(
+        TfidfVectorizerArtifact(
+            assessment_id=assessment_id,
+            kind="word",
+            **_vectorizer_payload(word, "word", (1, 2)),
+        )
+    )
+    db_session.add(
+        TfidfVectorizerArtifact(
+            assessment_id=assessment_id,
+            kind="char",
+            **_vectorizer_payload(char, "char_wb", (3, 6)),
+        )
+    )
+    db_session.commit()
+
+
+class _Assessed:
+    """What :func:`_texted` hands a test: the three ids and the corpus behind them."""
+
+    def __init__(self, assessment_id, revision_id, reference_id, corpus):
+        self.assessment_id = assessment_id
+        self.revision_id = revision_id
+        self.reference_id = reference_id
+        self.corpus = corpus
+
+
+def _texted(
+    db_session,
+    version_id,
+    corpus=None,
+    *,
+    reference=True,
+    artifacts=True,
+    type_="tfidf",
+):
+    """A ``tfidf`` assessment over a revision whose ``verse_text`` is ``corpus``.
+
+    The GET's fixture, and it builds what the *read* now needs rather than what the
+    runner used to write: verse text for the revision, and the fitted vectorizers. No
+    ``tfidf_pca_vector`` rows at all — their absence is what makes these tests evidence
+    that the read no longer touches them.
+
+    ``artifacts=False`` leaves the recipe out, which is the ``TFIDF_ARTIFACTS_NOT_FOUND``
+    case the GET could not previously reach.
+    """
+    corpus = SHORTLIST_CORPUS if corpus is None else corpus
+    revision_id, reference_id = _pair(db_session, version_id)
+    _make_verse_texts(db_session, revision_id, corpus)
+    assessment_id = _make_assessment(
+        db_session,
+        revision_id,
+        reference_id if reference else None,
+        type_=type_,
+    )
+    if artifacts:
+        texts = [text for text in corpus.values() if text and text != RANGE]
+        _store_recipe(db_session, assessment_id, version_id, texts)
+    return _Assessed(assessment_id, revision_id, reference_id, corpus)
+
+
 def _similar(client, token, assessment_id, **params):
     return client.get(
         f"{PREFIX}/assessments/{assessment_id}/similar-verses",
@@ -4534,21 +4674,39 @@ class TestSimilarVersesAuthorization:
     """
 
     def _vectorized(self, db_session, version_id, *, type_="tfidf", **kwargs):
+        """A readable assessment — verse text plus a fitted recipe, and no stored vectors.
+
+        Still called ``_vectorized`` because that is what the *runner* did to it; #973
+        changed only what the read looks at. Not :func:`_texted` itself because these
+        tests need the ``deleted`` and ``is_training`` flags passed straight through.
+
+        Note this is no longer the same helper as
+        :class:`TestSimilarVersesPostAuthorization`'s, which is byte-identical to what
+        this used to be. The POST still ranks stored vectors, so it still has to write
+        them; that the two drifted apart is the seam #973 opened, not an oversight.
+        """
         revision_id, reference_id = _pair(db_session, version_id)
+        _make_verse_texts(db_session, revision_id, SHORTLIST_CORPUS)
         assessment_id = _make_assessment(
             db_session, revision_id, reference_id, type_=type_, **kwargs
         )
-        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
-        _make_vector(db_session, assessment_id, "GEN 1:2", 2)
+        _store_recipe(
+            db_session, assessment_id, version_id, list(SHORTLIST_CORPUS.values())
+        )
         return revision_id, assessment_id
 
     def test_the_tfidf_type_returns_its_neighbours(
         self, client, regular_token1, db_session, group1_version
     ):
         _, assessment_id = self._vectorized(db_session, group1_version)
-        assert _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        ) == ["GEN 1:2"]
+        assert (
+            _hit_vrefs(
+                _similar(
+                    client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+                )
+            )
+            == SHORTLIST_ORDER
+        )
 
     @pytest.mark.parametrize("type_", SIMILARITY_UNSERVED_TYPES)
     def test_a_type_this_read_does_not_serve_is_a_404(
@@ -4695,236 +4853,452 @@ class TestSimilarVersesAuthorization:
 
 
 class TestSimilarVersesRanking:
-    """That this is a nearest-neighbour search, and that the search is the exact one."""
+    """That this is a nearest-neighbour search, and that the search is the one #973 built.
 
-    def _vectorized(self, db_session, group1_version, vectors, *, reference=True):
-        """A tfidf assessment holding ``{vref: head}``.
+    Rewritten wholesale, because the fixture trick this class was built on no longer has
+    anything to attach to. Every test here used to describe a vector that was ``head`` on
+    one axis and zero elsewhere, so the inner product against ``GEN 1:1`` was exactly
+    ``head`` and the expected ranking could be read straight off the mapping. The ranking
+    now runs over verse *text* through the assessment's fitted vocabulary, and a TF-IDF
+    cosine is not legible that way.
 
-        Every fixture vector is ``head`` on the first axis and zero elsewhere, so its inner
-        product against ``GEN 1:1``'s ``_vector(1)`` is exactly ``head`` — the expected
-        ranking is the fixture read back.
+    So the fixture (:data:`SHORTLIST_CORPUS`) is built for a different legibility: each
+    verse shares strictly fewer of the query's words than the one before, and the
+    assertions are about **order**. Two exact values are still available by construction —
+    an identical verse scores exactly 1, and a cosine over non-negative TF-IDF weights can
+    never be negative — and both are pinned, because they are what the wire contract now
+    promises.
+    """
+
+    def _texted(self, db_session, group1_version, corpus=None, **kwargs):
+        """A tfidf assessment over a revision whose text is ``corpus``.
+
+        Wraps :func:`_texted` to keep ``self.revision_id`` / ``self.reference_id``, which
+        some tests below use to add or amend text on either side.
         """
-        revision_id, reference_id = _pair(db_session, group1_version)
-        assessment_id = _make_assessment(
-            db_session,
-            revision_id,
-            reference_id if reference else None,
-            type_="tfidf",
-        )
-        for vref, head in vectors.items():
-            _make_vector(db_session, assessment_id, vref, head)
-        self.revision_id = revision_id
-        self.reference_id = reference_id
-        return assessment_id
+        assessed = _texted(db_session, group1_version, corpus, **kwargs)
+        self.revision_id = assessed.revision_id
+        self.reference_id = assessed.reference_id
+        return assessed.assessment_id
 
     def test_neighbours_come_back_most_similar_first(
         self, client, regular_token1, db_session, group1_version
     ):
-        assessment_id = self._vectorized(
-            db_session,
-            group1_version,
-            {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2, "GEN 1:4": 9},
+        assessment_id = self._texted(db_session, group1_version)
+        resp = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
         )
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        assert _hit_vrefs(resp) == ["GEN 1:4", "GEN 1:2", "GEN 1:3"]
+        assert _hit_vrefs(resp) == SHORTLIST_ORDER
         similarities = [hit["similarity"] for hit in _hits(resp)]
         assert similarities == sorted(similarities, reverse=True)
-        assert similarities == [9.0, 5.0, 2.0]
+        # Strictly decreasing, not merely sorted: the fixture shares strictly fewer words
+        # at each step, so equal scores would mean the ranking is not discriminating.
+        assert all(a > b for a, b in zip(similarities, similarities[1:])), similarities
+
+    def test_an_identical_verse_scores_exactly_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The one exact value this fixture can assert, and it pins the normalization.
+
+        Two identical L2-normalized rows have a dot product of exactly 1, so this fails if
+        the encoder ever stops normalizing — which is the mistake that would make
+        ``similarity`` an un-normalized inner product again, i.e. the #967 item 4 defect
+        this design removes at the source.
+        """
+        assessment_id = self._texted(db_session, group1_version)
+        hits = _hits(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        )
+        assert hits[0]["vref"] == "GEN 1:2"
+        assert hits[0]["similarity"] == pytest.approx(1.0)
+
+    def test_similarity_is_a_cosine_so_it_is_never_negative(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Replaces "a negative similarity still ranks below a positive one".
+
+        That test existed to pin the sign flip around pgvector's ``<#>``, which returns the
+        *negated* inner product — get it wrong and the ranking silently inverts. This read
+        no longer computes a ``<#>`` distance, so there is no sign to flip: TF-IDF weights
+        are non-negative and the rows are L2-normalized, so every similarity is in
+        ``[0, 1]``.
+
+        The sign flip is still live on the POST, which still ranks stored vectors, and
+        :class:`TestSimilarVersesPostBatch` keeps a test for it. Deleting this one outright
+        would have left the *new* invariant — the published ``[0, 1]`` range — unpinned.
+        """
+        assessment_id = self._texted(
+            db_session,
+            group1_version,
+            {
+                "GEN 1:1": "light darkness waters firmament",
+                "GEN 1:2": "light darkness waters firmament",
+                "GEN 1:3": "vineyard shepherd mountain",
+            },
+        )
+        hits = _hits(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        )
+        assert hits
+        assert all(0.0 <= hit["similarity"] <= 1.0 for hit in hits), hits
 
     def test_the_query_vref_is_excluded_from_its_own_results(
         self, client, regular_token1, db_session, group1_version
     ):
-        """It would otherwise be the first hit every time, at maximum similarity — a row
-        that tells the caller only what they already typed."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        """It would otherwise be the first hit every time, at similarity 1 — a row that
+        tells the caller only what they already typed. Pushed into the shortlist's ``WHERE``
+        clause rather than filtered afterwards, so ``k`` candidates survive the drop."""
+        assessment_id = self._texted(db_session, group1_version)
+        assert SHORTLIST_QUERY_VREF not in _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
         )
-        assert _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        ) == ["GEN 1:2"]
-
-    def test_a_negative_similarity_still_ranks_below_a_positive_one(
-        self, client, regular_token1, db_session, group1_version
-    ):
-        """The sign flip around pgvector's ``<#>`` operator, which returns the *negated*
-        inner product: get it wrong and the ranking silently inverts, which no ordering
-        assertion over uniformly positive fixtures would catch."""
-        assessment_id = self._vectorized(
-            db_session,
-            group1_version,
-            {"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4},
-        )
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        assert _hit_vrefs(resp) == ["GEN 1:2", "GEN 1:3"]
-        assert [hit["similarity"] for hit in _hits(resp)] == [3.0, -4.0]
 
     def test_ties_break_on_vref_so_the_same_request_answers_the_same_way(
         self, client, regular_token1, db_session, group1_version
     ):
-        """v3 has no tiebreak, so equally similar verses come back in whatever order the
-        scan produced — and which of them survives ``limit`` is then arbitrary too."""
-        assessment_id = self._vectorized(
+        """Three verses with identical text score identically, so without a tiebreak the
+        order is whatever the scan produced — and which of them survives ``limit`` is
+        arbitrary too. ``vref`` breaks it, ascending."""
+        assessment_id = self._texted(
             db_session,
             group1_version,
-            {"GEN 1:1": 1, "GEN 1:5": 4, "GEN 1:3": 4, "GEN 1:4": 4},
+            {
+                "GEN 1:1": "light darkness waters firmament",
+                "GEN 1:5": "light darkness waters firmament",
+                "GEN 1:3": "light darkness waters firmament",
+                "GEN 1:4": "light darkness waters firmament",
+            },
         )
-        first = _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        )
-        second = _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        )
-        assert first == ["GEN 1:3", "GEN 1:4", "GEN 1:5"]
-        assert first == second
+        answers = [
+            _hit_vrefs(
+                _similar(
+                    client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+                )
+            )
+            for _ in range(3)
+        ]
+        assert answers[0] == ["GEN 1:3", "GEN 1:4", "GEN 1:5"]
+        assert answers[0] == answers[1] == answers[2]
 
     def test_limit_is_honoured(
         self, client, regular_token1, db_session, group1_version
     ):
-        assessment_id = self._vectorized(
-            db_session,
-            group1_version,
-            {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2, "GEN 1:4": 9},
+        assessment_id = self._texted(db_session, group1_version)
+        resp = _similar(
+            client,
+            regular_token1,
+            assessment_id,
+            vref=SHORTLIST_QUERY_VREF,
+            limit=2,
         )
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1", limit=2)
-        assert _hit_vrefs(resp) == ["GEN 1:4", "GEN 1:2"]
+        assert _hit_vrefs(resp) == SHORTLIST_ORDER[:2]
         assert resp.json()["limit"] == 2
 
     def test_fewer_neighbours_than_limit_is_a_short_list_not_padding(
         self, client, regular_token1, db_session, group1_version
     ):
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        assessment_id = self._texted(
+            db_session,
+            group1_version,
+            {
+                "GEN 1:1": "light darkness waters firmament",
+                "GEN 1:2": "vineyard shepherd mountain",
+            },
         )
-        body = _similar(client, regular_token1, assessment_id, vref="GEN 1:1").json()
+        body = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+        ).json()
         assert len(body["items"]) == 1
         assert body["limit"] == SIMILAR_VERSES_DEFAULT_LIMIT
 
-    def test_an_assessment_whose_only_vector_is_the_query_returns_an_empty_ranking(
+    def test_a_revision_whose_only_verse_is_the_query_returns_an_empty_ranking(
         self, client, regular_token1, db_session, group1_version
     ):
         """Not a 404: the verse *was* found, it simply has no neighbours. The vref 404 is
         about the query point, never about the size of the answer."""
-        assessment_id = self._vectorized(db_session, group1_version, {"GEN 1:1": 1})
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+        assessment_id = self._texted(
+            db_session,
+            group1_version,
+            {"GEN 1:1": "light darkness waters firmament"},
+        )
+        resp = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+        )
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"] == []
 
-    def test_vectors_of_another_assessment_do_not_leak_in(
+    def test_verses_of_another_revision_do_not_leak_in(
         self, client, regular_token1, db_session, group1_version
     ):
-        """``tfidf_pca_vector`` holds 171 M rows across every assessment ever run, so the
-        ``assessment_id`` clause is the whole of the scoping — and the one thing an ANN
-        index could not have enforced."""
-        mine = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 2}
-        )
-        theirs = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:9": 99}
-        )
-        assert _hit_vrefs(_similar(client, regular_token1, mine, vref="GEN 1:1")) == [
-            "GEN 1:2"
-        ]
-        assert _hit_vrefs(_similar(client, regular_token1, theirs, vref="GEN 1:1")) == [
-            "GEN 1:9"
-        ]
+        """**The scoping moved**, and this is the test that says so.
 
-    def test_a_duplicated_query_vector_resolves_to_the_lowest_id_every_time(
-        self, client, regular_token1, db_session, group1_version
-    ):
-        """``(assessment_id, vref)`` carries no uniqueness constraint, and the query point
-        decides *every* similarity in the response — so an undefined pick among duplicates
-        would reorder the whole ranking, not change one field. v3's bare ``limit(1)`` does
-        exactly that; this pins the lowest-id row instead.
-
-        The two candidate vectors point opposite ways, so picking the wrong one inverts the
-        ranking rather than perturbing it.
-
-        Note this test **passes against the unordered form too**, on this data: with a
-        small freshly-written table Postgres happens to return the lowest-id row first. It
-        is kept precisely because of that — the behaviour is correct by accident today and
-        would flip silently under a different physical row order, which is the hardest kind
-        of bug to attribute later. The sibling test on ``verse_text`` does fail without its
-        ordering, so that one caught a live defect rather than pinning a lucky one.
+        It used to read "vectors of another assessment do not leak in", because
+        ``tfidf_pca_vector`` holds every assessment's rows in one table and the
+        ``assessment_id`` clause was the whole of the scoping. The corpus is now
+        ``verse_text``, which holds every *revision*'s rows in one table — so the scoping
+        clause is ``revision_id``, and it is the same kind of load-bearing single
+        predicate. Getting it wrong would silently rank one Bible's verses against
+        another's.
         """
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4}
+        mine = self._texted(db_session, group1_version)
+        theirs = self._texted(
+            db_session,
+            group1_version,
+            {
+                "GEN 1:1": "light darkness waters firmament",
+                "GEN 1:9": "light darkness waters firmament",
+            },
         )
-        # A second, later vector for the query vref itself, pointing the other way.
-        _make_vector(db_session, assessment_id, "GEN 1:1", -1)
+        assert mine != theirs
+        assert (
+            _hit_vrefs(
+                _similar(client, regular_token1, mine, vref=SHORTLIST_QUERY_VREF)
+            )
+            == SHORTLIST_ORDER
+        )
+        assert _hit_vrefs(
+            _similar(client, regular_token1, theirs, vref=SHORTLIST_QUERY_VREF)
+        ) == ["GEN 1:9"]
+
+    def test_a_duplicated_query_verse_resolves_to_the_lowest_id_every_time(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``(revision_id, verse_reference)`` carries no uniqueness constraint, and the
+        query point decides *every* similarity in the response — so an undefined pick among
+        duplicates reorders the whole ranking rather than changing one field.
+
+        The second row for the query vref is text with nothing in common with the first, so
+        picking it would invert the ranking rather than perturb it.
+        """
+        assessment_id = self._texted(db_session, group1_version)
+        _make_duplicate_verse_text(
+            db_session,
+            self.revision_id,
+            SHORTLIST_QUERY_VREF,
+            "vineyard shepherd mountain",
+        )
         for _ in range(3):
-            resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-            assert _hit_vrefs(resp) == ["GEN 1:2", "GEN 1:3"]
-            assert [hit["similarity"] for hit in _hits(resp)] == [3.0, -4.0]
+            assert (
+                _hit_vrefs(
+                    _similar(
+                        client,
+                        regular_token1,
+                        assessment_id,
+                        vref=SHORTLIST_QUERY_VREF,
+                    )
+                )
+                == SHORTLIST_ORDER
+            )
 
     def test_the_query_point_lookup_is_ordered_in_the_sql_itself(
         self, client, regular_token1, db_session, group1_version
     ):
         """The ordering above, pinned where physical row order cannot flatter it.
 
-        Its behavioural sibling passes against the unordered form too, because a small
-        freshly-written table happens to come back lowest-id first — so dropping the
-        ``ORDER BY`` would leave the suite green. That is the wrong way round for the one
-        line in this read that changed in response to review, and the one whose absence
-        reorders every number in the response rather than changing a single field.
+        The behavioural sibling can pass on a small freshly-written table that happens to
+        come back lowest-id first, so dropping the ``ORDER BY`` could leave the suite
+        green. That is the wrong way round for the one line whose absence reorders every
+        number in the response rather than changing a single field. So this asserts the
+        *statement*, the trick :func:`_captured_sql` already plays for the #648 two-step.
 
-        So this asserts the *statement* rather than the answer, which is the trick
-        :func:`_captured_sql` already plays for the #648 two-step: it cannot be flattered
-        by how Postgres lays the rows out today. The behavioural sibling is kept as well —
-        it still describes the guarantee a reader cares about.
-
-        The query point is the ``tfidf_pca_vector`` statement with no ``<#>`` in it: the
-        ranking computes a distance, this one only fetches a vector.
+        Three statements touch ``verse_text`` on this read: the query point, and the two
+        hydrations. The query point is the one that matches a **single** verse_reference —
+        the hydrations match the whole hit set with ``IN``, and the shortlist is the one
+        with ``<->`` in it.
         """
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 3}
-        )
+        assessment_id = self._texted(db_session, group1_version)
         with _captured_sql() as captured:
-            resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+            resp = _similar(
+                client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+            )
         assert resp.status_code == 200, resp.text
-
         lookups = [
             statement
-            for statement, _ in _touching(captured, "tfidf_pca_vector")
-            if "<#>" not in statement
+            for statement, _ in _touching(captured, "verse_text")
+            if "verse_reference = " in statement
         ]
         assert len(lookups) == 1, lookups
-        assert "ORDER BY tfidf_pca_vector.id" in lookups[0], lookups[0]
+        assert "ORDER BY verse_text.id" in lookups[0], lookups[0]
 
-    def test_the_query_point_is_this_assessments_vector_not_another_ones(
+    def test_the_ranking_reads_no_stored_vectors_at_all(
         self, client, regular_token1, db_session, group1_version
     ):
-        """Both halves of the scoping: the ranked set *and* the query vector are looked up
-        within one assessment. A query vector taken from the wrong assessment would reorder
-        the results without erroring."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": -1, "GEN 1:2": 3, "GEN 1:3": -5}
+        """The point of #973, asserted the only way it can be: by what the read touches.
+
+        The fixture writes no ``tfidf_pca_vector`` rows, so every behavioural test in this
+        class already passes without them — but a read that *optionally* consulted the
+        table would pass those too, and would then keep 253 GB alive. This pins that the
+        table is never queried, which is the property the storage decision depends on.
+        """
+        assessment_id = self._texted(db_session, group1_version)
+        with _captured_sql() as captured:
+            resp = _similar(
+                client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+            )
+        assert resp.status_code == 200, resp.text
+        assert _hits(resp)
+        assert _touching(captured, "tfidf_pca_vector") == []
+        assert _touching(captured, "tfidf_svd") == []
+
+    def test_the_shortlist_is_ranked_by_trigram_distance_within_the_revision(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The shortlist's shape, pinned where a refactor would quietly change it.
+
+        Three properties, all of which are the difference between ~117 ms and the 401 ms
+        case: the ordering is the ``<->`` distance and nothing else (a second sort key
+        stops Postgres walking the GiST index in distance order), ``revision_id`` is
+        inlined as a literal rather than bound (so a generic plan cannot skip the partial
+        index), and the limit is
+        :func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`'s rather than the
+        caller's.
+        """
+        assessment_id = self._texted(db_session, group1_version)
+        with _captured_sql() as captured:
+            resp = _similar(
+                client,
+                regular_token1,
+                assessment_id,
+                vref=SHORTLIST_QUERY_VREF,
+                limit=3,
+            )
+        assert resp.status_code == 200, resp.text
+        ((shortlist, parameters),) = [
+            captured_statement
+            for captured_statement in _touching(captured, "verse_text")
+            if "<->" in captured_statement[0]
+        ]
+        # The revision id is *in the statement text*, which is the whole point: bound, a
+        # generic plan could not prove the query implies the partial index's predicate.
+        assert f"revision_id = {self.revision_id}" in shortlist, shortlist
+        # The limit is bound, so it is asserted on the parameters rather than the text.
+        # It is the shortlist's own k, not the caller's limit of 3.
+        assert tfidf_retrieval.shortlist_size(3) in tuple(parameters), parameters
+        assert 3 not in tuple(parameters), parameters
+        # The distance is the whole ORDER BY. Anything after it is what defeats the index.
+        order_by = shortlist.split("ORDER BY", 1)[1].split("LIMIT", 1)[0]
+        assert "<->" in order_by
+        assert "verse_reference" not in order_by, order_by
+
+    @pytest.mark.parametrize(
+        "unusable",
+        [pytest.param("", id="empty"), pytest.param(RANGE, id="range-marker")],
+    )
+    def test_a_verse_with_no_usable_text_is_not_a_candidate(
+        self, client, regular_token1, db_session, group1_version, unusable
+    ):
+        """Keeps today's corpus rather than widening it, which is the subtle half.
+
+        ``aqua-assessments`` loads text with ``include_verses=all``, a mode that returns
+        all 41,899 slots with the ``<range>`` marker rewritten to ``""``, then drops the
+        empty ones — so such a verse never got a vector and could never be a hit. Reading
+        ``verse_text`` directly would have made them candidates for the first time, at
+        similarity 0. The filter is there to *keep* behaviour, not to change it.
+        """
+        assessment_id = self._texted(
+            db_session,
+            group1_version,
+            {
+                "GEN 1:1": "light darkness waters firmament",
+                "GEN 1:2": "light darkness serpent garden",
+                "GEN 1:3": unusable,
+            },
         )
-        # Same vref, a different assessment, a very different vector.
-        other = self._vectorized(db_session, group1_version, {"GEN 1:1": 1})
-        assert other != assessment_id
-        # Against this assessment's own GEN 1:1 (head -1), GEN 1:3 (head -5) scores +5 and
-        # GEN 1:2 (head 3) scores -3. Using the other assessment's vector would flip them.
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
-        assert _hit_vrefs(resp) == ["GEN 1:3", "GEN 1:2"]
-        assert [hit["similarity"] for hit in _hits(resp)] == [5.0, -3.0]
+        assert _hit_vrefs(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        ) == ["GEN 1:2"]
+
+    @pytest.mark.parametrize(
+        "unusable",
+        [pytest.param("", id="empty"), pytest.param(RANGE, id="range-marker")],
+    )
+    def test_a_query_verse_with_no_usable_text_is_the_vref_404(
+        self, client, regular_token1, db_session, group1_version, unusable
+    ):
+        """The same three conditions, on the *query* side, and the same 404 as before.
+
+        A verse the run skipped as empty had no stored vector, so asking about it was
+        already ``VREF_NOT_FOUND``. It has no usable text either, so it still is — the
+        code and the meaning are unchanged even though what is looked up is not.
+        """
+        assessment_id = self._texted(
+            db_session,
+            group1_version,
+            {"GEN 1:1": unusable, "GEN 1:2": "light darkness serpent garden"},
+        )
+        resp = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "VREF_NOT_FOUND"
+
+    def test_an_assessment_with_no_recipe_is_the_artifacts_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """**New failure on this endpoint.** The GET could not previously raise it: it
+        compared two stored vectors and needed no artifacts. It reranks through the fitted
+        vocabulary now, so an assessment holding results but no artifacts has nothing to
+        rank with. Same code, status and details the POST reports for the same condition —
+        a client should not have to learn it twice."""
+        assessment_id = self._texted(db_session, group1_version, artifacts=False)
+        resp = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+        )
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "TFIDF_ARTIFACTS_NOT_FOUND"
+        assert resp.json()["error"]["details"] == {"assessment_id": assessment_id}
+
+    def test_two_assessments_over_one_revision_answer_identically(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A deliberate behaviour change, pinned rather than left to be discovered.
+
+        The vectorizers are fit on the revision's text, so every assessment over one
+        revision fits the same vocabulary; the recipe cache keys on ``revision_id`` and
+        picks the revision's newest run, which is what collapses two byte-identical cache
+        entries into one. The visible consequence is this: two ``tfidf`` assessments over
+        the same revision now return the same ranking for the same ``vref``, where before
+        each ranked against its own separately-fitted vectors and could differ slightly.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, SHORTLIST_CORPUS)
+        texts = list(SHORTLIST_CORPUS.values())
+        ids = []
+        for _ in range(2):
+            assessment_id = _make_assessment(
+                db_session, revision_id, reference_id, type_="tfidf"
+            )
+            _store_recipe(db_session, assessment_id, group1_version, texts)
+            ids.append(assessment_id)
+        first, second = (
+            _hits(
+                _similar(
+                    client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+                )
+            )
+            for assessment_id in ids
+        )
+        assert first == second
+        assert [hit["vref"] for hit in first] == SHORTLIST_ORDER
 
 
 class TestSimilarVersesText:
-    """The text fields ``/results`` dropped and this read keeps, and the reference half."""
+    """The text fields ``/results`` dropped and this read keeps, and the reference half.
 
-    def _vectorized(self, db_session, group1_version, vectors, *, reference=True):
-        revision_id, reference_id = _pair(db_session, group1_version)
-        assessment_id = _make_assessment(
-            db_session,
-            revision_id,
-            reference_id if reference else None,
-            type_="tfidf",
-        )
-        for vref, head in vectors.items():
-            _make_vector(db_session, assessment_id, vref, head)
-        self.revision_id = revision_id
-        self.reference_id = reference_id
-        return assessment_id
+    One of these tests changed meaning in #973 rather than merely changing fixture, and it
+    is worth reading the class with that in mind: the corpus *is* ``verse_text`` now, so a
+    hit is a verse the read found **by its text**. ``text`` can therefore no longer be
+    null on this endpoint — see
+    :meth:`test_every_hit_now_has_text_because_text_is_what_was_searched`, which replaces
+    the old test for a hit the revision had no row for. ``reference_text`` is unaffected:
+    the reference revision is still an independent lookup that can miss.
+    """
+
+    def _texted(self, db_session, group1_version, corpus=None, **kwargs):
+        assessed = _texted(db_session, group1_version, corpus, **kwargs)
+        self.revision_id = assessed.revision_id
+        self.reference_id = assessed.reference_id
+        return assessed.assessment_id
 
     def test_the_revisions_text_is_populated_for_every_hit(
         self, client, regular_token1, db_session, group1_version
@@ -4933,40 +5307,51 @@ class TestSimilarVersesText:
         fields were dropped because v3 ignores the parameter that would fill them and they
         were always null; here they are the point — a ranked list of bare references cannot
         be rendered without a request per hit."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2}
+        assessment_id = self._texted(db_session, group1_version)
+        hits = _hits(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
         )
-        _make_verse_texts(
-            db_session,
-            self.revision_id,
-            {"GEN 1:2": "and the earth", "GEN 1:3": "and God said"},
-        )
-        hits = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
         assert [(hit["vref"], hit["text"]) for hit in hits] == [
-            ("GEN 1:2", "and the earth"),
-            ("GEN 1:3", "and God said"),
+            (vref, SHORTLIST_CORPUS[vref]) for vref in SHORTLIST_ORDER
         ]
 
-    def test_a_hit_the_revision_has_no_row_for_is_null_text_not_an_error(
+    def test_every_hit_now_has_text_because_text_is_what_was_searched(
         self, client, regular_token1, db_session, group1_version
     ):
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
+        """Replaces "a hit the revision has no row for is null text, not an error".
+
+        That case is now unreachable on this endpoint, and saying so is more useful than
+        deleting the test quietly. The ranking is drawn from ``verse_text`` rows for the
+        assessed revision, and the shortlist excludes null, empty and ``<range>`` rows —
+        so a hit is by construction a verse with text, and ``text`` is never null here.
+
+        It is still nullable on the **POST**, which ranks stored vectors and so can return
+        a vref the revision holds no text for. The field stays optional for that reason;
+        this pins that the GET simply never exercises it, rather than that the field
+        changed.
+        """
+        assessment_id = self._texted(db_session, group1_version)
+        hits = _hits(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
         )
-        (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
-        assert hit["text"] is None
+        assert hits
+        assert all(hit["text"] for hit in hits)
 
     def test_an_assessment_with_a_reference_returns_the_references_text(
         self, client, regular_token1, db_session, group1_version
     ):
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
-        )
-        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "revision text"})
+        assessment_id = self._texted(db_session, group1_version)
         _make_verse_texts(db_session, self.reference_id, {"GEN 1:2": "reference text"})
-        (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="GEN 1:1"))
-        assert hit["text"] == "revision text"
-        assert hit["reference_text"] == "reference text"
+        hits = _hits(
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        )
+        first = hits[0]
+        assert first["vref"] == "GEN 1:2"
+        assert first["text"] == SHORTLIST_CORPUS["GEN 1:2"]
+        assert first["reference_text"] == "reference text"
+        # The reference revision holds nothing for the other hits, which is a null rather
+        # than an error — the two revisions are hydrated independently.
+        assert all(hit["reference_text"] is None for hit in hits[1:])
 
     def test_an_assessment_without_a_reference_returns_null_rather_than_erroring(
         self, client, regular_token1, db_session, group1_version
@@ -4974,35 +5359,56 @@ class TestSimilarVersesText:
         """The normal case for this type: ``TfidfOptions`` declares no ``reference_id``, so
         no v4-created tfidf assessment has one. A v3-created row can, which is why both
         branches are covered rather than only this one."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}, reference=False
+        assessment_id = self._texted(db_session, group1_version, reference=False)
+        resp = _similar(
+            client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
         )
-        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "revision text"})
-        resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
         assert resp.status_code == 200, resp.text
-        (hit,) = _hits(resp)
-        assert hit["text"] == "revision text"
-        assert hit["reference_text"] is None
+        hits = _hits(resp)
+        assert all(hit["text"] for hit in hits)
+        assert all(hit["reference_text"] is None for hit in hits)
 
-    def test_duplicate_verse_text_rows_resolve_to_the_lowest_id_every_time(
+    def test_duplicate_verse_text_rows_collapse_to_one_hit_at_the_lowest_id(
         self, client, regular_token1, db_session, group1_version
     ):
-        """``verse_text`` has no uniqueness constraint on ``(revision_id, vref)``, and v3
-        builds its mapping from an unordered result — so which text wins is undefined and
-        can differ between two identical requests. Ordering by id makes it first-write-wins,
-        the convention the tree already applies to this hazard."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}
-        )
-        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "first row"})
+        """``verse_text`` has no uniqueness constraint on ``(revision_id, vref)``, and
+        #973 made that a *correctness* problem rather than only an ambiguity one.
+
+        The old ranking read one row per vref out of ``tfidf_pca_vector`` and its only
+        exposure was which duplicate's text got displayed. The shortlist reads
+        ``verse_text`` directly, so both rows for a duplicated verse are candidates on
+        their own trigram distance — and without the dedup in
+        :func:`~assessment_routes.v4.tfidf_retrieval.shortlist` the same vref comes back
+        **twice in one ranking**. That is a visible defect, not a tie-break preference.
+
+        Lowest id wins, which keeps the row that is scored and the row whose text is
+        displayed the same one, and matches what every other read in the tree does with
+        this hazard.
+
+        The duplicate's text is deliberately **unrelated** to the original's rather than a
+        copy of it. A duplicate with identical text would prove only that the two rows
+        collapsed to one hit — the assertion would pass just as well if the code kept the
+        *highest* id, because both rows say the same thing. Unrelated text makes the
+        outcome diagnostic: ``GEN 1:2`` is the query's twin and must rank first at
+        similarity 1, so keeping the wrong row sends it to the bottom of the ranking.
+        """
+        assessment_id = self._texted(db_session, group1_version)
         _make_duplicate_verse_text(
-            db_session, self.revision_id, "GEN 1:2", "second row"
+            db_session, self.revision_id, "GEN 1:2", "vineyard shepherd mountain"
         )
         for _ in range(3):
-            (hit,) = _hits(
-                _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+            hits = _hits(
+                _similar(
+                    client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+                )
             )
-            assert hit["text"] == "first row"
+            vrefs = [hit["vref"] for hit in hits]
+            assert vrefs == SHORTLIST_ORDER, vrefs
+            assert len(vrefs) == len(set(vrefs))
+            # The lowest-id row's text, both displayed and scored: it is the query's twin,
+            # so it ranks first at 1.0. The duplicate shares nothing with the query.
+            assert hits[0]["text"] == SHORTLIST_CORPUS["GEN 1:2"]
+            assert hits[0]["similarity"] == pytest.approx(1.0)
 
     def test_reference_id_passed_as_a_query_parameter_is_ignored_not_honoured(
         self, client, regular_token1, db_session, group1_version
@@ -5011,21 +5417,18 @@ class TestSimilarVersesText:
         is to ignore it — the same rule the plaintext export applies to ``limit``. Pinned
         because "ignored" and "honoured" are indistinguishable unless the named revision
         holds text the assessment's own reference does not."""
-        assessment_id = self._vectorized(
-            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 5}, reference=False
-        )
+        assessment_id = self._texted(db_session, group1_version, reference=False)
         other_revision = _make_revision(db_session, group1_version)
         _make_verse_texts(db_session, other_revision, {"GEN 1:2": "should not appear"})
         resp = _similar(
             client,
             regular_token1,
             assessment_id,
-            vref="GEN 1:1",
+            vref=SHORTLIST_QUERY_VREF,
             reference_id=other_revision,
         )
         assert resp.status_code == 200, resp.text
-        (hit,) = _hits(resp)
-        assert hit["reference_text"] is None
+        assert all(hit["reference_text"] is None for hit in _hits(resp))
 
 
 class TestSimilarVersesContract:
@@ -5035,13 +5438,7 @@ class TestSimilarVersesContract:
     ENVELOPE_FIELDS = {"query_vref", "limit", "items"}
 
     def _vectorized(self, db_session, group1_version):
-        revision_id, reference_id = _pair(db_session, group1_version)
-        assessment_id = _make_assessment(
-            db_session, revision_id, reference_id, type_="tfidf"
-        )
-        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
-        _make_vector(db_session, assessment_id, "GEN 1:2", 5)
-        return assessment_id
+        return _texted(db_session, group1_version).assessment_id
 
     def test_the_hit_has_exactly_its_own_fields(self):
         assert set(SimilarVerseOut.model_fields) == self.HIT_FIELDS
@@ -5134,14 +5531,19 @@ class TestSimilarVersesContract:
         the v4 convention for an unrecognised parameter."""
         assessment_id = self._vectorized(db_session, group1_version)
         plain = _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
+            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
         )
         with_offset = _hit_vrefs(
             _similar(
-                client, regular_token1, assessment_id, vref="GEN 1:1", offset=1, page=2
+                client,
+                regular_token1,
+                assessment_id,
+                vref=SHORTLIST_QUERY_VREF,
+                offset=1,
+                page=2,
             )
         )
-        assert plain == with_offset == ["GEN 1:2"]
+        assert plain == with_offset == SHORTLIST_ORDER
 
     def test_the_declared_query_parameters_are_vref_and_limit_only(self):
         """Pinned at the route so OpenAPI cannot gain ``offset``, ``page`` or
@@ -5261,18 +5663,10 @@ def _store_artifacts(db_session, assessment_id, version_id, word, char, svd, n_d
 
     import numpy as np
 
-    def _payload(vectorizer, analyzer, ngram_range):
-        return {
-            "vocabulary": {k: int(v) for k, v in vectorizer.vocabulary_.items()},
-            "idf": vectorizer.idf_.tolist(),
-            "params": {
-                "analyzer": analyzer,
-                "ngram_range": list(ngram_range),
-                "lowercase": True,
-                "max_df": 1.0,
-                "min_df": 1,
-            },
-        }
+    # The vectorizer half is shared with _store_recipe (the GET's fixture) so the two
+    # cannot describe the same stored artifact differently; the SVD half below is this
+    # fixture's alone, because only the POST's encoder still reads one.
+    _payload = _vectorizer_payload
 
     n_word = len(word.vocabulary_)
     n_char = len(char.vocabulary_)
@@ -5964,7 +6358,15 @@ class TestSimilarVersesPostAuthorization:
 
 
 class TestSimilarVersesPostBatch:
-    """Index alignment, and the equivalence with the GET that has to keep holding."""
+    """Index alignment, and what is left of the equivalence with the GET.
+
+    That equivalence was total until #973: both forms called ``_rank_against_corpus``, so
+    they could not disagree. The GET now ranks verse text through a trigram shortlist and
+    an exact rerank, while the POST still scans stored vectors, so the two can order the
+    same verse's neighbours differently at corpus scale. What survives is the response
+    *shape* and the hydration, and the tests here say which is which rather than dropping
+    the claim.
+    """
 
     def _vectorized(self, db_session, group1_version, vectors):
         revision_id, reference_id = _pair(db_session, group1_version)
@@ -6053,22 +6455,49 @@ class TestSimilarVersesPostBatch:
             {"type": "vector"},
         ]
 
-    def test_a_one_element_vref_batch_equals_the_get(
+    def test_a_one_element_vref_batch_agrees_with_the_get_on_this_corpus(
         self, client, regular_token1, db_session, group1_version
     ):
-        """The equivalence the Q4 ruling states, asserted directly — it is exactly the kind
-        of claim that quietly stops being true. Both forms share the ranking helper, so a
-        change to one that did not change the other would land here.
+        """Narrowed by #973, and the narrowing is the point of the docstring.
 
-        Text is included on both sides, so this also pins that the hydration is the same:
-        the POST fetches it once across every query point's hits and the GET once for one.
+        This used to assert the two forms return *identical* items, which was a real
+        guarantee: both called ``_rank_against_corpus``. It is not one any more. The GET
+        shortlists ~100 candidates by trigram distance and reranks them by TF-IDF cosine;
+        the POST still scans stored vectors by inner product. At corpus scale they can
+        order the same verse's neighbours differently — measured, the GET's ranking is the
+        *better* of the two (R@1 0.866 against 0.848), because narrowing on trigrams first
+        drops verses that cosine alone rates highly.
+
+        **The equality still holds here, and only because the fixture is tiny.** Four
+        verses is fewer than the shortlist's ``k``, so the shortlist is the whole revision
+        and both forms rank the same candidate set; the fixture is then arranged so the
+        two scorings agree on the order. That makes this a regression test for the shape
+        and the hydration — which *are* still shared, through :func:`_hit` — and not for
+        the rankings, which are not. Asserted with that stated, rather than left to look
+        like a contract it no longer is.
         """
-        assessment_id = self._vectorized(
-            db_session,
-            group1_version,
-            {"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": 2, "GEN 1:4": 9},
+        corpus = {
+            "GEN 1:1": "light darkness waters firmament",
+            "GEN 1:2": "light darkness waters firmament",
+            "GEN 1:3": "light darkness serpent garden",
+            "GEN 1:4": "vineyard shepherd mountain",
+        }
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, corpus)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
         )
-        _make_verse_texts(db_session, self.revision_id, {"GEN 1:2": "and the earth"})
+        _store_recipe(db_session, assessment_id, group1_version, list(corpus.values()))
+        # Stored vectors too, ordered to agree with the text ranking — the POST needs
+        # them and the GET must not read them.
+        for vref, head in {
+            "GEN 1:1": 1,
+            "GEN 1:2": 9,
+            "GEN 1:3": 5,
+            "GEN 1:4": 2,
+        }.items():
+            _make_vector(db_session, assessment_id, vref, head)
+
         for limit in (1, 3, SIMILAR_VERSES_MAX_LIMIT):
             got = _similar(
                 client, regular_token1, assessment_id, vref="GEN 1:1", limit=limit
@@ -6081,8 +6510,41 @@ class TestSimilarVersesPostBatch:
                 limit=limit,
             )
             assert got.status_code == 200, got.text
-            assert got.json()["items"] == _entries(posted)[0]["items"], limit
+            entry = _entries(posted)[0]["items"]
+            # The rankings agree on order and on every hydrated field.
+            assert [hit["vref"] for hit in got.json()["items"]] == [
+                hit["vref"] for hit in entry
+            ], limit
+            assert [
+                (hit["text"], hit["reference_text"]) for hit in got.json()["items"]
+            ] == [(hit["text"], hit["reference_text"]) for hit in entry], limit
+            # The *scores* are two different measures now, so they are not compared.
+            assert set(got.json()["items"][0]) == set(entry[0])
             assert got.json()["limit"] == posted.json()["limit"] == limit
+
+    def test_the_posts_similarity_still_flips_pgvectors_negated_inner_product(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The sign flip, kept on the form that still has one.
+
+        ``TestSimilarVersesRanking`` used to own this: ``max_inner_product`` is pgvector's
+        ``<#>``, the *negated* inner product, so a missing flip inverts the ranking
+        silently and no ordering assertion over uniformly positive fixtures would catch it.
+        The GET no longer computes a ``<#>`` distance — its scores are cosines and cannot
+        be negative — so the coverage moves here rather than disappearing with it.
+        """
+        assessment_id = self._vectorized(
+            db_session, group1_version, {"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4}
+        )
+        resp = _post_similar(
+            client,
+            regular_token1,
+            assessment_id,
+            queries=[{"type": "vref", "vref": "GEN 1:1"}],
+        )
+        (items,) = [entry["items"] for entry in _entries(resp)]
+        assert [hit["vref"] for hit in items] == ["GEN 1:2", "GEN 1:3"]
+        assert [hit["similarity"] for hit in items] == [3.0, -4.0]
 
     def test_an_empty_ranking_is_an_entry_rather_than_a_dropped_one(
         self, client, regular_token1, db_session, group1_version
@@ -7392,12 +7854,35 @@ class TestVerseTextMarkerCoercion:
         return revision_id, reference_id, assessment_id
 
     def _vectorized(self, db_session, group1_version):
+        """Stored vectors, for the **POST** — which still ranks against them."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(
             db_session, revision_id, reference_id, type_="tfidf"
         )
         _make_vector(db_session, assessment_id, "MAT 9:20", 1)
         _make_vector(db_session, assessment_id, "MAT 9:21", 5)
+        return revision_id, reference_id, assessment_id
+
+    def _texted(self, db_session, group1_version):
+        """Verse text and a fitted recipe, for the **GET**, which reads no vectors (#973).
+
+        The two forms of this read now need different fixtures, and the split is the
+        assertion's context rather than noise: the marker leak this class exists to catch
+        is on the *reference* side, which both forms hydrate through the same
+        ``_verse_texts``. So the rankings arriving by different routes is exactly why the
+        coercion has to keep holding for both.
+
+        The assessed text is written before the recipe is fitted, because the recipe is fit
+        on the revision's own text — the same order the runner works in.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, self.ASSESSED)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
+        )
+        _store_recipe(
+            db_session, assessment_id, group1_version, list(self.ASSESSED.values())
+        )
         return revision_id, reference_id, assessment_id
 
     def test_alignment_scores_reports_null_for_a_reference_side_marker(
@@ -7460,10 +7945,9 @@ class TestVerseTextMarkerCoercion:
         """The GET form. A ``tfidf`` assessment with a reference is the v3-created case —
         ``TfidfOptions`` declares no ``reference_id`` — and it is the only one of these
         three reads whose text fields the module docstring argued were marker-free."""
-        revision_id, reference_id, assessment_id = self._vectorized(
+        revision_id, reference_id, assessment_id = self._texted(
             db_session, group1_version
         )
-        _make_verse_texts(db_session, revision_id, self.ASSESSED)
         _make_verse_texts(db_session, reference_id, self.REFERENCE)
         (hit,) = _hits(_similar(client, regular_token1, assessment_id, vref="MAT 9:20"))
         assert hit["vref"] == "MAT 9:21"

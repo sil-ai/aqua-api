@@ -159,6 +159,41 @@ class Settings(BaseSettings):
     # the eviction logs are the only real sizing signal.
     tfidf_encoder_cache_max_bytes: int = Field(default=768 * 1024 * 1024, gt=0)
 
+    # How many per-revision partial GiST indexes on verse_text may exist at once
+    # (assessment_routes/v4/tfidf_retrieval.py). A cap rather than "one per assessed
+    # revision", because every index on verse_text is one more the planner considers on
+    # *every* query against that table, not just the shortlist. Measured locally on a
+    # 600k-row stand-in (2,000 revisions x 300 verses, pg16), planning time for a plain
+    # indexed point read on verse_text:
+    #
+    #     1 index    1.68 ms        500 indexes   12.5 ms
+    #     20         1.26 ms      1,000          39.7 ms
+    #     100        3.99 ms      2,000          65.2 ms
+    #
+    # ~40 us of planning per index. There are ~2,031 TF-IDF artifact runs in production,
+    # so one index per assessed revision would put ~65 ms of planning on reads that plan
+    # in under 2 ms today. 32 keeps the cost inside the noise (~1.3 ms) while covering far
+    # more revisions than are ever in flight at once; a revision past the cap still reads
+    # correctly, just on a sequential scan. Raise it only with the planning cost of the
+    # whole verse_text surface in mind, not just this endpoint's.
+    tfidf_shortlist_index_max: int = Field(default=32, gt=0)
+
+    # The v4 similar-verses recipe cache (assessment_routes/v4/tfidf_retrieval.py), which
+    # is a SECOND cache, not a re-keying of the one above. v3's _ENCODER_CACHE bounds
+    # itself to tfidf_encoder_cache_max_bytes and still serves the POST path; the v4 cache
+    # bounds itself to this. They are independent dicts with independent eviction, so a
+    # worker serving both holds the sum of the two — which is why this is its own number
+    # rather than a second reader of the one above, where the sum would silently have been
+    # 1.5 GB.
+    #
+    # Sized from the same measurements, minus the SVD this path never loads. The components
+    # matrix is what dominated an encoder: of the 236 MB measured for KJV, ~208 MB is the
+    # 300 x 173,585 float32 matrix, leaving ~28 MB of vectorizers; Swahili's 297 MB leaves
+    # ~37 MB the same way. So 256 MB holds roughly seven Bible-scale recipes, against the
+    # three full encoders 768 MB held — ample for a worker alternating between revisions,
+    # and a lower worst-case total than sharing the larger budget would have given.
+    tfidf_recipe_cache_max_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
+
     # --- Observability / Loki -------------------------------------------
     # A real bool so pydantic parses "true"/"false"/"1"/"0" correctly, instead
     # of the bool(os.getenv(...)) footgun where any non-empty string is truthy.
