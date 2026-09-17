@@ -60,6 +60,7 @@ from models import (
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 from utils.logging_config import setup_logger
+from utils.tfidf_tokenizer import unicode_word_tokenizer
 
 container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
@@ -1216,6 +1217,24 @@ def _rehydrate_encoder(word, char, svd) -> tuple:
     from sklearn.feature_extraction.text import TfidfVectorizer
 
     def _vectorizer(vocabulary, idf, params):
+        # The word analyzer must tokenize query text exactly the way the
+        # stored vocabulary was fitted. sklearn's default `token_pattern`
+        # fragments combining-mark scripts, so a Devanagari query would match
+        # no stored term at all — and silently, since a vocabulary/tokenizer
+        # mismatch returns an empty vector rather than raising. See #969 and
+        # the fit-side twin, sil-ai/aqua-assessments#470.
+        #
+        # Applied unconditionally rather than read from `params`: the stored
+        # payload records no tokenizer, and matching the current fit is what
+        # keeps query and corpus in step. `token_pattern=None` silences the
+        # "unused parameter" warning sklearn emits when both are set.
+        # `char_wb` splits on whitespace and never consults `\w`, so it takes
+        # no tokenizer — and warns if handed one.
+        tokenizer_kwargs = (
+            {"tokenizer": unicode_word_tokenizer, "token_pattern": None}
+            if params["analyzer"] == "word"
+            else {}
+        )
         vec = TfidfVectorizer(
             analyzer=params["analyzer"],
             ngram_range=tuple(params["ngram_range"]),
@@ -1223,6 +1242,7 @@ def _rehydrate_encoder(word, char, svd) -> tuple:
             max_df=params["max_df"],
             min_df=params["min_df"],
             vocabulary=vocabulary,
+            **tokenizer_kwargs,
         )
         # The idf_ setter builds the internal TfidfTransformer/_idf_diag that
         # transform() needs (vocabulary alone isn't enough).
