@@ -225,7 +225,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import fastapi
-from fastapi import Depends, Query, Request, Response, status
+from fastapi import BackgroundTasks, Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -281,7 +281,7 @@ from api_v4.schemas.assessment import (
     TextLengthsRow,
     VerseScope,
 )
-from assessment_routes.v4 import assessment_service
+from assessment_routes.v4 import assessment_service, tfidf_retrieval
 from config import settings
 from database.dependencies import get_db
 from database.models import Assessment
@@ -364,6 +364,7 @@ def _poll_url(request: Request, assessment_id: int) -> str:
 async def create_assessment(
     request: Request,
     data: AssessmentCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
 ) -> JSONResponse:
@@ -431,6 +432,30 @@ async def create_assessment(
             message=str(exc),
             details={"assessment_id": exc.assessment_id},
         ) from exc
+
+    # A ``tfidf`` submission is the one event that says a revision is about to want a
+    # similar-verses shortlist index, so it is where #973's "created alongside the
+    # assessment" lifecycle starts. Three things about the placement:
+    #
+    # * **After the response, not before it.** A ``CREATE INDEX CONCURRENTLY`` over a
+    #   revision's verses takes seconds to minutes, and this endpoint answers 202.
+    # * **``BackgroundTasks``, not ``asyncio.create_task``.** Both cost one task on the
+    #   worker, and Starlette runs background tasks after dependencies with ``yield`` are
+    #   finalized, so the request's database session is released first either way. The
+    #   difference is lifecycle: a bare ``create_task`` relies on the event loop
+    #   outliving the request, which is true of a uvicorn worker and false of
+    #   ``TestClient``, which builds a fresh loop per request and closes it — so the work
+    #   would be silently destroyed under test and only ever exercised in production.
+    # * **In the router rather than the service**, because this is FastAPI machinery and
+    #   the service stays free of it — and because the router is where the created row's
+    #   type is already in hand.
+    #
+    # Failures inside the task are logged and dropped: the index is a performance
+    # artifact and the read is correct without it.
+    if assessment.type == AssessmentType.tfidf.value:
+        background_tasks.add_task(
+            tfidf_retrieval.maintain_shortlist_index, assessment.revision_id
+        )
 
     return job_accepted_response(
         job_id=str(assessment.id),
@@ -1071,10 +1096,18 @@ async def get_assessment_similar_verses(
 
     **`vref` is the query, not a filter.** It names the verse everything is ranked
     against, so a request without it has no answer and is a `422` naming the parameter.
-    A `vref` this assessment holds no vector for is `404 VREF_NOT_FOUND` — a *different*
+    A `vref` this assessment did not vectorize is `404 VREF_NOT_FOUND` — a *different*
     code from an unreachable assessment, so a typo is distinguishable from a permission
     boundary. By that point you have already established you may read the assessment, so
-    the distinction discloses nothing.
+    the distinction discloses nothing. Verses the run skipped as empty, and verses printed
+    within the one above them, are in that set: they were never vectorized and have no
+    query point.
+
+    **An assessment with no TF-IDF artifacts is `404 TFIDF_ARTIFACTS_NOT_FOUND`.** New on
+    this endpoint. The ranking is now computed from the assessment's own fitted
+    vocabulary rather than from stored vectors, so an assessment that produced results but
+    no artifacts can be read, listed and scored while this one read has nothing to rank
+    with. Distinct from `VREF_NOT_FOUND`, which is about the verse rather than the run.
 
     **The queried verse is excluded from its own results.** It would otherwise be the
     first hit, every time, at maximum similarity.
@@ -1088,15 +1121,30 @@ async def get_assessment_similar_verses(
     verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is
     ignored, not honoured.
 
-    **`similarity` ranks, it does not calibrate.** It is the inner product of the two
-    verses' 300-dimensional PCA-reduced TF-IDF vectors: higher is closer, the ordering is
-    meaningful, and the absolute value is not. Assessments are vectorized independently,
-    so comparing a number from one against a number from another is meaningless. Ties
-    break on `vref`, so repeating a request returns the same order.
+    **`similarity` ranks, it does not calibrate.** It is the cosine between the two
+    verses' TF-IDF representations, in `[0, 1]`: higher is closer and the ordering is
+    meaningful. Ties break on `vref`, so repeating a request returns the same order. Do
+    not threshold on it — it says how two verses compare to each other, not how similar
+    they are in any absolute sense.
 
-    The search is exact and scoped to this assessment — at most 41,899 vectors behind an
-    index — rather than approximate. Two verses ranked adjacent today will still be
-    ranked adjacent tomorrow for the same stored vectors.
+    **The number changed scale in the release that stopped storing vectors.** It was
+    previously the inner product of two 300-dimensional PCA-reduced vectors, which was not
+    normalized and could be negative. The ordering means what it always meant, but a value
+    captured before that release is not comparable with one captured after.
+
+    **The ranking is computed at read time, from this revision's verse text and this
+    assessment's own fitted vocabulary.** Two consequences a caller can observe:
+
+    * The search **narrows before it scores**. A few hundred candidates are selected by
+      text similarity within the revision, then ranked exactly. This is not a
+      quality/speed trade in the usual direction — measured against held-out queries the
+      narrowed ranking scores slightly *better* than scoring the whole revision, because
+      narrowing drops verses that the scoring alone rates highly. But it does mean this
+      form and a one-element `POST` batch can order the same verse's neighbours
+      differently; neither is more authoritative.
+    * Two `tfidf` assessments over the **same revision** answer identically for the same
+      `vref`. The ranking depends on the revision's text and its fitted vocabulary, and
+      nothing else about the assessment.
     """
     try:
         hits = await assessment_service.get_similar_verses(
@@ -1108,6 +1156,17 @@ async def get_assessment_similar_verses(
             code="VREF_NOT_FOUND",
             message=str(exc),
             details={"assessment_id": assessment_id, "vref": vref},
+        ) from exc
+    except assessment_service.TfidfArtifactsNotFound as exc:
+        # Deliberately the same code, status and details the POST reports for the same
+        # condition. The two reads now compute their rankings differently, which is all
+        # the more reason for "this assessment has no artifacts" to look identical on
+        # both — a client should not have to learn it twice.
+        raise V4APIError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="TFIDF_ARTIFACTS_NOT_FOUND",
+            message=str(exc),
+            details={"assessment_id": assessment_id},
         ) from exc
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc

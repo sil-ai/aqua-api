@@ -1166,11 +1166,14 @@ class SimilarVerseOut(V4BaseModel):
     )
     similarity: float = Field(
         description=(
-            "How close this verse is to the queried one — the inner product of their "
-            "300-dimensional PCA-reduced TF-IDF vectors, higher being more similar. "
-            "**A ranking score, not a calibrated one**: it has no fixed range, and "
-            "values are comparable within one response but not across assessments, "
-            "which are vectorized independently. Do not threshold on it."
+            "How close this verse is to the queried one — the cosine between their "
+            "TF-IDF representations, in `[0, 1]`, higher being more similar. "
+            "**A ranking score, not a calibrated one**: it says how the verses in this "
+            "response compare to each other, not how alike two verses are in any "
+            "absolute sense. Do not threshold on it. It changed scale in the release "
+            "that stopped storing per-verse vectors — it was previously an "
+            "un-normalized inner product that could be negative — so a value captured "
+            "before that release is not comparable with one captured after."
         ),
     )
     text: str | None = Field(
