@@ -35,6 +35,11 @@ Consequently:
   now only because the parent hands in the identical ``configure_cors``. Truly
   divergent v4 CORS would require removing the parent CORS layer from the mount
   path, not just changing this call.
+* We **do** add one v4-only middleware of our own: the NUL-byte guard (#954), which
+  refuses a ``%00`` in the path or query string before routing. It is registered
+  *before* ``configure_cors`` so that the CORS layer ends up outside it and decorates
+  its rejection — ``add_middleware`` prepends, so last added is outermost. See
+  :func:`api_v4.errors.register_nul_byte_guard`.
 
 Error contract (see :func:`create_v4_app` and :mod:`api_v4.errors`): the v4
 sub-app registers its own structured-error handlers via
@@ -71,6 +76,7 @@ from api_v4.errors import (
     V4_PUBLIC_ERROR_RESPONSES,
     error_responses,
     register_exception_handlers,
+    register_nul_byte_guard,
 )
 from api_v4.meta_routes import router as meta_router
 from assessment_routes.v4.assessment_routes import router as assessment_router
@@ -110,6 +116,15 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # the envelope and the re-raise-for-logging behavior of the 500 handler.
     register_exception_handlers(v4_app)
 
+    # Refuse a NUL byte in the URL before routing (#954). Registered BEFORE
+    # configure_cors and the order is load-bearing, not stylistic: add_middleware
+    # inserts at the front of the stack, so whatever is added last ends up outermost.
+    # This way CORS wraps the guard and decorates its 422; reversed, the rejection goes
+    # out with no Access-Control-Allow-Origin and a browser sees a network error instead
+    # of the 422. See register_nul_byte_guard for the verification and for why the
+    # body half of the same fix lives on V4BaseModel instead.
+    register_nul_byte_guard(v4_app)
+
     # Reuse the main app's CORS configuration verbatim (see module docstring).
     configure_cors(v4_app)
 
@@ -118,12 +133,19 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # bare ``/v4`` health shim that reuses its payload) must answer without a
     # token, so do NOT attach auth here.
     #
-    # Only the 500 is documented: the root takes no parameters and no body, so it has
-    # no 422 to declare either (see V4_PUBLIC_ERROR_RESPONSES, which the token router
-    # below does use).
+    # No 401 is documented: the root is public, so there is no authentication to fail.
+    # The 422 *is* documented even though the root takes no parameters and no body,
+    # because since #954 it no longer follows that there is nothing to validate: the NUL
+    # guard registered above runs before routing and answers any request, this one
+    # included, whose URL carries a %00. Declaring it keeps the published schema true
+    # about what a caller can actually receive here (#928), which is the whole point of
+    # these responses= arguments.
     v4_app.include_router(
         meta_router,
-        responses=error_responses(fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR),
+        responses=error_responses(
+            fastapi.status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR,
+        ),
     )
 
     # The token router is likewise PUBLIC, and for the same class of reason: it is

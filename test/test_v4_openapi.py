@@ -329,12 +329,15 @@ class TestPublishedErrorContract:
             assert set(responses[code]["content"]) == {"application/json"}, code
 
     def test_the_discovery_root_documents_no_authentication_errors(self, schema):
-        """``GET /v4/`` is public and takes no input: only its 200 and a 500 apply.
+        """``GET /v4/`` is public, so no 401: there is no authentication to fail.
 
-        Declaring a 401 on an unauthenticated route, or a 422 on one with nothing to
-        validate, would document errors it cannot return.
+        It does declare a 422, despite taking no parameters and no body. That stopped
+        being a contradiction with #954: the NUL-byte guard (``api_v4/errors.py``) runs
+        before routing and refuses any ``/v4`` request whose URL carries a ``%00``,
+        this route included. So the 422 is one a caller can really receive here, and
+        leaving it undeclared would be the schema lying rather than staying minimal.
         """
-        assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "500"}
+        assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "422", "500"}
 
     def test_the_token_endpoint_documents_its_own_401_and_429(self, schema):
         """``POST /v4/token`` answers 401, but for bad credentials, not a bad token.
