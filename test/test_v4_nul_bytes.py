@@ -395,11 +395,39 @@ def test_the_guard_does_not_report_a_parameter_name_for_a_path(client):
     assert "input" not in errors[0]
 
 
-def test_clean_requests_pass_through_the_guard(client):
-    assert client.get("/probe?name=hello+world").status_code == 200
-    assert client.get("/probe/ordinary-key").status_code == 200
-    # A percent-encoded percent sign decodes to the literal text "%00", not to a NUL.
-    assert client.get("/probe?name=%2500").status_code == 200
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/probe",
+        "/probe?name=",
+        "/probe?name=hello+world",
+        "/probe?name=100%25",  # a literal percent sign
+        "/probe?name=%2500",  # encoded percent: decodes to the TEXT %00, not a NUL
+        "/probe?name=%E4%B8%AD%E6%96%87",  # encoded UTF-8
+        "/probe?name=%F0%9F%98%80",  # encoded emoji
+        "/probe?name=a%0Ab",  # encoded newline
+        "/probe?name=a%09b",  # encoded tab
+        "/probe?name=a%0Db",  # encoded carriage return
+        "/probe?name=a%1Fb",  # another C0 control, legal in Postgres text
+        "/probe?name=a&name=b",  # a repeated parameter
+        "/probe?name=x&other=y&name=z",
+        "/probe?name=Gen+1%3A1-2",
+        "/probe/ordinary-key",
+        "/probe/GEN%201%3A1",
+        "/probe/%E4%B8%AD%E6%96%87",
+        "/probe/sess-00-00",  # zeros, but no percent-escape anywhere near them
+    ],
+)
+def test_the_guard_rejects_nothing_legitimate(client, url):
+    """The failure mode that would actually hurt: refusing valid traffic.
+
+    The guard runs before routing on every ``/v4`` request, so a false positive is an
+    endpoint that stops working for everyone. These are the shapes real callers send —
+    encoded UTF-8, encoded percent signs, the other C0 controls, repeated parameters —
+    and none of them may be touched. ``%2500`` is the one worth keeping: it decodes to
+    the literal text ``%00``, which is not a NUL and must pass.
+    """
+    assert client.get(url).status_code == 200
 
 
 def test_the_two_doors_agree_on_status_and_code(client):
