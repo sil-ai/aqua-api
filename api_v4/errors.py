@@ -138,11 +138,19 @@ class V4ErrorDetail(V4BaseModel):
     **The one v4 model exempt from the NUL-byte check** (#954), and the exemption is
     required rather than defensive. ``details`` legitimately carries caller-supplied
     text, and a NUL reaches it today on a path that works: send
-    ``{"name": "ok", "ex\\x00tra": "v"}`` to any ``extra="forbid"`` body and pydantic
+    ``{"name": "ok", "ex\\u0000tra": "v"}`` to any ``extra="forbid"`` body and pydantic
     reports the unknown key by putting it in the error ``loc``, so
-    ``details.errors[0].loc`` is ``["body", "ex\\x00tra"]`` — verified. A blanket check
-    would then raise *while building the 422*, the exception would reach the catch-all,
-    and a working 422 would become the 500 this issue exists to remove.
+    ``details.errors[0].loc`` comes back as ``["body", "ex\\u0000tra"]`` — verified. A
+    blanket check would then raise *while building the 422*, the exception would reach
+    the catch-all, and a working 422 would become the 500 this issue exists to remove.
+
+    ``\\u0000`` is not incidental notation; it is the only spelling that reaches a body
+    field at all. JSON has no ``\\xNN`` escape, and it forbids an unescaped control
+    character inside a string — so both of the other ways to write a NUL are refused by
+    the *parser*, which answers 422 before any model runs and whose ``loc`` is a
+    character offset into the body rather than a field name. Worth knowing before trying
+    to reproduce this by hand: only the ``\\u0000`` form exercises the path above. It is
+    also how the NUL travels back out, since that is what a JSON encoder emits.
 
     The rule the exemption encodes: the error envelope is what v4 serializes when
     something has already gone wrong, so it is the one model that must never refuse to

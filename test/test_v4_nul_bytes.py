@@ -43,7 +43,7 @@ DISALLOWED_ORIGIN = "https://not-allowed.invalid"
 
 #: Characters that are legal in a Postgres ``text`` column and do occur in real
 #: Scripture payloads. The check is scoped to ``\\x00`` alone; these must pass.
-LEGAL_TEXT = "a\tb\nc\r\nd\x0be\x0cf\x1fg é 中文   \U0001f600"
+LEGAL_TEXT = "a\tb\nc\r\nd\x0be\x0cf\x1fg é 中文 \u2028 \U0001f600"
 
 
 class _Inner(V4BaseModel):
@@ -269,6 +269,42 @@ def test_an_unknown_key_containing_a_nul_stays_a_422(client):
     errors = response.json()["error"]["details"]["errors"]
     assert errors[0]["type"] == "extra_forbidden"
     assert errors[0]["loc"] == ["body", "ex\x00tra"]
+
+
+def test_only_the_json_unicode_escape_reaches_a_body_field(client):
+    r"""How a NUL is spelled on the wire, pinned because it is easy to get wrong.
+
+    JSON has no ``\xNN`` escape and forbids an unescaped control character inside a
+    string, so of the three ways to write a NUL in a request body only ``\u0000``
+    reaches a model at all. The other two are refused by the *parser*, which answers
+    the same 422 but with a character offset in ``loc`` instead of a field name — a
+    different failure that is easy to mistake for this one when reproducing by hand.
+
+    The tests above send Python dicts and let the encoder do this, so they exercise the
+    real path without showing it. This one shows it.
+    """
+    headers = {"content-type": "application/json"}
+
+    escaped = r'{"name": "ok", "inner": {"note": "ok"}, "ex\u0000tra": "v"}'
+    response = client.post("/probe", content=escaped, headers=headers)
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["errors"][0]["loc"] == [
+        "body",
+        "ex\x00tra",
+    ]
+    # And it goes back out as the same escape, never as a raw byte.
+    assert NUL.encode() not in response.content
+    assert rb"\u0000" in response.content
+
+    for label, payload in (
+        ("a \\xNN escape, which JSON has no such thing as", r'{"a": "x\x00y"}'),
+        ("a raw control character, which JSON forbids", '{"a": "x' + NUL + 'y"}'),
+    ):
+        response = client.post("/probe", content=payload, headers=headers)
+        assert response.status_code == 422, label
+        loc = response.json()["error"]["details"]["errors"][0]["loc"]
+        # An offset into the body, not a field name: the parser refused it first.
+        assert loc[0] == "body" and isinstance(loc[1], int), label
 
 
 def test_error_detail_is_the_only_exempt_model():
