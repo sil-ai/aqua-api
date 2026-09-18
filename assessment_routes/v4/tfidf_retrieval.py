@@ -10,7 +10,7 @@ already holds —
    IDF, by cosine.
 
 Neither stage reads ``tfidf_pca_vector``, and neither needs the SVD. That is the whole
-point: those 300-dimensional vectors are derived data — 499 GB of table today, ~253 GB
+point: those 300-dimensional vectors are derived data — 505 GB of table today, ~249 GB
 once #972 drops the index off it — recomputable from the verse text plus the vectorizer
 artifacts the training job **already pushes today**. That last clause is why this is
 buildable now: ``word_vectorizer`` and ``char_vectorizer`` are already in the push
@@ -40,7 +40,7 @@ two-stage trigram + cosine 0.866  0.963  0.905
 is not one: the shortlist ranks on trigrams and the rerank on TF-IDF cosine, so narrowing
 first removes distractors that cosine alone ranks highly. The trade that is real is
 latency — ~117 ms end to end against ~25 ms for today's indexed vector scan — paid to
-stop storing 253 GB.
+stop storing 249 GB.
 
 Three things here are load-bearing and easy to undo by accident.
 
@@ -74,10 +74,12 @@ partial GiST indexes  shortlist planning  point-read planning
 ====================  =================  ================
 
 Roughly 40 us of planning per index, on every ``verse_text`` query in the API, not just
-these. There are ~2,031 TF-IDF artifact runs in production, so an index per assessed
-revision would put ~65 ms of *planning* on reads that today plan in under 2 ms. So the
-set is capped at :data:`~config.Settings.tfidf_shortlist_index_max` and the coldest are
-dropped — see :func:`prune_shortlist_indexes`. The cap is the reason this module owns
+these — and seven v3 modules read that table, so most of the cost lands on callers this
+design does nothing for. 5,066 distinct revisions have a ``tfidf`` assessment in
+production, so an index per assessed revision would put ~200 ms of *planning* on reads
+that today plan in under 2 ms. So the set is capped at
+:data:`~config.Settings.tfidf_shortlist_index_max` and the coldest are dropped — see
+:func:`prune_shortlist_indexes`. The cap is the reason this module owns
 index lifecycle at all instead of leaving it to a migration.
 
 **The revision id rides as a literal, not as a bound parameter** — and this is insurance
@@ -103,7 +105,8 @@ plan caching for this one statement — about 1 ms of planning at the index cap,
 0.14 ms for a cached plan.
 
 The read never *depends* on the index. Without it the same query is a sequential scan and
-a top-N heapsort: slower, identical rows. That is what makes the index a pure performance
+a top-N heapsort — ~950 ms against ~115 ms, measured on prod for a 31,098-verse revision:
+slower, identical rows. That is what makes the index a pure performance
 artifact, safe to create late, drop under a cap, and leave out of the test fixtures.
 """
 
@@ -304,7 +307,7 @@ async def _canonical_run(
     slightly. Under this design the ranking is a function of the revision's text and the
     revision's recipe, and nothing else — which is arguably what it always meant.
 
-    One statement. ``tfidf_artifact_runs`` is 2,031 rows and a revision has a handful of
+    One statement. ``tfidf_artifact_runs`` is 2,430 rows and a revision has a handful of
     assessments, so the join is small; the alternative was two queries to learn the same
     two facts.
     """

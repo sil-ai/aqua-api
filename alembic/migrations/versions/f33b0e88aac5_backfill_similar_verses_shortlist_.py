@@ -24,23 +24,25 @@ indexed point read on ``verse_text``::
     20           1.26 ms        1,000            39.7 ms
     100          3.99 ms        2,000            65.2 ms
 
-Roughly 40 us per index, charged to the whole ``verse_text`` surface. There are ~2,031
-TF-IDF artifact runs in production, so "one per assessed revision" would put ~65 ms of
-planning on reads that plan in under 2 ms today — a worse regression than the one this
-design fixes. So this installs the most recently assessed ``BACKFILL_LIMIT`` revisions and
-no more, and from then on the runtime cap
+Roughly 40 us per index, charged to the whole ``verse_text`` surface. 5,066 distinct
+revisions have a ``tfidf`` assessment in production, so "one per assessed revision" would
+put ~200 ms of planning on reads that plan in under 2 ms today — a worse regression than
+the one this design fixes. So this installs the most recently assessed
+``BACKFILL_LIMIT`` revisions and no more, and from then on the runtime cap
 (``config.Settings.tfidf_shortlist_index_max``) governs: every ``tfidf`` submission prunes
 the surplus, so lowering that setting reconciles itself without another migration. A
 revision past the cap still reads correctly — it falls back to a sequential scan and a
 top-N heapsort, which is slower and not wrong.
 
-**Runtime.** Up to 32 ``CREATE INDEX CONCURRENTLY`` builds over a ~26 GB ``verse_text``,
-each producing ~17 MB. Expect tens of minutes on prod RDS, in the range migration
-``7f2e9a4b8c31`` quotes for the GIN index on the same column. Safe to interrupt and
-re-run: each index is created ``IF NOT EXISTS``, and an interrupted build is detected and
-dropped before being retried, so a second pass finishes the job rather than erroring on a
-half-built object. Nothing reads these indexes for correctness, so running this out of
-band rather than inside a deploy window is a legitimate choice.
+**Runtime, and it is not short.** Up to 128 ``CREATE INDEX CONCURRENTLY`` builds over a
+``verse_text`` whose heap is 54 GB (120 GB with the indexes it already carries), each
+producing ~17 MB. A partial index still scans the whole table to find the rows matching
+its predicate, and ``CONCURRENTLY`` scans twice, so this is ~128 x 2 full passes: expect
+hours, not the tens of minutes migration ``7f2e9a4b8c31`` quotes for a single GIN index
+on the same column. Nothing reads these indexes for correctness, so run this out of band
+rather than inside a deploy window. Safe to interrupt and re-run: each index is created
+``IF NOT EXISTS``, and an interrupted build is detected and dropped before being retried,
+so a second pass finishes the job rather than erroring on a half-built object.
 
 On an empty database — a fresh clone, CI, a test run — this creates nothing, because there
 are no assessments to backfill from.
@@ -62,7 +64,7 @@ depends_on: Union[str, Sequence[str], None] = None
 #: happened at a point in time and should not change behaviour when a setting does. The
 #: setting governs everything after this; if the two disagree, the first ``tfidf``
 #: submission after deploy prunes down to the setting.
-BACKFILL_LIMIT = 32
+BACKFILL_LIMIT = 128
 
 #: Must match ``tfidf_retrieval.SHORTLIST_INDEX_PREFIX``. Restated rather than imported,
 #: for the reason above: a migration that renamed itself when the application did would
@@ -112,7 +114,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop every shortlist index, including ones the application created after this ran.
 
-    Deliberately not "drop exactly the 32 this created". These indexes are created and
+    Deliberately not "drop exactly the 128 this created". These indexes are created and
     dropped at runtime by ``tfidf_retrieval``, so by the time anyone downgrades, the
     installed set is whatever the cap and recent traffic made it rather than what this
     migration left behind. A downgrade that removed only its own list would leave the rest

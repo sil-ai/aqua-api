@@ -327,9 +327,10 @@ class TestShortlistIndexPruning:
     Every partial index on ``verse_text`` is one more the planner must consider for
     *every* query against that table. Measured locally on a 600k-row stand-in, an ordinary
     indexed point read on ``verse_text`` plans in 1.68 ms with one such index, 3.99 ms
-    with 100, 39.7 ms with 1,000 and 65.2 ms with 2,000 — roughly 40 us each. There are
-    ~2,031 TF-IDF artifact runs in production, so an index per assessed revision would be
-    a worse regression than the one the shortlist fixes.
+    with 100, 39.7 ms with 1,000 and 65.2 ms with 2,000 — roughly 40 us each. 5,066
+    distinct revisions have a ``tfidf`` assessment in production, so an index per assessed
+    revision would be ~200 ms of planning — a worse regression than the one the shortlist
+    fixes.
     """
 
     async def test_pruning_drops_indexes_no_tfidf_assessment_wants(self):
@@ -375,9 +376,11 @@ class TestShortlistIndexCap:
         """Not an assertion about the exact default, which is a tuning choice — an
         assertion about which part of the measured curve it sits in. At 100 indexes an
         ordinary ``verse_text`` read already pays 4 ms of planning, against 1.68 ms at
-        one."""
+        one; the default of 128 sits just past that, at ~4.5 ms. The bound is what stops
+        someone reaching for 500 (12.5 ms) or 1,000 (39.7 ms), where the tax on the whole
+        ``verse_text`` surface stops being noise."""
         assert settings.tfidf_shortlist_index_max > 0
-        assert settings.tfidf_shortlist_index_max <= 100
+        assert settings.tfidf_shortlist_index_max <= 128
 
 
 class TestShortlistIndexIsScheduledOnSubmit:

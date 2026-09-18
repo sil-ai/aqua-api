@@ -5127,7 +5127,7 @@ class TestSimilarVersesRanking:
 
         The fixture writes no ``tfidf_pca_vector`` rows, so every behavioural test in this
         class already passes without them — but a read that *optionally* consulted the
-        table would pass those too, and would then keep 253 GB alive. This pins that the
+        table would pass those too, and would then keep 249 GB alive. This pins that the
         table is never queried, which is the property the storage decision depends on.
         """
         assessment_id = self._texted(db_session, group1_version)

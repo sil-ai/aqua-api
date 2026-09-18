@@ -162,21 +162,26 @@ class Settings(BaseSettings):
     # How many per-revision partial GiST indexes on verse_text may exist at once
     # (assessment_routes/v4/tfidf_retrieval.py). A cap rather than "one per assessed
     # revision", because every index on verse_text is one more the planner considers on
-    # *every* query against that table, not just the shortlist. Measured locally on a
-    # 600k-row stand-in (2,000 revisions x 300 verses, pg16), planning time for a plain
-    # indexed point read on verse_text:
+    # *every* query against that table, not just the shortlist — and seven v3 modules read
+    # verse_text too, so most of that cost is charged to callers that get nothing back.
+    # Measured locally on a 600k-row stand-in (2,000 revisions x 300 verses, pg16),
+    # planning time for a plain indexed point read on verse_text:
     #
     #     1 index    1.68 ms        500 indexes   12.5 ms
     #     20         1.26 ms      1,000          39.7 ms
     #     100        3.99 ms      2,000          65.2 ms
     #
-    # ~40 us of planning per index. There are ~2,031 TF-IDF artifact runs in production,
-    # so one index per assessed revision would put ~65 ms of planning on reads that plan
-    # in under 2 ms today. 32 keeps the cost inside the noise (~1.3 ms) while covering far
-    # more revisions than are ever in flight at once; a revision past the cap still reads
-    # correctly, just on a sequential scan. Raise it only with the planning cost of the
-    # whole verse_text surface in mind, not just this endpoint's.
-    tfidf_shortlist_index_max: int = Field(default=32, gt=0)
+    # ~40 us of planning per index. 5,066 distinct revisions have a tfidf assessment in
+    # production, so one index per assessed revision would put ~200 ms of planning on
+    # reads that plan in under 2 ms today.
+    #
+    # 128 costs ~4.5 ms and covers the revisions assessed in the last ~6.6 days, against
+    # ~1.3 days at 32 — and ~21 distinct revisions are assessed per day, so a smaller cap
+    # ages out faster than the work does. A revision past the cap still reads correctly,
+    # just on a sequential scan: ~950 ms against ~115 ms, measured on prod for a
+    # 31,098-verse revision. Raise it only with the planning cost of the whole verse_text
+    # surface in mind, not just this endpoint's; 500 is already 12.5 ms.
+    tfidf_shortlist_index_max: int = Field(default=128, gt=0)
 
     # The v4 similar-verses recipe cache (assessment_routes/v4/tfidf_retrieval.py), which
     # is a SECOND cache, not a re-keying of the one above. v3's _ENCODER_CACHE bounds
