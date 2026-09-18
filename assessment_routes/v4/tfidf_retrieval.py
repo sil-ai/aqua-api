@@ -751,7 +751,7 @@ async def installed_shortlist_indexes(db: AsyncSession) -> set[int]:
 
 
 async def prune_shortlist_indexes(db: AsyncSession) -> list[int]:
-    """Keep the cap's worth of shortlist indexes and drop the rest. Returns what it drop*ped*.
+    """Keep the cap's worth of shortlist indexes and drop the rest. Returns what it dropped.
 
     The cap is the whole reason this function exists; the module docstring has the
     measurement. Which ones to keep is decided by **the recency of each revision's
