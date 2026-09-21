@@ -126,7 +126,9 @@ jobs:
           AIOHTTP_NO_EXTENSIONS: 1
           MODAL_ENV: ${{ env.MODAL_ENV }}
         run: |
-          pip install -r requirements.txt
+          pip install uv==0.9.21
+          uv sync --frozen
+          . .venv/bin/activate
           make test
 
       - name: Push API image to DigitalOcean registry
