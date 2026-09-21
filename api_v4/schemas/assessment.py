@@ -338,7 +338,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Literal, Union
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
 from api_v4.pagination import V4Page
@@ -365,6 +365,7 @@ from schemas.tfidf import (
     TFIDF_MAX_BATCH_VECTORS,
     TFIDF_MAX_TEXT_CHARS,
 )
+from utils.datetime_utils import as_aware_utc
 
 #: Generous bound for a verse reference. The longest entry in ``fixtures/vref.txt``
 #: is 11 characters (``PSA 119:100``). Bounded rather than free-form because these
@@ -792,6 +793,20 @@ class AssessmentOut(V4BaseModel):
             "delta feed. Null on legacy rows that predate the column."
         ),
     )
+
+    @field_serializer("requested_at", "started_at", "ended_at", "updated_at")
+    def _serialize_aware_utc(self, value: datetime | None) -> datetime | None:
+        """Render every timestamp on this body as an explicit UTC instant.
+
+        #720 converted requested_time/start_time/end_time to TIMESTAMP WITH TIME
+        ZONE but left updated_at naive, so without this the same body mixes
+        ``...Z`` and offset-less values field by field — a client that compares
+        them as strings, or hands them all to one strict parser, sees two shapes
+        in one object. Which column a field reads is an internal detail and must
+        not show through. Returning a datetime rather than a string keeps the
+        generated OpenAPI schema unchanged.
+        """
+        return None if value is None else as_aware_utc(value)
 
 
 class AssessmentJob(AssessmentOut, JobEnvelope):

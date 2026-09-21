@@ -70,6 +70,8 @@ from __future__ import annotations
 
 import http
 import math
+import urllib.parse
+from typing import ClassVar
 
 import fastapi
 from fastapi import status
@@ -78,7 +80,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from api_v4.schemas.base import V4BaseModel
+from api_v4.schemas.base import (
+    NUL,
+    NUL_BYTE_ERROR_TYPE,
+    NUL_BYTE_MESSAGE,
+    V4BaseModel,
+    escape_nul_bytes,
+)
 from utils.logging_config import setup_logger
 
 #: Only the two swallowed-encoder branches in :func:`_bounded_details` log. Nothing else
@@ -87,6 +95,13 @@ from utils.logging_config import setup_logger
 #: writes the traceback (see the module docstring). Those two branches are the one place
 #: where an exception is *consumed* here, so if they say nothing, nothing does.
 logger = setup_logger(__name__)
+
+#: The ``code`` and ``message`` of the 422 envelope. Constants because two places emit
+#: that envelope and they must not drift: :func:`_handle_validation_error`, for
+#: everything FastAPI validates, and :class:`_NulByteGuard`, which runs before routing
+#: and so builds its own (#954).
+_VALIDATION_ERROR_CODE = "VALIDATION_ERROR"
+_VALIDATION_FAILED_MESSAGE = "Request validation failed."
 
 
 class V4APIError(Exception):
@@ -118,11 +133,40 @@ class V4APIError(Exception):
 
 
 class V4ErrorDetail(V4BaseModel):
-    """The inner object of the v4 error envelope (the value of ``error``)."""
+    """The inner object of the v4 error envelope (the value of ``error``).
+
+    **The one v4 model exempt from the NUL-byte check** (#954), and the exemption is
+    required rather than defensive. ``details`` legitimately carries caller-supplied
+    text, and a NUL reaches it today on a path that works: send
+    ``{"name": "ok", "ex\\u0000tra": "v"}`` to any ``extra="forbid"`` body and pydantic
+    reports the unknown key by putting it in the error ``loc``, so
+    ``details.errors[0].loc`` comes back as ``["body", "ex\\u0000tra"]`` — verified. A
+    blanket check would then raise *while building the 422*, the exception would reach
+    the catch-all, and a working 422 would become the 500 this issue exists to remove.
+
+    ``\\u0000`` is not incidental notation; it is the only spelling that reaches a body
+    field at all. JSON has no ``\\xNN`` escape, and it forbids an unescaped control
+    character inside a string — so both of the other ways to write a NUL are refused by
+    the *parser*, which answers 422 before any model runs and whose ``loc`` is a
+    character offset into the body rather than a field name. Worth knowing before trying
+    to reproduce this by hand: only the ``\\u0000`` form exercises the path above. It is
+    also how the NUL travels back out, since that is what a JSON encoder emits.
+
+    The rule the exemption encodes: the error envelope is what v4 serializes when
+    something has already gone wrong, so it is the one model that must never refuse to
+    serialize. :class:`V4ErrorResponse` needs no exemption of its own — its only field
+    is this model, and the walk stops at nested models.
+
+    Nothing is lost by exempting it. A NUL in ``details`` is legal JSON (``\\u0000``)
+    and is never written to Postgres; the bug is a NUL travelling *in* to a query, and
+    this model only travels out.
+    """
 
     code: str
     message: str
     details: dict | None = None
+
+    _checks_nul_bytes: ClassVar[bool] = False
 
 
 class V4ErrorResponse(V4BaseModel):
@@ -235,15 +279,15 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 
 #: The documented error surface of an authenticated v4 domain route (#928).
 #:
-#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 42
+#: Applied once, at the ``include_router`` call in :mod:`api_v4.app`, rather than as 44
 #: per-route ``responses=`` decorators that would drift apart.
 #:
 #: **Why 403 is not in here.** It was, briefly. v4 hides an invisible resource behind a
 #: ``404`` rather than a ``403`` (so ids cannot be probed), which leaves ``403`` meaning
 #: only "you can see this but may not modify it" — a *write-path* status. Counted over
-#: the surface, it is reachable on 17 of the 42 domain operations and unreachable on 25:
+#: the surface, it is reachable on 17 of the 44 domain operations and unreachable on 27:
 #: every read, including all thirteen non-delete assessment reads and all four verse
-#: reads. Publishing it on all 42 would tell clients that any v4 call can be forbidden,
+#: reads. Publishing it on all 44 would tell clients that any v4 call can be forbidden,
 #: which is false for the large majority and is the sort of thing a generated client
 #: turns into dead error-handling. So the seventeen declare it themselves, via
 #: :data:`V4_FORBIDDEN_RESPONSE`, and ``TestForbiddenIsWriteOnly`` pins that the set of
@@ -265,10 +309,11 @@ def json_error_responses(*status_codes: int) -> dict[int, dict]:
 #: :mod:`security_routes.v4.user_routes`.
 #:
 #: The four that remain are all genuinely universal except ``404``, which is unreachable
-#: on the 8 operations that look nothing up (``GET /me``, ``GET /me/groups``,
-#: ``GET /groups``, ``POST /users``, ``POST /groups``, ``POST /users/me/password``, and
-#: the version and assessment collection reads). That residue is small and a ``404`` on a
-#: collection read or a create misleads nobody; it is not worth eight more decorators.
+#: on the 10 operations that look nothing up (``GET /me``, ``GET /me/groups``,
+#: ``GET /groups``, ``POST /users``, ``POST /groups``, ``POST /users/me/password``, the
+#: version and assessment collection reads, and — added by #951 — ``GET /languages`` and
+#: ``GET /scripts``, which take no id at all). That residue is small and a ``404`` on a
+#: collection read or a create misleads nobody; it is not worth ten more decorators.
 #:
 #: Declaring ``422`` here is what displaces FastAPI's default ``HTTPValidationError``:
 #: the generator only injects that when the route documents no ``422`` of its own
@@ -880,8 +925,8 @@ async def _handle_validation_error(
 ):
     return _error_response(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        code="VALIDATION_ERROR",
-        message="Request validation failed.",
+        code=_VALIDATION_ERROR_CODE,
+        message=_VALIDATION_FAILED_MESSAGE,
         # exc.errors() can hold non-serializable objects (e.g. the original
         # ValueError under `ctx`) and non-finite floats echoed back under `input`;
         # _error_response jsonable-encodes details and scrubs those floats, so they
@@ -900,6 +945,164 @@ async def _handle_unexpected_exception(request: fastapi.Request, exc: Exception)
         code="INTERNAL_ERROR",
         message="An internal error occurred.",
     )
+
+
+#: The only spelling a URL can carry a NUL in: a raw ``\x00`` byte is not legal in a
+#: request target, so a caller who wants one percent-encodes it. The raw byte is checked
+#: as well anyway — it costs one more scan of a short bytestring, and which byte
+#: sequences an ASGI server lets through is that server's business, not ours.
+_ENCODED_NUL = b"%00"
+_RAW_NUL = NUL.encode()
+
+
+def _nul_byte_error(loc: list) -> dict:
+    """One ``details.errors`` entry, shaped like the ones pydantic produces.
+
+    Same three keys FastAPI's validation errors carry (``type``, ``loc``, ``msg``) and
+    the same ``type`` :meth:`api_v4.schemas.base.V4BaseModel._reject_nul_bytes` raises,
+    so a client handles a NUL in a query parameter and a NUL in a body field with one
+    branch. No ``input``: echoing the offending value back would put the NUL in the
+    response, and ``loc`` already says where it was.
+    """
+    return {"type": NUL_BYTE_ERROR_TYPE, "loc": loc, "msg": NUL_BYTE_MESSAGE}
+
+
+def _query_nul_byte_errors(query_string: bytes) -> list[dict]:
+    """One error per query parameter whose name or value carries a NUL.
+
+    Splits the **raw** query string, which is what the ASGI scope holds (verified: the
+    server does not decode it), so the ``%00`` is still visible as text. Only the name
+    of an offending parameter is decoded, and only to put it in ``loc``; the value is
+    never touched.
+    """
+    errors = [
+        _nul_byte_error(
+            [
+                "query",
+                escape_nul_bytes(
+                    urllib.parse.unquote_plus(pair.partition(b"=")[0].decode("latin-1"))
+                ),
+            ]
+        )
+        for pair in query_string.split(b"&")
+        if _ENCODED_NUL in pair or _RAW_NUL in pair
+    ]
+    # Unreachable today, and kept anyway. It cannot fire because neither pattern shares
+    # a byte with "&", so neither can straddle the boundary the split cuts on — the
+    # per-pair scan and the whole-string scan that got us here cannot disagree. What it
+    # guards is a change to that splitting (another separator, a different parser): the
+    # caller arrives here already knowing the query string holds a NUL, so returning an
+    # empty list would let the request through. Naming no parameter beats naming none of
+    # the failures.
+    return errors or [_nul_byte_error(["query"])]
+
+
+def _nul_byte_request_errors(scope) -> list[dict]:
+    """Every NUL-byte failure in this request's path and query string, or ``[]``.
+
+    Cheap on the overwhelmingly common clean request: two substring scans of two short
+    bytestrings, and nothing else runs unless one of them hits.
+
+    ``scope["path"]`` arrives **already percent-decoded** and ``scope["query_string"]``
+    arrives **raw** — verified, not assumed, since the two are checked differently as a
+    result. ``raw_path`` is checked too, for an ASGI server that leaves the path encoded.
+
+    The path error's ``loc`` is just ``["path"]`` with no parameter name, because this
+    runs before routing: no route has matched, so there is no name to give. That is the
+    price of catching it here, and it is the right price — the alternative is 55 routes
+    each remembering to check.
+    """
+    errors: list[dict] = []
+    raw_path = scope.get("raw_path") or b""
+    if (
+        NUL in (scope.get("path") or "")
+        or _ENCODED_NUL in raw_path
+        or _RAW_NUL in raw_path
+    ):
+        errors.append(_nul_byte_error(["path"]))
+    query_string = scope.get("query_string") or b""
+    if _ENCODED_NUL in query_string or _RAW_NUL in query_string:
+        errors.extend(_query_nul_byte_errors(query_string))
+    return errors
+
+
+class _NulByteGuard:
+    """ASGI middleware refusing any ``/v4`` request whose URL carries a NUL (#954).
+
+    The second half of the fix; :meth:`api_v4.schemas.base.V4BaseModel._reject_nul_bytes`
+    is the first. They are separate because a query parameter or a path segment never
+    passes through a Pydantic model that could validate it — this codebase declares them
+    as ``param: str = Query(...)``, and the ``Annotated`` validator type that would have
+    covered both was verified to silently no-op against that style. So the two doors a
+    caller-supplied NUL can come through need two locks, and this is the URL one.
+
+    **Pure ASGI, deliberately not ``BaseHTTPMiddleware``.** That base class wraps every
+    request in an anyio task group and stands between the app and the exception that
+    escapes it — and this module's whole 500 contract depends on an uncaught exception
+    reaching ``ServerErrorMiddleware`` untouched so it can be re-raised for the parent
+    ``LoggingMiddleware`` to log (see the module docstring). A three-line ASGI callable
+    that either forwards the call unchanged or answers it is transparent to all of that,
+    and costs nothing per request.
+
+    **What it does not look at, stated because nothing else records it:** request
+    headers, cookies, and form bodies. A header or cookie whose value reached a query
+    would be a fourth door that neither this nor the model validator can see, and the
+    assumption that there is no such door is currently vacuous — no v4 route declares a
+    ``Header(...)``, ``Cookie(...)`` or ``File(...)`` parameter (audited). The one form
+    body on the surface is ``POST /v4/token``'s ``OAuth2PasswordRequestForm``, whose
+    ``username`` reaches a lookup and is already guarded at
+    ``security_routes/auth_routes.authenticate_user``, which treats a NUL as a miss so
+    the ordinary 401 answers it. The day a v4 route takes, say, an ``Idempotency-Key``
+    header and looks it up, that route needs its own check — this guard will not give it
+    one.
+
+    The body goes through :func:`_error_response` like every other v4 error, rather than
+    being hand-built, so a pre-routing rejection cannot drift from the envelope the
+    registered handlers emit. It is the same 422 with the same
+    ``code="VALIDATION_ERROR"``; what distinguishes it is the ``type`` on the
+    ``details.errors`` entry, which is the same ``type`` the model validator raises. One
+    code to branch on, one string to grep for.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        errors = _nul_byte_request_errors(scope)
+        if not errors:
+            await self.app(scope, receive, send)
+            return
+        response = _error_response(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=_VALIDATION_ERROR_CODE,
+            message=_VALIDATION_FAILED_MESSAGE,
+            details={"errors": errors},
+        )
+        await response(scope, receive, send)
+
+
+def register_nul_byte_guard(app: fastapi.FastAPI) -> None:
+    """Install :class:`_NulByteGuard` on ``app`` (the ``/v4`` sub-app).
+
+    **Call this before ``configure_cors(app)``, not after.** Starlette's
+    ``add_middleware`` inserts at the *front* of the stack, so the last layer added is
+    the outermost one: adding the guard first leaves CORS outside it, which is what
+    makes the rejection carry ``Access-Control-Allow-Origin`` for a browser caller.
+    Verified both ways — reversed, the same request comes back 422 with no CORS header
+    at all, which a browser reports to the page as a network error rather than as the
+    422 it is. The parent app's CORS layer would in practice set the header anyway
+    (it wraps the whole mount), but relying on that would make the sub-app's own layer a
+    no-op here, and ``api_v4/app.py`` exists to keep v4's policy co-located.
+
+    The same ordering keeps preflight out of the guard's way: ``CORSMiddleware`` answers
+    every ``OPTIONS`` preflight by short-circuiting before the app it wraps, so a
+    preflight never reaches this at all. (In practice the parent's CORS layer gets there
+    first regardless — see ``api_v4/app.py``.)
+    """
+    app.add_middleware(_NulByteGuard)
 
 
 def register_exception_handlers(app: fastapi.FastAPI) -> None:

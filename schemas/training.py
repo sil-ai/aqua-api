@@ -4,7 +4,15 @@ import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from utils.datetime_utils import as_naive_utc
 
 from .agent import LexemeCardOut
 from .assessment import (
@@ -90,6 +98,16 @@ class TrainingJobOut(BaseModel):
     percent_complete: Optional[float] = None
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
+
+    @field_serializer("requested_time", "start_time", "end_time")
+    def _serialize_naive_utc(
+        self, value: Optional[datetime.datetime]
+    ) -> Optional[datetime.datetime]:
+        """Freeze v3's datetime wire format at the naive-UTC rendering — see
+        the matching serializer on AssessmentOut. requested_time comes from the
+        converted training_job column; start_time and end_time are mirrored
+        from the linked Assessment row, so all three went tz-aware in #720."""
+        return None if value is None else as_naive_utc(value)
 
     model_config = {"use_enum_values": True}
 

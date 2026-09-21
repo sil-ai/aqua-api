@@ -53,6 +53,11 @@ dependencies = [
     "pandas==2.1.4",
     "scipy==1.13.1",
     "scikit-learn==1.6.1",
+    # Unicode-correct `\w` for the TF-IDF word tokenizer (utils/tfidf_tokenizer.py).
+    # The stdlib `re` that sklearn's default token_pattern compiles with excludes
+    # combining marks, which shreds Brahmic scripts — see #969. The runner declares
+    # the same dependency for the fit side (sil-ai/aqua-assessments#472).
+    "regex==2025.9.18",
     # --- External services / infra ---
     "modal==1.3.5",
     "python-dotenv==1.2.2",
