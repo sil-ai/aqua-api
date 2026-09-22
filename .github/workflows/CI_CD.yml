@@ -1,12 +1,10 @@
 name: CI-CD-Pipeline
 
-# Only main deploys to a droplet for now. release still ships through
-# release.yml (ECR -> App Runner) until it has a droplet of its own, so it is
-# deliberately not listed here — the release branch below is kept ready for it.
 on:
   push:
     branches:
       - main
+      - release
   workflow_dispatch:
 
 # Serialize deploys per branch so a slower older build can't overwrite a newer
