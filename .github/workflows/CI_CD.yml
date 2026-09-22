@@ -180,16 +180,16 @@ jobs:
             doctl registry login
 
             echo "📥 Pulling new image..."
-            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml pull
+            docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml pull
 
             echo "🛑 Stopping current containers..."
-            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml down
+            docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml down
 
             echo "🚀 Starting containers..."
-            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml up -d
+            docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml up -d
 
             echo "🧹 Pruning old images..."
-            sudo docker image prune -af
+            docker image prune -af
 
             echo "✅ Deployment completed!"
           ENDSSH
@@ -219,7 +219,7 @@ jobs:
               fi
               if [ "$i" = "24" ]; then
                 echo "API never answered /health."
-                sudo docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 api
+                docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 api
                 exit 1
               fi
               sleep 5
@@ -229,12 +229,12 @@ jobs:
             echo "Checking nginx..."
             curl -fsS --max-time 5 -o /dev/null http://127.0.0.1/ || {
               echo "nginx is not answering on port 80."
-              sudo docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 nginx
+              docker compose $COMPOSE -f docker-compose.prod.yml logs --tail 50 nginx
               exit 1
             }
 
             # Nothing should have died on the way up.
-            DOWN=$(sudo docker compose $COMPOSE -f docker-compose.prod.yml ps \
+            DOWN=$(docker compose $COMPOSE -f docker-compose.prod.yml ps \
               --status exited --status dead --format '{{.Name}}')
             if [ -n "$DOWN" ]; then
               echo "These containers are not running:"
