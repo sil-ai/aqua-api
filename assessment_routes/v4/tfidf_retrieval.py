@@ -699,8 +699,10 @@ async def ensure_shortlist_index(revision_id: int) -> None:
             extra={"revision_id": revision_id, "index": name},
         )
         return
+    # Not "created": IF NOT EXISTS makes this a no-op when the index was already there,
+    # which is the common case when a revision is re-assessed.
     logger.info(
-        "created the similar-verses shortlist index",
+        "similar-verses shortlist index is in place",
         extra={"revision_id": revision_id, "index": name},
     )
 

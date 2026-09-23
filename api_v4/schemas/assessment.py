@@ -1166,14 +1166,17 @@ class SimilarVerseOut(V4BaseModel):
     )
     similarity: float = Field(
         description=(
-            "How close this verse is to the queried one — the cosine between their "
-            "TF-IDF representations, in `[0, 1]`, higher being more similar. "
-            "**A ranking score, not a calibrated one**: it says how the verses in this "
-            "response compare to each other, not how alike two verses are in any "
-            "absolute sense. Do not threshold on it. It changed scale in the release "
-            "that stopped storing per-verse vectors — it was previously an "
-            "un-normalized inner product that could be negative — so a value captured "
-            "before that release is not comparable with one captured after."
+            "How close this verse is to the queried one, higher being more similar. "
+            "**Its scale depends on which endpoint returned it.** From the GET it is "
+            "the cosine between the two verses' TF-IDF representations, in `[0, 1]`. "
+            "From the POST it is still the un-normalized inner product of the stored "
+            "vectors, which is unbounded and can be negative, so scores from the two "
+            "endpoints are not comparable. **A ranking score, not a calibrated one**: "
+            "it says how the verses in this response compare to each other, not how "
+            "alike two verses are in any absolute sense. Do not threshold on it. The "
+            "GET's changed scale in the release that stopped reading stored vectors, "
+            "so a GET value captured before that release is not comparable with one "
+            "captured after."
         ),
     )
     text: str | None = Field(
