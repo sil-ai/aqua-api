@@ -115,7 +115,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from typing import Sequence
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Sequence
 
 from sqlalchemy import Float, and_, func, literal_column, select
 from sqlalchemy import text as sa_text
@@ -129,6 +130,7 @@ from database.models import (
     TfidfVectorizerArtifact,
     VerseText,
 )
+from utils.tfidf_tokenizer import unicode_word_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +243,19 @@ def _rehydrate(word: tuple, char: tuple) -> tuple:
     from sklearn.feature_extraction.text import TfidfVectorizer
 
     def build(vocabulary, idf, params):
+        # The word analyzer must split query text exactly as the runner split the corpus
+        # when it fitted the vocabulary (sil-ai/aqua-assessments#470), which is what v3's
+        # ``_rehydrate_encoder`` does too (#969). sklearn's default ``token_pattern``
+        # breaks words at combining marks and drops one-letter words, and a mismatch
+        # does not raise: the query just matches fewer stored terms, so the word half of
+        # the score quietly shrinks, to nothing for Devanagari. Applied unconditionally
+        # because the stored params record no tokenizer. ``char_wb`` never tokenizes on
+        # ``\w`` and warns if handed a tokenizer, so it gets none.
+        tokenizer_kwargs = (
+            {"tokenizer": unicode_word_tokenizer, "token_pattern": None}
+            if params["analyzer"] == "word"
+            else {}
+        )
         vectorizer = TfidfVectorizer(
             analyzer=params["analyzer"],
             ngram_range=tuple(params["ngram_range"]),
@@ -248,6 +263,7 @@ def _rehydrate(word: tuple, char: tuple) -> tuple:
             max_df=params["max_df"],
             min_df=params["min_df"],
             vocabulary=vocabulary,
+            **tokenizer_kwargs,
         )
         # The ``idf_`` setter is what builds the internal TfidfTransformer's ``_idf_diag``
         # that ``transform`` needs; passing ``vocabulary`` alone is not enough.
@@ -641,19 +657,86 @@ def shortlist_index_name(revision_id: int) -> str:
     return f"{SHORTLIST_INDEX_PREFIX}{int(revision_id)}"
 
 
-async def _autocommit(sql: str) -> None:
-    """Run one DDL statement outside any transaction, on its own connection.
+#: The session-level advisory lock every shortlist DDL statement runs under. One key for
+#: all revisions, deliberately: the conflict is on ``verse_text``, not on one revision's
+#: index. ``CREATE`` and ``DROP INDEX CONCURRENTLY`` both take ``SHARE UPDATE EXCLUSIVE``
+#: on the table, which conflicts with itself, and each waits out the other's snapshot
+#: while holding it. Two of them at once — two builds for different revisions, or one
+#: task's prune overlapping another's build — deadlock, and the build Postgres aborts is
+#: left behind as an invalid index. The lock is taken in the database rather than in the
+#: process because the overlap is across workers, and across staging and prod, which
+#: share this database. A fixed value, not a hash: there is one of it. Don't change it
+#: casually, for the reason ``_TRAINING_JOB_DUP_LOCK_NS`` gives in v3 — during a rolling
+#: deploy two keys would not exclude each other.
+_SHORTLIST_DDL_LOCK_KEY = 0x7466_6964_665F_6978  # "tfidf_ix"
+
+#: How often a waiter retries the lock, and how long it keeps trying before giving up.
+#: A build over ``verse_text`` takes seconds to minutes and 4 workers per container can
+#: queue behind it, so the ceiling is generous. Giving up is safe: the read is correct
+#: without the index, and the next submission for the revision tries again.
+_SHORTLIST_DDL_LOCK_POLL_S = 2.0
+_SHORTLIST_DDL_LOCK_WAIT_S = 30 * 60
+
+
+@asynccontextmanager
+async def _shortlist_ddl_connection() -> AsyncIterator:
+    """An autocommit connection holding :data:`_SHORTLIST_DDL_LOCK_KEY`, for DDL.
 
     ``CREATE INDEX CONCURRENTLY`` and ``DROP INDEX CONCURRENTLY`` cannot run inside a
     transaction block, and the request's ``AsyncSession`` is always in one. Taking a
     separate connection also keeps a multi-minute build off the session the request is
     using, which would otherwise hold it open for the duration.
+
+    **``pg_try_advisory_lock`` in a loop, never ``pg_advisory_lock``.** A session blocked
+    inside ``pg_advisory_lock`` is mid-statement and holds a snapshot, and a concurrent
+    index build waits for every older snapshot to finish. So the builder waits on the
+    waiter, the waiter waits on the builder's lock, and Postgres aborts one of them —
+    measured locally, it aborted the build and left the index invalid, which is the bug
+    this lock exists to fix. Between tries a waiter holds no statement open, and it
+    returns its connection too, so a queue of waiters does not hold the pool.
+
+    The lock is taken on the same connection that runs the DDL, so it lives exactly as
+    long as the backend doing the work. On the way out it is released explicitly; if
+    that fails, the connection is invalidated rather than handed back to the pool still
+    holding the lock, where it would block every later build for good.
     """
     from database.dependencies import engine
 
-    async with engine.connect() as conn:
-        await conn.execution_options(isolation_level="AUTOCOMMIT")
-        await conn.exec_driver_sql(sql)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _SHORTLIST_DDL_LOCK_WAIT_S
+    while True:
+        conn = await engine.connect()
+        try:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            acquired = (
+                await conn.exec_driver_sql(
+                    f"SELECT pg_try_advisory_lock({_SHORTLIST_DDL_LOCK_KEY})"
+                )
+            ).scalar()
+        except BaseException:
+            await conn.close()
+            raise
+        if acquired:
+            break
+        await conn.close()
+        if loop.time() >= deadline:
+            raise TimeoutError(
+                "timed out waiting for the similar-verses shortlist DDL lock"
+            )
+        await asyncio.sleep(_SHORTLIST_DDL_LOCK_POLL_S)
+
+    try:
+        yield conn
+    finally:
+        try:
+            await conn.exec_driver_sql(
+                f"SELECT pg_advisory_unlock({_SHORTLIST_DDL_LOCK_KEY})"
+            )
+        except BaseException:
+            await conn.invalidate()
+            raise
+        finally:
+            await conn.close()
 
 
 async def ensure_shortlist_index(revision_id: int) -> None:
@@ -661,8 +744,8 @@ async def ensure_shortlist_index(revision_id: int) -> None:
 
     ``CONCURRENTLY`` because ``verse_text`` is read constantly and a plain ``CREATE
     INDEX`` takes a lock that blocks writes to it for the whole build. ``IF NOT EXISTS``
-    makes the call idempotent, which is what lets two submissions for the same revision
-    both reach for it without coordinating.
+    makes the call idempotent, so the second of two submissions for one revision, once
+    it gets the DDL lock, finds the index already built and does nothing.
 
     **An interrupted ``CONCURRENTLY`` build leaves the index present and invalid**, and
     ``IF NOT EXISTS`` would then happily skip it forever. Postgres ignores an invalid
@@ -670,15 +753,18 @@ async def ensure_shortlist_index(revision_id: int) -> None:
     scan. Detect and drop it first, the same shape migration ``7f2e9a4b8c31`` uses for
     the sibling GIN index.
 
+    That check is only sound under the DDL lock (:func:`_shortlist_ddl_connection`). A
+    build that is still *running* also shows as invalid, so without the lock a second
+    call would mistake a healthy in-progress build for an abandoned one and drop it.
+    Holding the lock, no other build can be in progress, so an invalid index really is
+    left over.
+
     Raises nothing on a missing ``pg_trgm``: that is a deployment fault the caller cannot
     fix mid-request, and this runs off the request path. It is logged and abandoned.
     """
     name = shortlist_index_name(revision_id)
     try:
-        from database.dependencies import engine
-
-        async with engine.connect() as conn:
-            await conn.execution_options(isolation_level="AUTOCOMMIT")
+        async with _shortlist_ddl_connection() as conn:
             invalid = (
                 await conn.exec_driver_sql(
                     "SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
@@ -716,7 +802,8 @@ async def drop_shortlist_index(revision_id: int) -> None:
     """
     name = shortlist_index_name(revision_id)
     try:
-        await _autocommit(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"')
+        async with _shortlist_ddl_connection() as conn:
+            await conn.exec_driver_sql(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"')
     except Exception:
         logger.warning(
             "could not drop the similar-verses shortlist index",

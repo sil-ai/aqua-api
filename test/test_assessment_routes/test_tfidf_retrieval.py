@@ -16,6 +16,7 @@ indexes in the catalog and takes the surplus back out, because that is the part 
 silently regress the whole ``verse_text`` surface rather than just this endpoint.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -181,6 +182,31 @@ class TestTheRecipeIsSvdFree:
         assert tfidf_retrieval.rerank(_recipe(), "alpha", []) == []
 
 
+class TestTheRecipeTokenizesLikeTheRunner:
+    """The word vectorizer must split query text the way the runner split the corpus.
+
+    The runner fits with ``unicode_word_tokenizer`` (sil-ai/aqua-assessments#470), and a
+    read that fell back to sklearn's default ``token_pattern`` would not fail: it would
+    just match fewer stored terms, silently. The default breaks words at combining marks
+    and drops one-letter words, so for Devanagari the word half of the score goes to
+    zero. Both examples here are ones the default gets wrong.
+    """
+
+    def test_a_devanagari_query_matches_the_vocabulary_the_runner_fitted(self):
+        word, _ = _recipe(word_vocab={"प्रथम": 0, "पृथ्वी": 1})
+        assert word.transform(["प्रथम पृथ्वी"]).nnz == 2
+
+    def test_a_one_letter_word_is_kept(self):
+        word, _ = _recipe(word_vocab={"व": 0, "देव": 1})
+        assert word.transform(["देव व"]).nnz == 2
+
+    def test_the_char_vectorizer_takes_no_tokenizer(self):
+        """``char_wb`` splits on whitespace and never consults a tokenizer; sklearn warns
+        if it is handed one."""
+        _, char = _recipe()
+        assert char.tokenizer is None
+
+
 @pytest.mark.asyncio
 class TestShortlistIndexLifecycle:
     """Create, find, drop — against a real catalog, because that is the only real test.
@@ -318,6 +344,109 @@ class TestShortlistIndexLifecycle:
             finally:
                 await tfidf_retrieval.drop_shortlist_index(revision_id)
             assert without == with_index
+
+
+@pytest.mark.asyncio
+class TestShortlistDdlLock:
+    """Every build and drop runs under one database advisory lock.
+
+    Without it, two ``CONCURRENTLY`` statements on ``verse_text`` at once deadlock, and
+    the build Postgres aborts is left behind as an invalid index. These hold the lock
+    from a second connection to stand in for another worker's build.
+    """
+
+    @staticmethod
+    async def _holder():
+        """A connection holding the lock, as another worker's build would."""
+        from database.dependencies import engine
+
+        conn = await engine.connect()
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.exec_driver_sql(
+            f"SELECT pg_advisory_lock({tfidf_retrieval._SHORTLIST_DDL_LOCK_KEY})"
+        )
+        return conn
+
+    @staticmethod
+    async def _release(conn):
+        try:
+            await conn.exec_driver_sql(
+                f"SELECT pg_advisory_unlock({tfidf_retrieval._SHORTLIST_DDL_LOCK_KEY})"
+            )
+        finally:
+            await conn.close()
+
+    @staticmethod
+    async def _lock_is_free() -> bool:
+        from database.dependencies import engine
+
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            key = tfidf_retrieval._SHORTLIST_DDL_LOCK_KEY
+            got = (
+                await conn.exec_driver_sql(f"SELECT pg_try_advisory_lock({key})")
+            ).scalar()
+            if got:
+                await conn.exec_driver_sql(f"SELECT pg_advisory_unlock({key})")
+            return got
+
+    async def test_a_build_waits_for_the_lock_then_runs(self, monkeypatch):
+        monkeypatch.setattr(tfidf_retrieval, "_SHORTLIST_DDL_LOCK_POLL_S", 0.05)
+        revision_id = FAKE_REVISIONS[0]
+        holder = await self._holder()
+        released = False
+        try:
+            build = asyncio.create_task(
+                tfidf_retrieval.ensure_shortlist_index(revision_id)
+            )
+            await asyncio.sleep(0.5)
+            assert not build.done()
+            async with AsyncSessionLocal() as db:
+                assert revision_id not in (
+                    await tfidf_retrieval.installed_shortlist_indexes(db)
+                )
+
+            await self._release(holder)
+            released = True
+            await asyncio.wait_for(build, timeout=30)
+            async with AsyncSessionLocal() as db:
+                assert revision_id in (
+                    await tfidf_retrieval.installed_shortlist_indexes(db)
+                )
+        finally:
+            if not released:
+                await self._release(holder)
+            await tfidf_retrieval.drop_shortlist_index(revision_id)
+
+    async def test_a_waiter_gives_up_instead_of_hanging(self, monkeypatch):
+        """Giving up is safe — the read is correct without the index — and the failure is
+        swallowed like every other one on this path."""
+        monkeypatch.setattr(tfidf_retrieval, "_SHORTLIST_DDL_LOCK_POLL_S", 0.05)
+        monkeypatch.setattr(tfidf_retrieval, "_SHORTLIST_DDL_LOCK_WAIT_S", 0.2)
+        revision_id = FAKE_REVISIONS[1]
+        holder = await self._holder()
+        try:
+            await asyncio.wait_for(
+                tfidf_retrieval.ensure_shortlist_index(revision_id), timeout=10
+            )
+            async with AsyncSessionLocal() as db:
+                assert revision_id not in (
+                    await tfidf_retrieval.installed_shortlist_indexes(db)
+                )
+        finally:
+            await self._release(holder)
+            await tfidf_retrieval.drop_shortlist_index(revision_id)
+
+    async def test_the_lock_is_released_after_a_build_and_a_drop(self):
+        """A connection returned to the pool still holding the lock would block every
+        later build for good."""
+        revision_id = FAKE_REVISIONS[2]
+        try:
+            await tfidf_retrieval.ensure_shortlist_index(revision_id)
+            assert await self._lock_is_free()
+        finally:
+            await tfidf_retrieval.drop_shortlist_index(revision_id)
+        assert await self._lock_is_free()
 
 
 @pytest.mark.asyncio

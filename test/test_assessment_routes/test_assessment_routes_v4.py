@@ -233,6 +233,7 @@ from database.models import (
 )
 from schemas.assessment import AssessmentOut as AssessmentOutV3
 from schemas.assessment import AssessmentStatus, AssessmentType
+from utils.tfidf_tokenizer import unicode_word_tokenizer
 
 PREFIX = "/v4"
 V3_PREFIX = "/v3"
@@ -242,6 +243,12 @@ V3_PREFIX = "/v3"
 #: pointing at the real function.
 V4_DISPATCH = "assessment_routes.v4.assessment_service.call_assessment_runner"
 V3_DISPATCH = "assessment_routes.v3.assessment_routes.call_assessment_runner"
+#: A ``tfidf`` submission schedules a real ``CREATE INDEX CONCURRENTLY`` on
+#: ``verse_text`` as a background task, which ``TestClient`` runs. Nothing here drops it,
+#: so left unpatched it leaks into every later test that reads the index catalog.
+V4_SHORTLIST_MAINTAIN = (
+    "assessment_routes.v4.assessment_routes.tfidf_retrieval.maintain_shortlist_index"
+)
 
 _names = itertools.count()
 
@@ -323,8 +330,10 @@ def _body(revision_id, options, **top_level):
 
 
 def _submit(client, token, body):
-    """POST to /v4/assessments with the Modal dispatch stubbed out."""
-    with patch(V4_DISPATCH, new_callable=AsyncMock):
+    """POST to /v4/assessments with the Modal dispatch and index maintenance stubbed."""
+    with patch(V4_DISPATCH, new_callable=AsyncMock), patch(
+        V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
+    ):
         return client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
 
 
@@ -1687,7 +1696,9 @@ class TestRunnerPayload:
     """
 
     def _spawn(self, client, token, body):
-        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal:
+        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal, patch(
+            V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
+        ):
             spawn = AsyncMock()
             mock_modal.Function.from_name.return_value.spawn.aio = spawn
             resp = client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
@@ -4565,8 +4576,17 @@ def _store_recipe(db_session, assessment_id, version_id, corpus):
     """
     from sklearn.feature_extraction.text import TfidfVectorizer
 
+    # The runner's tokenizer (sil-ai/aqua-assessments#470), so the fixture fits the way
+    # production does. Fitting with sklearn's default here would hide a read that forgot
+    # to pass it.
     word = TfidfVectorizer(
-        analyzer="word", ngram_range=(1, 2), lowercase=True, max_df=1.0, min_df=1
+        analyzer="word",
+        ngram_range=(1, 2),
+        lowercase=True,
+        max_df=1.0,
+        min_df=1,
+        tokenizer=unicode_word_tokenizer,
+        token_pattern=None,
     )
     char = TfidfVectorizer(
         analyzer="char_wb", ngram_range=(3, 6), lowercase=True, max_df=1.0, min_df=1
@@ -5646,8 +5666,17 @@ def _fit_encoder(corpus, n_components):
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.preprocessing import normalize
 
+    # The runner's tokenizer (sil-ai/aqua-assessments#470), so the fixture fits the way
+    # production does. Fitting with sklearn's default here would hide a read that forgot
+    # to pass it.
     word = TfidfVectorizer(
-        analyzer="word", ngram_range=(1, 2), lowercase=True, max_df=1.0, min_df=1
+        analyzer="word",
+        ngram_range=(1, 2),
+        lowercase=True,
+        max_df=1.0,
+        min_df=1,
+        tokenizer=unicode_word_tokenizer,
+        token_pattern=None,
     )
     char = TfidfVectorizer(
         analyzer="char_wb", ngram_range=(3, 6), lowercase=True, max_df=1.0, min_df=1
