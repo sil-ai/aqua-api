@@ -661,8 +661,8 @@ async def ensure_shortlist_index(revision_id: int) -> None:
 
     ``CONCURRENTLY`` because ``verse_text`` is read constantly and a plain ``CREATE
     INDEX`` takes a lock that blocks writes to it for the whole build. ``IF NOT EXISTS``
-    makes the call idempotent, which is what lets both the submit path and a backfill
-    reach for it without coordinating.
+    makes the call idempotent, which is what lets two submissions for the same revision
+    both reach for it without coordinating.
 
     **An interrupted ``CONCURRENTLY`` build leaves the index present and invalid**, and
     ``IF NOT EXISTS`` would then happily skip it forever. Postgres ignores an invalid

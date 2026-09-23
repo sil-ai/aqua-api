@@ -215,7 +215,7 @@ class TestShortlistIndexLifecycle:
                 await tfidf_retrieval.drop_shortlist_index(revision_id)
 
     async def test_creating_twice_is_a_no_op_rather_than_an_error(self):
-        """``IF NOT EXISTS`` is what lets the submit path and the backfill migration both
+        """``IF NOT EXISTS`` is what lets two submissions for the same revision both
         reach for this without coordinating."""
         revision_id = FAKE_REVISIONS[1]
         async with AsyncSessionLocal() as db:
