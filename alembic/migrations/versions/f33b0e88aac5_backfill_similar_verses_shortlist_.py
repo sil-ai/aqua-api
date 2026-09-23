@@ -1,7 +1,7 @@
 """backfill similar-verses shortlist indexes
 
 Revision ID: f33b0e88aac5
-Revises: b720f1c8a4d2
+Revises: ccdba9bec96d
 Create Date: 2026-09-17 14:36:34.628687
 
 #973. ``GET /v4/assessments/{id}/similar-verses`` now shortlists a revision's verse text
@@ -54,7 +54,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "f33b0e88aac5"
-down_revision: Union[str, None] = "b720f1c8a4d2"
+down_revision: Union[str, None] = "ccdba9bec96d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

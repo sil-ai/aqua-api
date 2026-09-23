@@ -5581,13 +5581,22 @@ class TestSimilarVersesContract:
             t.value for t in AssessmentType
         }
 
-    def test_the_ivfflat_index_is_neither_used_nor_dropped(self):
-        """228 GB, 18% of the database, zero scans in five weeks of production statistics —
-        and still declared, because whether it should exist is a storage decision that does
-        not belong to this read. This pins that the read did not quietly drop it, and the
-        service docstring holds why it is not used."""
+    def test_the_ivfflat_index_is_gone_and_the_btree_siblings_remain(self):
+        """``tfidf_pca_vector_ivfflat_idx`` was dropped in #971 — 246 GB, and never usable
+        since the 2025 commit that added it rewrote the query into a form no ivfflat index
+        can serve — and this pins that it stays dropped. ``create_all`` builds whatever the
+        model declares, so re-adding it to ``__table_args__`` would silently rebuild it in
+        every fresh database and every test run.
+
+        The two btree indexes are asserted here rather than somewhere else because they are
+        what actually serves this table (73,638 scans on ``assessment_id`` and 3,163 on
+        ``vref`` over the same window), and because the way to get this drop wrong is to
+        take one index too many with it. Why the read never wanted the ANN index in the
+        first place is in the service docstring, not here."""
         indexes = {index.name for index in TfidfPcaVector.__table__.indexes}
-        assert "tfidf_pca_vector_ivfflat_idx" in indexes
+        assert "tfidf_pca_vector_ivfflat_idx" not in indexes
+        assert "ix_tfidf_pca_vector_assessment_id" in indexes
+        assert "ix_tfidf_pca_vector_vref" in indexes
 
 
 # ---------------------------------------------------------------------------
