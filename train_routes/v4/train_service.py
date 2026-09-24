@@ -1250,9 +1250,10 @@ async def session_results(
         # per-word rows, so a verse scored but not aligned still paginates.
         subqueries.append(_located_subquery(AssessmentResult, word_align_id, scope))
     # The tfidf members list verses from each side's *text*, not from vector rows — see
-    # `_tfidf_vref_subquery`. The target side's revision is read off its assessment
-    # rather than assumed to be the session's target, since v3 submits land here too;
-    # the source side's assessment was found *by* the source revision.
+    # `_tfidf_vref_subquery`. Each side's revision is its assessment's `revision_id`,
+    # because that is where `corpus_index` looks for the assessment's artifact run. Both
+    # submit paths set it to the session's target, and the source side's assessment was
+    # found *by* the source revision, so these equal the session's two revisions.
     tfidf_revision_id = (
         finished_assessments[TrainingType.tfidf.value].revision_id
         if tfidf_id is not None
