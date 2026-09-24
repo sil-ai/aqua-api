@@ -1062,7 +1062,7 @@ async def get_assessment_similar_verses(
         description=(
             "**Required.** The verse to find neighbours for, as a canonical vref "
             "(`MAT 9:20`). This is the query point, not a filter: the ranking is "
-            "computed against this verse's vector, so there is no meaningful response "
+            "computed against this verse's text, so there is no meaningful response "
             "without it. Omitting it is a 422 naming this parameter rather than a "
             "default — a request with no verse in mind has no answer."
         ),
@@ -1139,9 +1139,10 @@ async def get_assessment_similar_verses(
       text similarity within the revision, then ranked exactly. This is not a
       quality/speed trade in the usual direction — measured against held-out queries the
       narrowed ranking scores slightly *better* than scoring the whole revision, because
-      narrowing drops verses that the scoring alone rates highly. But it does mean this
-      form and a one-element `POST` batch can order the same verse's neighbours
-      differently; neither is more authoritative.
+      narrowing drops verses that the scoring alone rates highly. A one-element `POST`
+      batch is ranked the same way and returns the same neighbours; a `POST` of more than
+      8 query points scores the whole revision instead, so its tail can differ, though
+      each pair's `similarity` is the same.
     * Two `tfidf` assessments over the **same revision** answer identically for the same
       `vref`. The ranking depends on the revision's text and its fitted vocabulary, and
       nothing else about the assessment.
@@ -1216,12 +1217,11 @@ async def post_assessment_similar_verses(
     second effect for a retry to duplicate.
 
     **The reason it exists is `type: "text"`, and that is a capability the GET does not
-    have.** `GET …/similar-verses?vref=X` ranks against a verse *already vectorized in
-    this assessment* — it looks up X's stored vector, and no stored vector means
-    `404 VREF_NOT_FOUND`. A caller holding text that is not in the corpus (a draft verse, a
-    back-translation, a search phrase) cannot use it at all. A `text` query point is
-    encoded server-side with this assessment's own vectorizers and SVD, which is the only
-    way to put arbitrary text into the same space as its corpus vectors.
+    have.** `GET …/similar-verses?vref=X` ranks against a verse the assessed revision
+    holds, and a verse with no text there is `404 VREF_NOT_FOUND`. A caller holding text
+    that is not in the corpus (a draft verse, a back-translation, a search phrase) cannot
+    use it at all. A `text` query point is encoded server-side with the revision's own
+    fitted vocabulary, which puts it in the same space as the revision's verses.
 
     **Three kinds of query point, and they are not equals.** `text` is the client kind
     above. `vref` is convenience: it does exactly what the GET does, batched, so a caller
@@ -1244,7 +1244,18 @@ async def post_assessment_similar_verses(
         GET  …/similar-verses?vref=X&limit=N
         POST …/similar-verses {"queries": [{"type": "vref", "vref": "X"}], "limit": N}
 
-    return the same neighbours in the same order. A test pins it.
+    return the same neighbours in the same order, with the same `similarity`. A test pins
+    it.
+
+    **How a request is ranked depends on its size, and only on its size.** Up to 8 `text`
+    and `vref` query points are each ranked exactly as the GET ranks: a few hundred
+    candidates are picked by text similarity within the revision, then scored. More than 8
+    are scored against **every** verse in the revision at once, which is what makes a
+    batch of 250 take well under a second — though the first such request for a revision
+    on a given server process waits several seconds while it prepares. Either way a given
+    pair of verses gets the same `similarity`; what can differ is the tail of a ranking,
+    because the larger form considers verses the narrowing would have skipped. The same
+    request always answers the same way.
 
     **Self-exclusion is per query point.** A `vref` query point excludes itself
     automatically, exactly as on the GET — it would otherwise be its own top hit at maximum
@@ -1256,28 +1267,22 @@ async def post_assessment_similar_verses(
     orthogonal to how the query point arrived — removing an asymmetry, not adding a
     feature.
 
-    **Five failures, kept distinct, and one bad query point fails the whole request.** No
+    **Four failures, kept distinct, and one bad query point fails the whole request.** No
     partial-success shape: v3's `by_vectors` already rejects the entire request on one
     wrong-length vector, and the alternative makes every client write two error paths for
     one call.
 
     * An assessment you cannot reach, or one that is not `type = tfidf` →
       `404 ASSESSMENT_NOT_FOUND`, the same answer the rest of this family gives.
-    * A `text` query point on an assessment with **no TF-IDF artifacts** →
-      `404 TFIDF_ARTIFACTS_NOT_FOUND`. Distinct from the two above and from the one below:
-      text needs the vectorizers and SVD to encode with, `vref` and `vector` do not, and an
-      assessment can have corpus vectors without artifacts.
-    * A `vref` query point with no vector here → `404 VREF_NOT_FOUND`, the code the GET
-      already uses, with the failing query point's index in `details`.
+    * A `text` or `vref` query point on an assessment with **no TF-IDF artifacts** →
+      `404 TFIDF_ARTIFACTS_NOT_FOUND`, as on the GET. Both are ranked from text through
+      the fitted vocabulary; only `vector` needs no artifacts. Assessments from before
+      12 May 2026 have none.
+    * A `vref` query point with no text in the assessed revision → `404 VREF_NOT_FOUND`,
+      the code the GET already uses, with the failing query point's index in `details`.
+      Checked before the artifacts, so a request with both problems reports this one.
     * A vector of the wrong length, or one containing `inf`/`nan` → `422`, with `loc`
       naming the query point's index. Caught before pgvector can raise it.
-    * A `text` query point on an assessment whose **artifacts encode to a width its corpus
-      vectors are not** → `422 TFIDF_ARTIFACT_DIMENSION_MISMATCH`, naming both widths.
-      Distinct from the artifact 404 above: the artifacts are here and usable, they just
-      produce a vector pgvector cannot compare against this assessment's column. #893's Q4
-      ruling lists four failures and does not reach this one; the v3 artifact push
-      validates that the pushed `n_components` agrees with the SVD payload's but never that
-      either is 300, so an SVD of another width is storable today.
 
     **Three bounds, all 422s and none clamped**: `limit` 1–100 (the GET's, so one field
     means one thing on one path), `len(queries)` 1–500, and `len(queries) × limit` at most
@@ -1320,17 +1325,6 @@ async def post_assessment_similar_verses(
             code="TFIDF_ARTIFACTS_NOT_FOUND",
             message=str(exc),
             details={"assessment_id": assessment_id},
-        ) from exc
-    except assessment_service.TfidfArtifactDimensionMismatch as exc:
-        raise V4APIError(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            code="TFIDF_ARTIFACT_DIMENSION_MISMATCH",
-            message=str(exc),
-            details={
-                "assessment_id": assessment_id,
-                "artifact_dimensions": exc.produced,
-                "corpus_dimensions": exc.expected,
-            },
         ) from exc
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc

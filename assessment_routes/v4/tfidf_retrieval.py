@@ -18,12 +18,15 @@ contract and already in the database, so this can be validated against current p
 artifacts with no change to aqua-assessments, no contract change, and no rebuild.
 
 This does not by itself reclaim anything, and it does not by itself make the table unread
-either — the claim is narrower than that. It removes **this read's** dependency on the
-column. Three v4/v3 readers remain, and #967 enumerates all five scoring call sites: the
-POST form of this same endpoint (:func:`~assessment_routes.v4.assessment_service
-._rank_against_corpus`, moving in #973's second half), the training-session neighbours
-(``train_routes/v4/train_service.py:1059``), and v3's own tfidf reads, which retire with
-v3. The delete-and-rebuild #967 sequences last needs all of them gone, not just this one.
+either — the claim is narrower than that. It removes **these reads'** dependency on the
+column: the GET, and the POST's ``text`` and ``vref`` query kinds, whose batches use the
+in-process :class:`CorpusIndex` below (#973's second half). Three readers remain, and #967
+enumerates all five scoring call sites: the POST's ``vector`` kind
+(:func:`~assessment_routes.v4.assessment_service._rank_against_corpus`, whose future is
+decided with sil-ai/aqua-assessments#471), the training-session neighbours
+(``train_routes/v4/train_service.py:1059``, #978, which can reuse :class:`CorpusIndex`),
+and v3's own tfidf reads, which retire with v3. The delete-and-rebuild #967 sequences last
+needs all of them gone, not just these.
 
 Measured in ``aqua-tfidf-eval`` rounds 13-15, on 514 held-out queries (Berean Standard
 Bible Genesis 1-20 against an unmodified KJV corpus, so no query text is in the corpus
@@ -367,8 +370,7 @@ async def recipe(db: AsyncSession, *, revision_id: int, assessment_id: int) -> t
 
     **No SVD is read, and no dimension is checked.** There is no fixed width to check
     against any more: the rerank compares two vectors in the same sparse feature space
-    and never touches a ``Vector(300)`` column, so ``TfidfArtifactDimensionMismatch`` has
-    nothing to be a mismatch with on this path.
+    and never touches a ``Vector(300)`` column, so there is nothing to be a mismatch with.
 
     **One consequence of the canonical choice, recorded rather than handled.** The push
     writes the run row and the two vectorizer rows in separate commits, so a push that
@@ -381,8 +383,39 @@ async def recipe(db: AsyncSession, *, revision_id: int, assessment_id: int) -> t
     broken run is the fix.
     """
     run = await _canonical_run(db, revision_id, assessment_id)
-    fingerprint = (run.assessment_id, run.created_at)
+    return await _recipe_for_run(
+        db,
+        revision_id=revision_id,
+        assessment_id=assessment_id,
+        run_assessment_id=run.assessment_id,
+        fingerprint=_fingerprint(run),
+    )
 
+
+def _fingerprint(run: TfidfArtifactRun) -> tuple:
+    """What identifies a canonical run for caching: ``(assessment_id, created_at)``.
+
+    A re-push, or a newer run for the revision, changes it, and every cache keyed on the
+    revision compares it before serving — so a stale entry is rebuilt rather than served.
+    """
+    return (run.assessment_id, run.created_at)
+
+
+async def _recipe_for_run(
+    db: AsyncSession,
+    *,
+    revision_id: int,
+    assessment_id: int,
+    run_assessment_id: int,
+    fingerprint: tuple,
+) -> tuple:
+    """:func:`recipe` from the point where the canonical run is already known.
+
+    Split out so :func:`corpus_index` can resolve the run once, key its own cache on it,
+    and then load the recipe *for that same run* — rather than calling :func:`recipe`,
+    which would resolve the run a second time and could, across a concurrent push, answer
+    for a different one than the index was keyed on.
+    """
     cached = _RECIPE_CACHE.get(revision_id)
     if cached is not None and cached[0] == fingerprint:
         return cached[1]
@@ -395,7 +428,7 @@ async def recipe(db: AsyncSession, *, revision_id: int, assessment_id: int) -> t
         rows = (
             await db.scalars(
                 select(TfidfVectorizerArtifact).where(
-                    TfidfVectorizerArtifact.assessment_id == run.assessment_id
+                    TfidfVectorizerArtifact.assessment_id == run_assessment_id
                 )
             )
         ).all()
@@ -403,7 +436,7 @@ async def recipe(db: AsyncSession, *, revision_id: int, assessment_id: int) -> t
         if "word" not in by_kind or "char" not in by_kind:
             raise TfidfRecipeNotFound(
                 assessment_id,
-                f"Incomplete TF-IDF artifacts for assessment {run.assessment_id}",
+                f"Incomplete TF-IDF artifacts for assessment {run_assessment_id}",
             )
 
         built = await asyncio.to_thread(
@@ -505,6 +538,38 @@ def rerank(
     return [(vrefs[i], float(scores[i])) for i in order]
 
 
+def corpus_conditions(revision_id: int) -> list:
+    """The ``WHERE`` clause that defines a revision's corpus, shared by every reader of it.
+
+    One definition for the shortlist (:func:`shortlist`) and the in-process index
+    (:func:`corpus_index`), so the two ways of ranking a revision cannot disagree about
+    which verses are in it. Empty and ``<range>`` verses are out, for the reason
+    :func:`shortlist` gives: the runner never vectorized them, so they were never hits.
+
+    The revision id rides as a literal rather than a bound parameter — insurance that the
+    shortlist reaches its partial index, see the module docstring. ``int()`` is what makes
+    inlining safe. The index's full-revision load gains nothing from it and loses nothing
+    either; sharing the clause matters more than that.
+    """
+    return [
+        VerseText.revision_id == literal_column(str(int(revision_id))),
+        VerseText.text.isnot(None),
+        VerseText.text != "",
+        VerseText.text != VERSE_RANGE_MARKER,
+    ]
+
+
+def book_of(vref: str) -> str:
+    """The book token of a vref — everything before the first space.
+
+    What ``exclude_book`` compares, on every ranking path: :func:`shortlist` spells it
+    ``split_part(verse_reference, ' ', 1)`` in SQL and :class:`CorpusIndex` computes it
+    here, so a ``%`` or ``_`` in a caller-supplied vref is literal on both rather than a
+    ``LIKE`` wildcard on one.
+    """
+    return vref.split(" ", 1)[0]
+
+
 async def shortlist(
     db: AsyncSession,
     *,
@@ -512,6 +577,7 @@ async def shortlist(
     query_text: str,
     k: int,
     exclude_vref: str | None = None,
+    exclude_book: bool = False,
 ) -> list[tuple]:
     """The ``k`` verses of ``revision_id`` whose text is closest to ``query_text``.
 
@@ -542,7 +608,9 @@ async def shortlist(
     behaviour rather than to change it.
 
     ``exclude_vref`` is the query verse's own leakage guard, pushed into the ``WHERE``
-    clause so ``k`` rows survive the drop rather than ``k`` minus one.
+    clause so ``k`` rows survive the drop rather than ``k`` minus one. ``exclude_book``
+    widens it to the vref's whole book (the POST's ``text`` kind offers it). A filter on
+    the same partial index scan, so the scan is still walked in distance order.
 
     **Deduplicated by vref, lowest id winning.** ``verse_text`` has no uniqueness
     constraint on ``(revision_id, verse_reference)``, and unlike the stored-vector ranking
@@ -563,18 +631,15 @@ async def shortlist(
     shortlist in isolation — :func:`rerank` re-sorts on cosine and nothing downstream
     depends on it.
     """
-    conditions = [
-        # A literal, not a bound parameter. Bound reaches the partial index too under
-        # Postgres' default plan_cache_mode, so this is insurance against a generic plan
-        # being chosen — which would silently fall back to a scan and a sort. The module
-        # docstring has all three measured plans. ``int()`` is what makes inlining safe.
-        VerseText.revision_id == literal_column(str(int(revision_id))),
-        VerseText.text.isnot(None),
-        VerseText.text != "",
-        VerseText.text != VERSE_RANGE_MARKER,
-    ]
+    conditions = corpus_conditions(revision_id)
     if exclude_vref is not None:
-        conditions.append(VerseText.verse_reference != exclude_vref)
+        if exclude_book:
+            conditions.append(
+                func.split_part(VerseText.verse_reference, " ", 1)
+                != book_of(exclude_vref)
+            )
+        else:
+            conditions.append(VerseText.verse_reference != exclude_vref)
 
     distance = VerseText.text.op("<->", return_type=Float)(query_text)
     rows = (
@@ -621,20 +686,462 @@ async def query_text(
     similarity in the response, so an arbitrary pick among duplicates reorders the whole
     ranking rather than changing one field.
     """
-    if revision_id is None:
-        return None
-    text = await db.scalar(
-        select(VerseText.text)
-        .where(
-            VerseText.revision_id == revision_id,
-            VerseText.verse_reference == vref,
+    return (await query_texts(db, revision_id, [vref])).get(vref)
+
+
+async def query_texts(
+    db: AsyncSession, revision_id: int | None, vrefs: Sequence[str]
+) -> dict[str, str]:
+    """:func:`query_text` for many vrefs in one statement: ``{vref: text}``.
+
+    A vref with nothing to rank with is simply absent, so the caller decides what a miss
+    means — the GET has one query point, the POST has to name the lowest failing index.
+    One statement however many vrefs were named, which keeps the POST's query count
+    independent of its batch size. ``ORDER BY id`` with first-row-wins is the lowest-id
+    rule :func:`query_text` documents, applied per vref; the filter is applied *after*
+    picking the lowest-id row, so a duplicate whose lowest-id row is empty stays a miss
+    rather than silently falling through to a later row's text.
+
+    The vrefs are sorted before binding: a caller's set iterates in hash order, which is
+    stable within a process and not across them.
+    """
+    if revision_id is None or not vrefs:
+        return {}
+    rows = (
+        await db.execute(
+            select(VerseText.verse_reference, VerseText.text)
+            .where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(sorted(set(vrefs))),
+            )
+            .order_by(VerseText.id)
         )
-        .order_by(VerseText.id)
-        .limit(1)
+    ).all()
+    first: dict[str, str | None] = {}
+    for row in rows:
+        first.setdefault(row.verse_reference, row.text)
+    return {
+        vref: text
+        for vref, text in first.items()
+        if text is not None and text != "" and text != VERSE_RANGE_MARKER
+    }
+
+
+async def two_stage(
+    db: AsyncSession,
+    recipe_pair: tuple,
+    *,
+    revision_id: int,
+    query_text: str,
+    limit: int,
+    exclude_vref: str | None = None,
+    exclude_book: bool = False,
+) -> list[tuple]:
+    """Shortlist then rerank, for one query point: ``(vref, similarity)``, best first.
+
+    The GET's whole ranking, and the POST's for small batches (see
+    :data:`TWO_STAGE_MAX_QUERIES`). One function so the two cannot drift: a one-element
+    POST batch is answered by exactly the code that answers the GET. The rerank is
+    CPU-bound sklearn work, so it runs on a worker thread.
+    """
+    candidates = await shortlist(
+        db,
+        revision_id=revision_id,
+        query_text=query_text,
+        k=shortlist_size(limit),
+        exclude_vref=exclude_vref,
+        exclude_book=exclude_book,
     )
-    if text is None or text == "" or text == VERSE_RANGE_MARKER:
-        return None
-    return text
+    ranked = await asyncio.to_thread(rerank, recipe_pair, query_text, candidates)
+    return ranked[:limit]
+
+
+# ---------------------------------------------------------------------------
+# The batch path: an in-process index over the whole revision
+# ---------------------------------------------------------------------------
+
+#: The largest batch answered by :func:`two_stage` per query point; anything bigger goes
+#: to :class:`CorpusIndex`. Counted over the ``text`` and ``vref`` query points only —
+#: ``vector`` points use neither.
+#:
+#: **Chosen by request size, never by whether an index happens to be warm.** Each worker
+#: holds its own cache, so routing on cache state would give the same request a different
+#: ranking depending on which worker served it. The two paths agree on every pair's
+#: similarity but not on membership: the index scores the whole revision, the shortlist
+#: only trigram-near candidates.
+#:
+#: **Why 8.** The two-stage path costs ~63-81 ms per query with the per-revision GiST
+#: index and ~950 ms without it (``aqua-tfidf-eval`` round 15, and the prod measurement
+#: in the module docstring). An index build costs ~7.3 s. 8 x 950 ms is about one build,
+#: so a small batch is never slower than a cold large one even where the GiST index could
+#: not be created — and span suggestions, which send one text per call, never wait on a
+#: build at all. With the GiST index, 8 query points cost at most ~0.65 s.
+TWO_STAGE_MAX_QUERIES = 8
+
+#: Query rows scored per densified block in :meth:`CorpusIndex.search`. The score block is
+#: ``rows x verses`` float32 — 32 x 41,899 is ~5 MB, where the agent's whole 250-text
+#: batch at once would be ~42 MB of transient per request.
+_SEARCH_BLOCK_ROWS = 32
+
+
+class CorpusIndex:
+    """One revision's corpus as a feature-indexed sparse matrix, ready for batch search.
+
+    ``aqua-tfidf-eval`` round 15's "variant B": encode the whole revision once through its
+    fitted recipe, transpose, and answer a batch of N queries with one sparse multiply —
+    372 ms at N=250 against ~6 s for the stored-vector scan it replaces, after a ~7.3 s
+    build paid once per revision per process. **It stores nothing**: it is a cache derived
+    from verse text and the ~1.4 MB recipe, so #967's "store no per-verse vectors" holds.
+
+    Not tied to the POST. #978 plans to reuse it for training-session neighbours, so it
+    takes texts and returns ``(vref, similarity)`` rankings and knows nothing about query
+    kinds or the response shape.
+
+    **The similarity is the GET's**, pair for pair: both sides are L2-normalized rows of
+    the same recipe's encoding, so a dot product is their cosine, in ``[0, 1]``. The rows
+    come from the same corpus rules (:func:`corpus_conditions`, lowest id per vref), so the
+    same verse is scored from the same text.
+
+    **Rows are in vref order**, so a stable sort by score alone breaks ties on vref — the
+    rule the GET's :func:`rerank` applies with an explicit key.
+
+    ``recipe`` is the pair the index was encoded with, and queries are encoded with it
+    rather than with whatever the recipe cache holds now. A newer run for the revision
+    changes the fingerprint and this index is rebuilt; until then, query and corpus are
+    always in the same feature space.
+    """
+
+    def __init__(
+        self,
+        *,
+        revision_id: int,
+        fingerprint: tuple,
+        recipe_pair: tuple,
+        vrefs: list[str],
+        matrix,
+    ) -> None:
+        import numpy as np
+
+        self.revision_id = revision_id
+        self.fingerprint = fingerprint
+        self.recipe = recipe_pair
+        self.vrefs = vrefs
+        self.row_of = {vref: row for row, vref in enumerate(vrefs)}
+        # One small integer per row naming its book, so exclude_book is a vector compare
+        # rather than 41,899 string splits per query point.
+        book_codes: dict[str, int] = {}
+        self.books = np.fromiter(
+            (book_codes.setdefault(book_of(vref), len(book_codes)) for vref in vrefs),
+            dtype=np.int32,
+            count=len(vrefs),
+        )
+        self._book_codes = book_codes
+        #: ``features x verses`` CSR — the corpus encoding transposed, so a query's row
+        #: times this is its score against every verse at once.
+        self.matrix = matrix
+        self.nbytes = self._measure()
+
+    def _measure(self) -> int:
+        """Resident size for the cache budget: the sparse matrix plus the per-row lookups.
+
+        Measured once, at construction — eviction sums it over every entry. The recipe is
+        **not** counted: the recipe cache accounts for it, and an index and its recipe are
+        normally resident together. Where the recipe cache has evicted it, the index keeps
+        it alive unaccounted, which bounds the error at ~28-37 MB per resident index.
+        """
+        matrix = self.matrix
+        vref_strings = sum(sys.getsizeof(vref) for vref in self.vrefs)
+        return (
+            matrix.data.nbytes
+            + matrix.indices.nbytes
+            + matrix.indptr.nbytes
+            + self.books.nbytes
+            + vref_strings
+            + sys.getsizeof(self.vrefs)
+            + sys.getsizeof(self.row_of)
+        )
+
+    def search(
+        self,
+        texts: Sequence[str],
+        *,
+        limit: int,
+        exclusions: Sequence[tuple],
+    ) -> list[list[tuple]]:
+        """The ``limit`` closest verses to each text, as ``(vref, similarity)`` lists.
+
+        ``exclusions[i]`` is ``(exclude_vref, exclude_book)`` for ``texts[i]``, with the
+        same meaning as on :func:`shortlist`: drop that verse, or with ``exclude_book``
+        its whole book. Excluded verses are removed before the cut, so ``limit`` rows
+        survive rather than ``limit`` minus the excluded.
+
+        **Verses scoring zero still rank**, after every positive one and in vref order —
+        so a request returns ``limit`` rows whenever the revision has that many, as the
+        GET does over its shortlist. Pure CPU; call through ``asyncio.to_thread``.
+        """
+        if not texts:
+            return []
+        if not self.vrefs:
+            return [[] for _ in texts]
+
+        queries = encode(self.recipe, list(texts))
+        results: list[list[tuple]] = []
+        for start in range(0, len(texts), _SEARCH_BLOCK_ROWS):
+            block = (
+                queries[start : start + _SEARCH_BLOCK_ROWS] @ self.matrix
+            ).toarray()
+            for offset, scores in enumerate(block):
+                exclude_vref, exclude_book = exclusions[start + offset]
+                results.append(self._top(scores, limit, exclude_vref, exclude_book))
+        return results
+
+    def _top(
+        self, scores, limit: int, exclude_vref: str | None, exclude_book: bool
+    ) -> list[tuple]:
+        """One row's top ``limit``, most similar first, ties on vref.
+
+        A full sort of 41,899 scores per query point would cost ~3 ms each, ~0.75 s at the
+        agent's 250. So: partition to find the ``limit``-th best score, keep every row at
+        or above it (which keeps *all* the rows tied at the boundary, so which of them
+        survives is decided by vref rather than by the partition), and sort only those.
+        """
+        import numpy as np
+
+        # ``scores`` is a row of the block :meth:`search` just densified, so it is masked
+        # in place rather than copied. Kept float32 throughout: the returned value is then
+        # bit-for-bit what the GET's float32 rerank reports for the same pair.
+        available = len(scores)
+        if exclude_vref is not None:
+            if exclude_book:
+                code = self._book_codes.get(book_of(exclude_vref))
+                if code is not None:
+                    mask = self.books == code
+                    scores[mask] = -np.inf
+                    available -= int(np.count_nonzero(mask))
+            else:
+                row = self.row_of.get(exclude_vref)
+                if row is not None:
+                    scores[row] = -np.inf
+                    available -= 1
+
+        k = min(limit, available)
+        if k == 0:
+            return []
+        if k < len(scores):
+            threshold = np.partition(scores, len(scores) - k)[len(scores) - k]
+            candidates = np.flatnonzero(scores >= threshold)
+        else:
+            candidates = np.flatnonzero(scores != -np.inf)
+        # lexsort's last key is primary: descending score, then ascending row (= vref).
+        order = candidates[np.lexsort((candidates, -scores[candidates]))][:k]
+        return [(self.vrefs[row], float(scores[row])) for row in order]
+
+
+def _build_corpus_index(
+    revision_id: int, fingerprint: tuple, recipe_pair: tuple, rows: Sequence[tuple]
+) -> CorpusIndex:
+    """Encode ``rows`` (``(vref, text)``, vref-sorted) and transpose. Pure CPU.
+
+    96% of the build is the encode (round 15: 7.1 s of 7.3 s on the KJV); the transpose is
+    ~0.1 s. Run through ``asyncio.to_thread``. That keeps the event loop responsive but
+    not idle: sklearn's analyzers are Python, so the build holds the GIL for much of its
+    run and other requests on the same worker slow down while it lasts.
+    """
+    from scipy.sparse import csr_matrix
+
+    vrefs = [vref for vref, _ in rows]
+    matrix = (
+        encode(recipe_pair, [text for _, text in rows]).T.tocsr()
+        if rows
+        else csr_matrix((0, 0), dtype="float32")
+    )
+    return CorpusIndex(
+        revision_id=revision_id,
+        fingerprint=fingerprint,
+        recipe_pair=recipe_pair,
+        vrefs=vrefs,
+        matrix=matrix,
+    )
+
+
+async def corpus_rows(db: AsyncSession, revision_id: int) -> list[tuple]:
+    """Every verse of the revision's corpus as ``(vref, text)``, sorted by vref.
+
+    The same corpus :func:`shortlist` draws candidates from — :func:`corpus_conditions`,
+    and one row per vref keeping the lowest id, for the reason :func:`shortlist` gives —
+    but a plain full read, never a call through the distance-ordered ``LIMIT``. So the
+    index does not depend on the GiST index existing.
+    """
+    rows = (
+        await db.execute(
+            select(VerseText.verse_reference, VerseText.text)
+            .where(and_(*corpus_conditions(revision_id)))
+            .order_by(VerseText.id)
+        )
+    ).all()
+    first: dict[str, str] = {}
+    for row in rows:
+        first.setdefault(row.verse_reference, row.text)
+    return sorted(first.items())
+
+
+#: ``revision_id -> CorpusIndex``, least recently used first. Keyed on the revision for
+#: the reason :data:`_RECIPE_CACHE` is — two assessments over one revision share a
+#: recipe, so they share an index — and validated on every hit against the canonical
+#: run's fingerprint. Bounded by :data:`~config.Settings.tfidf_corpus_index_cache_max_bytes`.
+_INDEX_CACHE: dict[int, CorpusIndex] = {}
+
+#: ``(revision_id, fingerprint) -> Task`` for builds in flight. What makes a cold
+#: revision build **once** however many requests arrive for it: the first creates the
+#: task, the rest await the same one. Keyed on the fingerprint too, so a build for an
+#: older run never answers a request that has already seen a newer one.
+_INDEX_BUILDS: dict[tuple, asyncio.Task] = {}
+
+#: Held for the whole of a build, across revisions. Builds are serialized per worker so at
+#: most one build's transient memory is live at a time — peak RSS rose ~170 MB for a KJV
+#: build, the kept index included. The cost is that a second revision's build waits for
+#: the first.
+_INDEX_BUILD_LOCK = asyncio.Lock()
+
+
+def clear_corpus_indexes() -> None:
+    """Drop every cached index and cancel in-flight builds. For tests.
+
+    Cancelled rather than merely forgotten, so a build still running when a test ends
+    cannot finish during the next one and put an index back. A build whose event loop has
+    already closed is left alone: it can never run again, and cancelling it would raise.
+    """
+    for task in list(_INDEX_BUILDS.values()):
+        if not task.done() and not task.get_loop().is_closed():
+            task.cancel()
+    _INDEX_CACHE.clear()
+    _INDEX_BUILDS.clear()
+
+
+async def corpus_index(
+    db: AsyncSession, *, revision_id: int, assessment_id: int
+) -> CorpusIndex:
+    """The revision's :class:`CorpusIndex`, built at most once per process.
+
+    Raises :class:`TfidfRecipeNotFound` on the same terms :func:`recipe` does: the
+    assessment has no artifact run, or the revision's canonical run is incomplete.
+
+    ``db`` is used only to resolve the canonical run. The build runs in its **own task
+    and its own session**, and every caller awaits it through ``asyncio.shield`` — so a
+    client that disconnects cancels its own wait, not the build the other waiters are
+    sharing. A failed build is not cached: its task is forgotten when it finishes, and the
+    next request tries again.
+    """
+    run = await _canonical_run(db, revision_id, assessment_id)
+    fingerprint = _fingerprint(run)
+
+    cached = _INDEX_CACHE.get(revision_id)
+    if cached is not None and cached.fingerprint == fingerprint:
+        # Move to the end: eviction takes the least recently *used*, not the oldest built.
+        _INDEX_CACHE[revision_id] = _INDEX_CACHE.pop(revision_id)
+        return cached
+
+    key = (revision_id, fingerprint)
+    task = _INDEX_BUILDS.get(key)
+    if task is None:
+        task = asyncio.create_task(
+            _build_and_cache(
+                revision_id=revision_id,
+                assessment_id=assessment_id,
+                run_assessment_id=run.assessment_id,
+                fingerprint=fingerprint,
+            )
+        )
+        _INDEX_BUILDS[key] = task
+        task.add_done_callback(lambda done: _forget_build(key, done))
+    return await asyncio.shield(task)
+
+
+def _forget_build(key: tuple, task: asyncio.Task) -> None:
+    """Drop a finished build from :data:`_INDEX_BUILDS`, and consume its exception.
+
+    Consuming it matters when every waiter was cancelled: nothing else would read the
+    failure, and asyncio would log "Task exception was never retrieved" at exit.
+    """
+    if _INDEX_BUILDS.get(key) is task:
+        del _INDEX_BUILDS[key]
+    if not task.cancelled():
+        task.exception()
+
+
+async def _build_and_cache(
+    *,
+    revision_id: int,
+    assessment_id: int,
+    run_assessment_id: int,
+    fingerprint: tuple,
+) -> CorpusIndex:
+    """Load, build, insert, evict — the body of one :func:`corpus_index` build task."""
+    from database.dependencies import AsyncSessionLocal
+
+    async with _INDEX_BUILD_LOCK:
+        # A build for this exact run may have finished while this one waited for the lock.
+        cached = _INDEX_CACHE.get(revision_id)
+        if cached is not None and cached.fingerprint == fingerprint:
+            return cached
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        async with AsyncSessionLocal() as db:
+            recipe_pair = await _recipe_for_run(
+                db,
+                revision_id=revision_id,
+                assessment_id=assessment_id,
+                run_assessment_id=run_assessment_id,
+                fingerprint=fingerprint,
+            )
+            rows = await corpus_rows(db, revision_id)
+        index = await asyncio.to_thread(
+            _build_corpus_index, revision_id, fingerprint, recipe_pair, rows
+        )
+        nbytes = index.nbytes
+
+        _INDEX_CACHE.pop(revision_id, None)
+        _INDEX_CACHE[revision_id] = index
+        logger.info(
+            "built similar-verses corpus index",
+            extra={
+                "revision_id": revision_id,
+                "verses": len(rows),
+                "duration_ms": round((loop.time() - started) * 1000),
+                "index_bytes": nbytes,
+            },
+        )
+        _evict_corpus_indexes(revision_id)
+        return index
+
+
+def _evict_corpus_indexes(keep: int) -> None:
+    """Evict least recently used indexes until the byte budget is met.
+
+    The entry just built always survives even if it alone exceeds the budget — evicting
+    it would mean rebuilding it on the very next request, the rule the recipe cache and
+    v3's encoder cache both follow.
+    """
+    budget = settings.tfidf_corpus_index_cache_max_bytes
+    total = sum(index.nbytes for index in _INDEX_CACHE.values())
+    for revision_id in list(_INDEX_CACHE):
+        if total <= budget:
+            break
+        if revision_id == keep:
+            continue
+        evicted = _INDEX_CACHE.pop(revision_id)
+        total -= evicted.nbytes
+        logger.info(
+            "evicted similar-verses corpus index",
+            extra={
+                "revision_id": revision_id,
+                "index_bytes": evicted.nbytes,
+                "cache_bytes": total,
+                "cache_entries": len(_INDEX_CACHE),
+                "budget_bytes": budget,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
