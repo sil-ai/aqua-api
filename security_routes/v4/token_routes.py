@@ -50,7 +50,7 @@ __version__ = "v4"
 from datetime import timedelta
 
 import fastapi
-from fastapi import Depends, status
+from fastapi import Depends, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +58,10 @@ from api_v4.errors import V4APIError, V4ErrorResponse
 from api_v4.schemas.security import TokenOut
 from database.dependencies import get_db
 from security_routes.auth_routes import authenticate_user, create_access_token
+from security_routes.rate_limiting import (
+    check_token_failure_gate,
+    register_failed_login,
+)
 from security_routes.utilities import ACCESS_TOKEN_EXPIRE_MINUTES
 
 router = fastapi.APIRouter(tags=["Auth"])
@@ -78,10 +82,30 @@ router = fastapi.APIRouter(tags=["Auth"])
                 "(``INVALID_CREDENTIALS``) covers both, so an unauthenticated caller "
                 "cannot enumerate valid usernames."
             ),
-        }
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "model": V4ErrorResponse,
+            "description": (
+                "Too many *failed* token requests from this IP. Only a rejected "
+                "credential is charged, so a client presenting the right password "
+                "does not fill the budget however often it authenticates (#959). "
+                "Two tiers, both configurable (``AUTH_TOKEN_FAILURE_LIMIT``, "
+                "default 5/minute, and ``AUTH_TOKEN_HARD_FAILURE_LIMIT``, default "
+                "60/minute): past the soft budget the failures themselves are "
+                "refused while correct credentials still succeed, and past the hard "
+                "one every token request from that address is refused — a correct one "
+                "included, because the only way to know a credential is correct is "
+                "to check it. Both budgets are shared with v3's ``/latest/token``: "
+                "the limiter keys on the client address, not the API version, so an "
+                "attacker cannot double their attempts by alternating between the "
+                "two surfaces. ``code`` is ``TOO_MANY_REQUESTS`` and ``Retry-After`` "
+                "carries the back-off in seconds."
+            ),
+        },
     },
 )
 async def login_for_access_token(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> TokenOut:
@@ -90,8 +114,10 @@ async def login_for_access_token(
     Send ``application/x-www-form-urlencoded`` with ``username`` and ``password``
     (see the module docstring for why this endpoint keeps the form body).
     """
+    check_token_failure_gate(request)
     user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
+        register_failed_login(request)
         # One code and one message for both "no such user" and "wrong password":
         # distinguishing them would let an unauthenticated caller enumerate valid
         # usernames. v3 collapses them the same way.

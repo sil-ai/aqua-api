@@ -3,7 +3,7 @@ __version__ = "v3"
 import hashlib
 import json
 import socket
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import fastapi
@@ -343,10 +343,9 @@ async def call_assessment_runner(
         # Transition queued → running inside the same transaction so the
         # row reflects "dispatched" before we hand off to Modal. If the
         # spawn raises below, the caller rolls back and the row reverts
-        # to queued. Use datetime.utcnow() to match the existing pattern
-        # in update_assessment_status.
+        # to queued.
         a_row.status = AssessmentStatus.running.value
-        a_row.start_time = datetime.utcnow()
+        a_row.start_time = datetime.now(timezone.utc)
         await db.flush()
 
     logger.info(
@@ -692,7 +691,9 @@ async def add_assessment(
 
     # Check for duplicate in-progress assessment (admins can bypass)
     if not current_user.is_admin:
-        stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(
+            hours=STALE_ASSESSMENT_HOURS
+        )
         stmt = (
             select(Assessment.id)
             .where(
@@ -738,7 +739,7 @@ async def add_assessment(
         reference_id=a.reference_id,
         type=a.type,
         status="queued",
-        requested_time=datetime.now(),
+        requested_time=datetime.now(timezone.utc),
         owner_id=current_user.id,
         kwargs=parsed_kwargs,
     )
@@ -799,7 +800,7 @@ async def add_assessment(
             await db.rollback()
             assessment.status = AssessmentStatus.failed.value
             assessment.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
-            assessment.end_time = datetime.utcnow()
+            assessment.end_time = datetime.now(timezone.utc)
             await db.commit()
         except SQLAlchemyError as cleanup_err:
             await db.rollback()
@@ -883,10 +884,10 @@ async def update_assessment_status(
         assessment.percent_complete = update.percent_complete
 
     if assessment.start_time is None and update.status != "queued":
-        assessment.start_time = datetime.utcnow()
+        assessment.start_time = datetime.now(timezone.utc)
 
     if update.status in ASSESSMENT_TERMINAL_STATUSES:
-        assessment.end_time = datetime.utcnow()
+        assessment.end_time = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(assessment)

@@ -127,8 +127,10 @@ What each group of tests pins down:
 import asyncio
 import itertools
 import json
+import os
+import time
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import get_args
 from unittest.mock import AsyncMock, patch
 
@@ -1831,13 +1833,28 @@ class TestRunnerPayload:
         self, client, regular_token1, db_session, group1_version
     ):
         revision_id, _ = _pair(db_session, group1_version)
-        with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
-            dispatch.side_effect = RuntimeError("modal is down")
-            resp = client.post(
-                f"{PREFIX}/assessments",
-                json=_body(revision_id, {"type": "tfidf"}),
-                headers=_auth(regular_token1),
-            )
+        # The process zone is forced away from UTC for the dispatch, which is what makes
+        # the end_time assertion below able to fail. CI runs on a UTC host, and there
+        # datetime.utcnow() and datetime.now() describe the same instant — so the naive
+        # writer this guards against would be indistinguishable from a correct one, and
+        # the assertion would pass no matter what the code did.
+        previous_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        time.tzset()
+        try:
+            with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
+                dispatch.side_effect = RuntimeError("modal is down")
+                resp = client.post(
+                    f"{PREFIX}/assessments",
+                    json=_body(revision_id, {"type": "tfidf"}),
+                    headers=_auth(regular_token1),
+                )
+        finally:
+            if previous_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous_tz
+            time.tzset()
         assert resp.status_code == 503, resp.text
         assert _error_code(resp) == "ASSESSMENT_DISPATCH_FAILED"
         # The row exists and says so, rather than sitting queued forever.
@@ -1845,6 +1862,17 @@ class TestRunnerPayload:
         row = db_session.query(Assessment).filter_by(revision_id=revision_id).one()
         assert row.status == "failed"
         assert "dispatch_failed" in row.status_detail
+        # ``end_time`` is stamped on this path, and it is stamped into a
+        # ``TIMESTAMP WITH TIME ZONE`` column (#720). asyncpg reads a *naive* value as
+        # host-local, so ``datetime.utcnow()`` — which returns UTC wall-clock with no
+        # tzinfo — would be re-localized and land off by the host's offset, while
+        # ``datetime.now()`` and ``datetime.now(timezone.utc)`` both record the true
+        # instant. The window is what catches that; ``tzinfo is not None`` alone would
+        # not, since the column returns aware values whatever was written.
+        assert row.end_time is not None
+        assert row.end_time.tzinfo is not None
+        assert row.end_time <= datetime.now(timezone.utc) + timedelta(minutes=1)
+        assert row.end_time >= datetime.now(timezone.utc) - timedelta(minutes=10)
 
 
 class TestTranscribedAudio:
@@ -2155,7 +2183,7 @@ class TestPollShape:
         """Decision 1, which is the whole reason the body is merged: a poll on a running
         assessment must answer more than "RUNNING"."""
         revision_id, reference_id = _pair(db_session, group1_version)
-        started = datetime(2026, 8, 20, 9, 30)
+        started = datetime(2026, 8, 20, 9, 30, tzinfo=timezone.utc)
         assessment_id = _make_assessment(
             db_session,
             revision_id,
@@ -2173,11 +2201,48 @@ class TestPollShape:
         assert body["reference_id"] == reference_id
         assert body["type"] == "agent-critique"
         assert body["owner_id"] == _user_id(db_session, "testuser1")
-        assert body["requested_time"] is not None
-        assert body["start_time"] == started.isoformat()
-        assert body["end_time"] is None
+        # Wire names are the ``_at`` spellings (#925); ``start_time=started`` above is
+        # the ORM column, which keeps v3's name.
+        assert body["requested_at"] is not None
+        # Spelled out rather than ``started.isoformat()``: the columns are
+        # ``TIMESTAMP WITH TIME ZONE`` (#720), and pydantic renders a UTC instant with
+        # the ``Z`` designator where ``isoformat()`` writes ``+00:00``. Both are the
+        # same instant and both are valid RFC 3339 -- which is what ``format:
+        # date-time`` means, and what the offset-less form this used to emit was not.
+        assert body["started_at"] == "2026-08-20T09:30:00Z"
+        assert body["ended_at"] is None
         assert body["deleted"] is False
         assert body["updated_at"] is not None
+
+    def test_every_timestamp_renders_as_an_explicit_utc_instant(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """One body, one timestamp shape.
+
+        #720 converted requested_time/start_time/end_time to TIMESTAMP WITH TIME
+        ZONE and left updated_at naive, so these four fields read from columns of
+        two different types. Which column a field happens to come from is an
+        internal detail: a client that compares these as strings, or hands them
+        all to one strict parser, must not see two shapes in one object.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        started = datetime(2026, 8, 20, 9, 30, tzinfo=timezone.utc)
+        assessment_id = _make_assessment(
+            db_session,
+            revision_id,
+            reference_id,
+            status=AssessmentStatus.finished.value,
+            start_time=started,
+            end_time=started + timedelta(minutes=5),
+        )
+        body = _get(client, regular_token1, assessment_id).json()
+
+        for field in ("requested_at", "started_at", "ended_at", "updated_at"):
+            value = body[field]
+            assert value is not None, f"{field} unexpectedly null"
+            assert value.endswith(
+                "Z"
+            ), f"{field}={value!r} is not an explicit UTC instant"
 
     def test_progress_rides_along_as_ordinary_fields(
         self, client, regular_token1, db_session, group1_version
@@ -2389,7 +2454,7 @@ class TestList:
         assert body["total"] == 3
         assert body["limit"] == DEFAULT_LIMIT
         assert body["offset"] == 0
-        # Ordered by id ascending, not v3's requested_time descending.
+        # Ordered by id ascending, not v3's requested_time-descending column order.
         assert [item["id"] for item in body["items"]] == sorted(created)
 
     def test_pagination_walks_the_collection(
@@ -2941,7 +3006,10 @@ class TestReadSchemaContract:
             for p in _route("list_assessments").dependant.query_params
             if p.alias == "type"
         )
-        assert AssessmentType in get_args(param.type_)
+        # fastapi's ModelField wraps a pydantic FieldInfo rather than exposing a
+        # v1-style `.type_` since fastapi 0.137 (#937); the annotation lives on
+        # `field_info` now.
+        assert AssessmentType in get_args(param.field_info.annotation)
 
 
 SERVED_TYPES = ("word-alignment", "semantic-similarity", "sentence-length")
@@ -5111,13 +5179,22 @@ class TestSimilarVersesContract:
             t.value for t in AssessmentType
         }
 
-    def test_the_ivfflat_index_is_neither_used_nor_dropped(self):
-        """228 GB, 18% of the database, zero scans in five weeks of production statistics —
-        and still declared, because whether it should exist is a storage decision that does
-        not belong to this read. This pins that the read did not quietly drop it, and the
-        service docstring holds why it is not used."""
+    def test_the_ivfflat_index_is_gone_and_the_btree_siblings_remain(self):
+        """``tfidf_pca_vector_ivfflat_idx`` was dropped in #971 — 246 GB, and never usable
+        since the 2025 commit that added it rewrote the query into a form no ivfflat index
+        can serve — and this pins that it stays dropped. ``create_all`` builds whatever the
+        model declares, so re-adding it to ``__table_args__`` would silently rebuild it in
+        every fresh database and every test run.
+
+        The two btree indexes are asserted here rather than somewhere else because they are
+        what actually serves this table (73,638 scans on ``assessment_id`` and 3,163 on
+        ``vref`` over the same window), and because the way to get this drop wrong is to
+        take one index too many with it. Why the read never wanted the ANN index in the
+        first place is in the service docstring, not here."""
         indexes = {index.name for index in TfidfPcaVector.__table__.indexes}
-        assert "tfidf_pca_vector_ivfflat_idx" in indexes
+        assert "tfidf_pca_vector_ivfflat_idx" not in indexes
+        assert "ix_tfidf_pca_vector_assessment_id" in indexes
+        assert "ix_tfidf_pca_vector_vref" in indexes
 
 
 # ---------------------------------------------------------------------------
@@ -11407,7 +11484,9 @@ class TestScoreComparisonContract:
         against = next(
             param for param in route.dependant.query_params if param.name == "against"
         )
-        assert against.required is True
+        # fastapi's ModelField no longer exposes a v1-style `.required` since
+        # fastapi 0.137 (#937); ask the wrapped FieldInfo instead.
+        assert against.field_info.is_required() is True
         assert _against_bounds("get_assessment_score_comparison")["min_length"] == 1
 
     def test_the_route_uses_the_result_pagination_dependency(self):

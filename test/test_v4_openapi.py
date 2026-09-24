@@ -33,8 +33,12 @@ import json
 
 import fastapi
 import pytest
-from fastapi.dependencies.utils import get_flat_dependant
-from fastapi.routing import APIRoute
+from fastapi.dependencies.models import (
+    Dependant,
+    _get_security_scheme,
+    _is_security_scheme,
+)
+from fastapi.routing import APIRoute, iter_route_contexts
 from fastapi.testclient import TestClient
 
 import app as app_module
@@ -51,10 +55,21 @@ V4_ERROR_REF = "#/components/schemas/V4ErrorResponse"
 #: 403 is deliberately absent — see :class:`TestForbiddenIsWriteOnly`.
 DOMAIN_ERROR_STATUSES = frozenset({"401", "404", "422", "500"})
 
-#: The nine operations that can actually answer 403, enumerated by walking each
+#: The eighteen operations that can actually answer 403, enumerated by walking each
 #: handler and its helpers for ``status.HTTP_403_FORBIDDEN`` (and for a ``require_admin``
 #: dependency). Written out rather than computed so the test states the expected
 #: surface instead of re-deriving whatever the code currently does.
+#:
+#: The auth writes (#950) took it from nine to seventeen in one slice, because every one
+#: of them is admin-gated and ``require_admin`` is a 403. Two of the eight are worth
+#: noting for what they are *not*: ``POST /v4/users/me/password``'s 403 is a wrong
+#: ``current_password`` rather than a privilege failure — the caller owns the row — and
+#: it is the only 403 on the surface that means that. ``GET /v4/users/me`` and
+#: ``GET /v4/users/me/groups`` gained none, being self-scoped.
+#:
+#: Training (#895) added exactly one, which is the whole slice's 403 surface: its delete
+#: is owner-or-admin, and every one of its five reads answers 404 for a job the caller
+#: cannot see rather than distinguishing "not yours" from "no such id".
 FORBIDDEN_OPERATIONS = frozenset(
     {
         ("post", "/versions"),
@@ -66,6 +81,17 @@ FORBIDDEN_OPERATIONS = frozenset(
         ("delete", "/revisions/{revision_id}"),
         ("delete", "/assessments/{assessment_id}"),
         ("get", "/groups"),
+        # The #950 auth writes: all admin-only, plus the one non-privilege 403.
+        ("post", "/users"),
+        ("post", "/users/me/password"),
+        ("put", "/users/{user_id}/password"),
+        ("delete", "/users/{user_id}"),
+        ("post", "/groups"),
+        ("put", "/groups/{group_id}/members/{user_id}"),
+        ("delete", "/groups/{group_id}/members/{user_id}"),
+        ("delete", "/groups/{group_id}"),
+        # The #895 training slice's only 403: the job delete is owner-or-admin.
+        ("delete", "/training-jobs/{job_id}"),
     }
 )
 
@@ -102,6 +128,19 @@ def _operations(schema):
     ]
 
 
+def _iter_dependants(dependant: Dependant):
+    """Every ``Dependant`` in the tree rooted at ``dependant``, itself included.
+
+    ``fastapi.dependencies.utils.get_flat_dependant`` (and the ``security_requirements``
+    it produced) was removed upstream; walking ``dependant.dependencies`` directly is
+    the same traversal FastAPI's own OpenAPI generator now does internally
+    (``fastapi.openapi.utils._get_openapi_dependency_data``).
+    """
+    yield dependant
+    for sub_dependant in dependant.dependencies:
+        yield from _iter_dependants(sub_dependant)
+
+
 def _security_schemes_in_use(v4_app):
     """The ``SecurityBase`` *objects* FastAPI would harvest from the v4 route tree.
 
@@ -109,13 +148,21 @@ def _security_schemes_in_use(v4_app):
     sees precisely what the schema would be built from — but it yields the instances
     rather than the rendered dict, which is what makes a v3 leak detectable at all.
     See :func:`test_no_v4_route_depends_on_the_v3_security_scheme`.
+
+    Since fastapi 0.137.0, routes added via ``include_router()`` no longer appear
+    directly in ``v4_app.routes`` as ``APIRoute`` instances — they sit behind an
+    ``_IncludedRouter`` wrapper — so the tree is walked with
+    ``iter_route_contexts()`` and resolved back to the original route via
+    ``.original_route``.
     """
     schemes = set()
-    for route in v4_app.routes:
+    for route_context in iter_route_contexts(v4_app.routes):
+        route = route_context.original_route
         if not isinstance(route, APIRoute):
             continue
-        for requirement in get_flat_dependant(route.dependant).security_requirements:
-            schemes.add(requirement.security_scheme)
+        for dependant in _iter_dependants(route.dependant):
+            if _is_security_scheme(dependant=dependant):
+                schemes.add(_get_security_scheme(dependant=dependant))
     return schemes
 
 
@@ -220,14 +267,18 @@ class TestPublishedErrorContract:
             ("/revisions/{revision_id}", "patch", "400"),
             ("/assessments", "post", "409"),
             ("/assessments", "post", "503"),
+            ("/training-sessions", "post", "409"),
+            ("/training-jobs/{job_id}", "delete", "409"),
         ],
     )
     def test_per_route_statuses_are_declared(self, schema, path, method, code):
         """The statuses only *some* operations answer, declared on those operations.
 
-        These are the five operations that raise beyond the shared floor — found by
+        These are the operations that raise beyond the shared floor — found by
         walking the AST for ``status.HTTP_*`` in each handler and its helpers, not by
-        reading for them. Leaving them out would have reproduced this PR's own defect:
+        reading for them. The two training entries are one conflict each:
+        ``POST /v4/training-sessions`` when every requested app already had an active
+        job, and the delete when the job is not terminal (or cannot be shown to be). Leaving them out would have reproduced this PR's own defect:
         ``create_assessment``'s docstring promises a 409 and a 503, and the schema said
         neither.
         """
@@ -278,38 +329,57 @@ class TestPublishedErrorContract:
             assert set(responses[code]["content"]) == {"application/json"}, code
 
     def test_the_discovery_root_documents_no_authentication_errors(self, schema):
-        """``GET /v4/`` is public and takes no input: only its 200 and a 500 apply.
+        """``GET /v4/`` is public, so no 401: there is no authentication to fail.
 
-        Declaring a 401 on an unauthenticated route, or a 422 on one with nothing to
-        validate, would document errors it cannot return.
+        It does declare a 422, despite taking no parameters and no body. That stopped
+        being a contradiction with #954: the NUL-byte guard (``api_v4/errors.py``) runs
+        before routing and refuses any ``/v4`` request whose URL carries a ``%00``,
+        this route included. So the 422 is one a caller can really receive here, and
+        leaving it undeclared would be the schema lying rather than staying minimal.
         """
-        assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "500"}
+        assert set(schema["paths"]["/"]["get"]["responses"]) == {"200", "422", "500"}
 
-    def test_the_token_endpoint_documents_its_own_401(self, schema):
+    def test_the_token_endpoint_documents_its_own_401_and_429(self, schema):
         """``POST /v4/token`` answers 401, but for bad credentials, not a bad token.
 
         It is declared on the route so it can say ``INVALID_CREDENTIALS`` rather than
         inheriting the protected-route wording about a missing bearer token.
+
+        The 429 is declared here for the same reason the class exists — v4 documents
+        the errors an operation can actually return, and this operation is the only
+        rate-limited one on the surface (#713). It is per-IP and shared with v3's
+        ``/latest/token``, so a caller has to know it can arrive.
         """
         responses = schema["paths"]["/token"]["post"]["responses"]
-        assert set(responses) == {"200", "401", "422", "500"}
+        assert set(responses) == {"200", "401", "422", "429", "500"}
         assert (
             responses["401"]["content"]["application/json"]["schema"]["$ref"]
             == V4_ERROR_REF
         )
         assert "INVALID_CREDENTIALS" in responses["401"]["description"]
+        assert (
+            responses["429"]["content"]["application/json"]["schema"]["$ref"]
+            == V4_ERROR_REF
+        )
         # No 403: nothing here can be forbidden, because nothing is authenticated.
         assert "403" not in responses
 
 
 class TestForbiddenIsWriteOnly:
-    """403 is declared on the nine operations that can raise it, and nowhere else.
+    """403 is declared on the eighteen operations that can raise it, and nowhere else.
 
     v4 answers ``404`` for a resource the caller may not see — so that ids cannot be
     probed — which leaves ``403`` meaning only "visible, but not yours". That makes it a
-    write-path status: reachable on 9 of the 31 domain operations, unreachable on 22.
+    write-path status: reachable on 18 of the 54 domain operations, unreachable on 36.
 
-    It briefly *was* in the shared set, which published it on all 31. This class is what
+    "Write-path" is the generalization, not the rule, and it now bends in both
+    directions. The resolution ``PATCH`` on ``/critique-issues/{issue_id}`` is a write
+    that declares no 403, because it authorizes by read access rather than ownership
+    (#896). ``GET /v4/groups`` is a *read* that declares one, because it is admin-only
+    (#833). So this set is the operations that can raise a 403, and the enumeration is
+    the contract — not any rule about verbs.
+
+    It briefly *was* in the shared set, which published it on all 34. This class is what
     keeps it out: a client generated from the schema would otherwise carry dead
     forbidden-handling on every read, and a reader of ``/v4/docs`` would conclude any
     v4 call can be refused.
@@ -334,8 +404,21 @@ class TestForbiddenIsWriteOnly:
             assert ref == V4_ERROR_REF, f"{method.upper()} {path}"
 
     def test_no_read_of_a_collection_claims_403(self, schema):
-        """The clearest cases, spelled out: a plain list cannot be forbidden."""
-        for path in ("/versions", "/revisions", "/assessments", "/users/me"):
+        """The clearest cases, spelled out: a plain list cannot be forbidden.
+
+        The two reference lists (#951) are the plainest of the lot — unscoped reads over
+        static tables with no owner and no admin gate, so they are the first v4
+        additions in a while that declare no 403 at all.
+        """
+        for path in (
+            "/versions",
+            "/revisions",
+            "/assessments",
+            "/users/me",
+            "/languages",
+            "/scripts",
+            "/training-jobs",
+        ):
             assert "403" not in schema["paths"][path]["get"]["responses"], path
 
 

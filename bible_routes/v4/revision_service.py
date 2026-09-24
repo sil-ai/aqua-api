@@ -76,6 +76,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.schemas.base import NUL
 from bible_loading import async_text_dataframe, text_loading
 from bible_routes.v4 import version_service
 from database.models import (
@@ -136,17 +137,22 @@ class InvalidReference(RevisionServiceError):
     """
 
     #: FK-backed request fields, surfaced in the error details as a hint about which
-    #: inputs can trigger this.
-    FIELDS = ("back_translation",)
+    #: inputs can trigger this. These are **wire** field names, not ORM attributes —
+    #: they are echoed to the client as ``details.fields`` for it to act on, so they
+    #: track the request schema (#925 renamed ``back_translation`` to
+    #: ``back_translation_id`` there).
+    FIELDS = ("back_translation_id",)
 
 
 class InvalidVerseText(RevisionServiceError):
     """The uploaded text is not decodable, or is not vref-aligned.
 
-    Three causes, all client input and all therefore a stable 400 rather than a 500:
-    the base64 does not decode, the bytes are not UTF-8, or the line count does not
-    match the vref skeleton (``fixtures/vref.txt``, 41,899 lines). ``details`` carries
-    machine-readable context for the caller (#828 keeps prose in ``message``).
+    Four causes, all client input and all therefore a stable 400 rather than a 500:
+    the base64 does not decode, the bytes are not UTF-8, the decoded text holds a NUL
+    byte that Postgres cannot store (#954), or the line count does not match the vref
+    skeleton (``fixtures/vref.txt``, 41,899 lines). ``details`` carries machine-readable
+    context for the caller (#828 keeps prose in ``message``) — including ``line`` for
+    the NUL case, since "somewhere in 41,899 lines" is not an actionable answer.
     """
 
     def __init__(self, message: str, details: dict | None = None) -> None:
@@ -337,10 +343,11 @@ def decode_verse_text(content_base64: str) -> list[str | None]:
     imported, so v4 does not depend on a frozen v3 route module. ``bible_loading``
     itself, being shared and v3's upload hot path, is called and not modified.
 
-    Raises :class:`InvalidVerseText` for undecodable base64, non-UTF-8 bytes, or text
-    with no verses at all. The *line-count* check is not here: it belongs to
-    ``bible_loading``, which owns the vref skeleton, so it surfaces from
-    :func:`create_revision` instead.
+    Raises :class:`InvalidVerseText` for undecodable base64, non-UTF-8 bytes, text
+    containing a NUL byte (#954 — see the comment at the check for why that one cannot
+    be caught anywhere else), or text with no verses at all. The *line-count* check is
+    not here: it belongs to ``bible_loading``, which owns the vref skeleton, so it
+    surfaces from :func:`create_revision` instead.
 
     ``validate=False`` (the default) makes the decoder ignore characters outside the
     base64 alphabet, so line-wrapped base64 — what most encoders emit for a payload
@@ -364,6 +371,35 @@ def decode_verse_text(content_base64: str) -> list[str | None]:
             "Decoded verse text is not valid UTF-8.",
             {"field": "text.content_base64", "encoding": "utf-8"},
         ) from exc
+
+    # A NUL byte here is the one site #954's two other defences cannot see. Both work on
+    # text as it arrived: the V4BaseModel validator walks the request's strings, and the
+    # guard middleware scans the URL. ``content_base64`` is neither — it is a base64
+    # string, which by construction contains no NUL, and the NUL only exists after this
+    # decode. From here the bytes go straight into ``verse_text.text``, where Postgres
+    # refuses them with CharacterNotInRepertoireError and the v4 catch-all turns that
+    # into a 500. So the check belongs at the decode, and it is a fourth cause of the
+    # same InvalidVerseText its three neighbours raise: bad base64, bad UTF-8 and the
+    # wrong line count are all "the decoded text is unusable", all found here, and all
+    # answered 400 INVALID_VERSE_TEXT. The 422 the other two defences return is the
+    # status for a request whose *shape* is wrong; this one's shape is fine.
+    #
+    # ``NUL in text`` is a single memchr over the whole upload (0.25 ms on a full Bible);
+    # the line is located with a second pass that runs only when one is found, using
+    # splitlines() so the number it reports is the same line index the vref alignment
+    # below uses — counting "\n" would disagree with it on a payload containing any of
+    # the other separators splitlines() honours.
+    if NUL in text:
+        line = next(
+            index
+            for index, candidate in enumerate(text.splitlines(), start=1)
+            if NUL in candidate
+        )
+        raise InvalidVerseText(
+            "Decoded verse text contains a NUL byte (\\x00), which Postgres cannot "
+            "store.",
+            {"field": "text.content_base64", "line": line},
+        )
 
     verses: list[str | None] = []
     has_text = False
@@ -407,20 +443,20 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
     so the error mapping can be precise about whose fault a failure is:
 
     * The **revision flush** maps ``IntegrityError`` to :class:`InvalidReference`. Sound
-      because ``back_translation`` is the only client-supplied FK on that row —
+      because ``back_translation_id`` is the only client-supplied FK on that row —
       ``bible_version_id`` was already resolved and authorized above — so it is the only
       constraint a client can break here.
     * The **verse inserts** deliberately carry *no* ``IntegrityError`` translation.
       ``verse_text.verse_reference`` is a FK to ``verse_reference.full_verse_id``, so a
       failure there means the reference table no longer matches ``fixtures/vref.txt`` —
       server-side data drift, not client input. Mapping it to a 400
-      ``INVALID_REFERENCE`` would tell the client to fix ``back_translation``, which is
+      ``INVALID_REFERENCE`` would tell the client to fix ``back_translation_id``, which is
       not the problem, and would bury a condition that ought to page someone. It falls
       through to the #828 catch-all 500 on purpose: **do not add a handler here.**
 
     Raises :class:`VersionNotVisible` (unknown / inaccessible / soft-deleted parent),
     :class:`InvalidVerseText` (undecodable or non-vref-aligned text) and
-    :class:`InvalidReference` (a ``back_translation`` id that does not exist).
+    :class:`InvalidReference` (a ``back_translation_id`` that does not exist).
     """
     await _require_visible_version(db, user, data.version_id)
     verses = decode_verse_text(data.text.content_base64)
@@ -430,7 +466,7 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
         name=data.name,
         date=date.today(),
         published=data.published,
-        back_translation_id=data.back_translation,
+        back_translation_id=data.back_translation_id,
         machine_translation=data.machine_translation,
     )
     # Stage 1: the revision row only. Scoping the IntegrityError translation to this
@@ -439,7 +475,7 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
         db.add(new_revision)
         await db.flush()
     except IntegrityError as exc:
-        # Client input referenced a non-existent FK target (back_translation).
+        # Client input referenced a non-existent FK target (back_translation_id).
         await db.rollback()
         raise InvalidReference() from exc
     except BaseException:
@@ -520,16 +556,21 @@ async def _get_revision_for_write(
     return revision
 
 
-#: Patchable ``RevisionPatch`` field -> ``BibleRevision`` ORM attribute. Exhaustive
-#: over the schema's fields, and :func:`update_revision` indexes it *directly* (no
-#: ``.get``): a field added to ``RevisionPatch`` without a mapping must fail loudly
-#: instead of being silently dropped — the failure mode behind v3's phantom
-#: ``is_reference``. ``test_revision_routes_v4`` pins the two together.
+#: Patchable ``RevisionPatch`` field -> ``BibleRevision`` ORM attribute. The keys are
+#: wire/schema field names (they come from ``model_dump()``), the values are ORM
+#: attributes. Exhaustive over the schema's fields, and :func:`update_revision`
+#: indexes it *directly* (no ``.get``): a field added to ``RevisionPatch`` without a
+#: mapping must fail loudly instead of being silently dropped — the failure mode
+#: behind v3's phantom ``is_reference``. ``test_revision_routes_v4`` pins the two
+#: together.
+#:
+#: Every entry is an identity mapping since #925 renamed ``back_translation`` to
+#: ``back_translation_id``, the only field here whose wire name differed from its
+#: column. Keep the indirection: it is what makes an unmapped new field raise.
 _PATCH_FIELD_TO_COLUMN = {
     "name": "name",
     "published": "published",
-    # The one request field whose ORM attribute is spelled differently.
-    "back_translation": "back_translation_id",
+    "back_translation_id": "back_translation_id",
     "machine_translation": "machine_translation",
 }
 
@@ -549,8 +590,8 @@ async def update_revision(
     SQLAlchemy emits no ``UPDATE`` when no attribute actually changes.
 
     Raises :class:`RevisionNotFound` / :class:`RevisionAccessForbidden` from the shared
-    gate, and :class:`InvalidReference` when a patched ``back_translation`` points at a
-    revision that does not exist.
+    gate, and :class:`InvalidReference` when a patched ``back_translation_id`` points at
+    a revision that does not exist.
     """
     revision = await _get_revision_for_write(db, user, revision_id)
 

@@ -125,6 +125,40 @@ class Settings(BaseSettings):
     missing_words_missing_threshold: float = 0.15
     missing_words_match_threshold: float = 0.2
 
+    # --- TF-IDF encoder cache -------------------------------------------
+    # Byte budget for the per-worker cache of rehydrated TF-IDF encoders in
+    # assessment_routes.v3.tfidf_artifact_routes. The previous count-based cap
+    # bounded nothing useful: an entry is dominated by a 300 x n_features SVD
+    # components matrix, so the same 32 entries are a few hundred MB for one
+    # corpus and several GB for another. This is a *per-worker* budget —
+    # multiply by WEB_CONCURRENCY for the container total, and size it against
+    # the host's memory.
+    #
+    # It bounds the *retained* encoders, not peak RSS: the entry just stored is
+    # never evicted (so a single oversized encoder can exceed the budget on its
+    # own, pinning the cache at one entry), and a miss transiently holds the
+    # decoded vocabularies and the raw .npy bytes alongside the loaded matrix.
+    # Eviction and the over-budget case are both logged.
+    #
+    # The default is sized from measured Bible-scale encoders, not guessed. Fitting
+    # aqua-assessments' production config (word 1-2gram max_df=0.12, char_wb 3-6gram
+    # max_df=0.3, both min_df=2) over real Bibles and measuring with
+    # _encoder_nbytes at the float32 wire dtype the push actually stores:
+    #
+    #     KJV (English), 36,694 verses  -> 173,585 features -> 236 MB
+    #     swh-ONEN (Swahili), 31,098    -> 217,042 features -> 297 MB
+    #
+    # char_wb 3-6grams dominate the feature count (98k-142k of those). 768MB holds
+    # two such encoders, so a worker alternating between two assessments stops
+    # rebuilding on every request. Per-worker peak during a miss is roughly this
+    # budget + ~550MB transient (raw .npy bytes, the loaded matrix, and the decoded
+    # vocabularies) + ~190MB interpreter; the miss path is serialised per worker, so
+    # only one transient is live at a time. At WEB_CONCURRENCY=4 on an 8GB host that
+    # is ~3.8GB steady and ~6GB if every worker misses at once. Lower it if the host
+    # is smaller — the test fixtures' 300-document corpus is nothing like this, so
+    # the eviction logs are the only real sizing signal.
+    tfidf_encoder_cache_max_bytes: int = Field(default=768 * 1024 * 1024, gt=0)
+
     # --- Observability / Loki -------------------------------------------
     # A real bool so pydantic parses "true"/"false"/"1"/"0" correctly, instead
     # of the bool(os.getenv(...)) footgun where any non-empty string is truthy.
