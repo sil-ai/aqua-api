@@ -896,3 +896,19 @@ class TestCorpusRows:
         assert vrefs[1] not in rows and vrefs[2] not in rows
         assert rows.get(vrefs[3]) == "first"
         assert list(rows) == sorted(rows)
+
+
+@pytest.mark.asyncio
+class TestClearCorpusIndexes:
+    async def test_clearing_cancels_a_build_still_in_flight(self, fake_corpus_source):
+        """Otherwise a build left running by one test could finish during the next and
+        repopulate the cache that test just cleared."""
+        waiter = asyncio.create_task(_get_index())
+        await asyncio.sleep(0.01)
+        (build,) = tfidf_retrieval._INDEX_BUILDS.values()
+        tfidf_retrieval.clear_corpus_indexes()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await asyncio.sleep(0.1)
+        assert build.cancelled()
+        assert tfidf_retrieval._INDEX_CACHE == {}

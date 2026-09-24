@@ -1005,7 +1005,15 @@ _INDEX_BUILD_LOCK = asyncio.Lock()
 
 
 def clear_corpus_indexes() -> None:
-    """Drop every cached index and forget in-flight builds. For tests."""
+    """Drop every cached index and cancel in-flight builds. For tests.
+
+    Cancelled rather than merely forgotten, so a build still running when a test ends
+    cannot finish during the next one and put an index back. A build whose event loop has
+    already closed is left alone: it can never run again, and cancelling it would raise.
+    """
+    for task in list(_INDEX_BUILDS.values()):
+        if not task.done() and not task.get_loop().is_closed():
+            task.cancel()
     _INDEX_CACHE.clear()
     _INDEX_BUILDS.clear()
 
