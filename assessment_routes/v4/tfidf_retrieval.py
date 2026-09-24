@@ -113,7 +113,6 @@ artifact, safe to create late, drop under a cap, and leave out of the test fixtu
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Sequence
@@ -130,9 +129,10 @@ from database.models import (
     TfidfVectorizerArtifact,
     VerseText,
 )
+from utils.logging_config import setup_logger
 from utils.tfidf_tokenizer import unicode_word_tokenizer
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
