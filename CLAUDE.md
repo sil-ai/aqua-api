@@ -25,10 +25,18 @@ The project uses a `.venv` in the repo root. All CLI tools (`alembic`, `pytest`,
    docker compose rm -sf db && docker compose up -d db
    ```
 
-3. Enable the pgvector extension (first time only):
+3. Enable the required extensions (first time only):
    ```bash
-   PGPASSWORD=dbpassword psql -h localhost -U dbuser -d dbname -c "CREATE EXTENSION IF NOT EXISTS vector;"
+   PGPASSWORD=dbpassword psql -h localhost -U dbuser -d dbname \
+     -c "CREATE EXTENSION IF NOT EXISTS vector;" \
+     -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
    ```
+   `pg_trgm` is what the v4 similar-verses shortlist orders by (`<->`), so without it
+   that endpoint fails with an opaque `UndefinedFunction` that reads like a bug in the
+   route. `test/conftest.py` installs it via a session fixture, so a test run fixes its
+   own database; this is for psql sessions and ad-hoc scripts. Both extensions are
+   installed by migrations in a real deployment — the test fixtures build the schema with
+   `create_all`, which runs none.
 
 ### Running Tests
 

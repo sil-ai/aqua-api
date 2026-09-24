@@ -245,32 +245,45 @@ How the similarity read is shaped (:func:`get_similar_verses`,
 ----------------------------------------------------------------------------------
 
 ``/v4/assessments/{id}/similar-verses`` serves ``type = tfidf`` only, and it is not a
-listing: it is a nearest-neighbour search over one assessment's ``tfidf_pca_vector``
-rows. Read the differences from every other function above before changing it.
+listing: it is a nearest-neighbour search. Read the differences from every other function
+above before changing it — and note that as of #973 **the two forms of it no longer share
+a ranking**, which is the one thing here that used to be guaranteed and now is not.
 
 * **Authorization is still the same predicate**, :func:`get_assessment` with
   ``types=SIMILARITY_ASSESSMENT_TYPES`` — no new rule, for the reason the whole family
-  shares one. It also supplies ``revision_id`` and ``reference_id``, which is what the
-  read attaches text from.
-* **A vref with no vector is :class:`SimilarityVrefNotFound`, not
+  shares one. It supplies ``reference_id``, which is what the read attaches reference
+  text from, and ``revision_id``, which the GET now *ranks within* rather than merely
+  hydrating from.
+* **A vref the assessment did not vectorize is :class:`SimilarityVrefNotFound`, not
   :class:`AssessmentNotFound`.** Both are 404s; they are separate signals because the
   assessment's reachability is already settled by then. See that class.
-* **The scan is exact and scoped to the assessment, and this is a decision rather than an
-  oversight.** There is no ANN index on ``tfidf_pca_vector`` to reach for:
-  ``tfidf_pca_vector_ivfflat_idx`` was dropped in #971, and the reason the planner never
-  chose it is the reason this read did not want one. It was never usable: the 2025 commit
-  that added it rewrote this query into the ``inner_product`` function form in the same
-  commit. Its zero scan count only covers the days since the last restart, so the commit
-  history is what settles that, not the statistics. The query is always scoped to one ``assessment_id`` (at most
-  41,899 vectors, and that column is indexed), a global ANN index cannot be filtered by
-  ``assessment_id`` efficiently, and ivfflat returns *approximate* neighbours — so
-  reaching for one would silently change which verses come back. ``EXPLAIN`` against live
-  data settled it while the index still existed: with the ``assessment_id`` filter the
-  planner took ``ix_tfidf_pca_vector_assessment_id`` plus a top-N heapsort at ~60 ms and
-  left the ivfflat index untouched; only dropping the filter made it switch.
-* **No cache and no materialization.** ``tfidf`` is the most expensive type to run
-  (460 GB of the 610 GB added in 2026, ~110 MB per assessment), which is a reason to
-  measure before adding anything here, not a reason to add it pre-emptively.
+* **The GET reads no stored vectors.** It shortlists the revision's verse *text* on
+  trigram distance and reranks the shortlist exactly, through the assessment's own fitted
+  vocabulary and IDF. :mod:`assessment_routes.v4.tfidf_retrieval` owns both stages, the
+  measured evidence, and the three implementation traps — GiST rather than the GIN index
+  already on the column, partial per revision rather than global, and the revision id as
+  a literal rather than a bound parameter. Do not reach for ``tfidf_pca_vector`` from
+  this path; #967 stops storing it.
+* **The POST still reads them, and that is the seam.** :func:`_rank_against_corpus`
+  survives for the batch form only. So a one-element ``vref`` batch and the equivalent
+  GET can now order the same verse's neighbours differently at corpus scale, where
+  previously a test could assert they were identical. This is accepted rather than
+  overlooked: the alternative shapes were measured and both are worse. Running the
+  shortlist per query point inside the batch costs 15.7 s at N=250 against today's ~6 s,
+  because the trigram KNN scans have no batched form; making the GET exact over the whole
+  revision means a ~7 s in-process index build on a cold worker for a read that is
+  otherwise ~117 ms. The batch's own replacement — one transposed sparse index per
+  revision per process, 372 ms at N=250 after the build — is the second half of #973.
+* **The GET can now fail the way the POST could.** :class:`TfidfArtifactsNotFound` is
+  reachable from both, because both now need the fitted vectorizers.
+  :class:`TfidfArtifactDimensionMismatch` remains POST-only and always will: it compares
+  an encoder's output width against a ``Vector(300)`` column, and the GET no longer has a
+  column to compare against.
+* **One cache, keyed on the revision.** :data:`~assessment_routes.v4.tfidf_retrieval._RECIPE_CACHE`,
+  not v3's ``_ENCODER_CACHE`` re-keyed — v3 is frozen, and more to the point v3's encoder
+  requires the SVD and 404s without one, so anything sitting on it stops working when
+  sil-ai/aqua-assessments#471 lands. Dropping the SVD also makes the cached object ~8x
+  smaller, which is what makes per-revision caching cheap rather than merely tidier.
 
 The verse text is fetched in the same layer, so the router never touches the database.
 No hit's ``text`` should be the ``<range>`` marker — but **not** by the mechanism
@@ -511,6 +524,7 @@ from assessment_routes.v3.assessment_routes import (
 # be a bug: the encoding has to match the one ``aqua-assessments`` fitted, exactly, or
 # every similarity it produces is meaningless while looking entirely plausible.
 from assessment_routes.v3.tfidf_artifact_routes import _encode_texts, _get_encoder
+from assessment_routes.v4 import tfidf_retrieval
 from bible_routes.v4 import revision_service, verse_range_service
 from config import settings
 from database.models import (
@@ -641,7 +655,15 @@ class AssessmentNotFound(AssessmentServiceError):
 
 
 class SimilarityVrefNotFound(AssessmentServiceError):
-    """The assessment is readable, but it holds no vector for the requested ``vref``.
+    """The assessment is readable, but it never vectorized the requested ``vref``.
+
+    **Deliberately worded around "vectorized" rather than "has no vector"**, because the
+    two forms of the read now establish it differently: the POST finds no row in
+    ``tfidf_pca_vector``, and the GET finds no usable text for the verse in the assessed
+    revision (no row, empty, or the ``<range>`` marker). Those are the *same set of
+    verses* — the runner skips empty verses, so a verse with no usable text is exactly one
+    that never got a vector — which is why one signal still covers both. A message naming
+    a vector would be wrong on the path that reads none.
 
     A *different* signal from :class:`AssessmentNotFound` on purpose, even though both
     become a 404. By the time this can be raised the caller has already established that
@@ -662,7 +684,7 @@ class SimilarityVrefNotFound(AssessmentServiceError):
         self.index = index
         where = "" if index is None else f" (query {index})"
         super().__init__(
-            f"Assessment {assessment_id} has no vector for vref {vref!r}{where}."
+            f"Assessment {assessment_id} did not vectorize vref {vref!r}{where}."
         )
 
 
@@ -1244,6 +1266,7 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
     # Commit the queued -> running transition _dispatch performed under FOR UPDATE.
     await db.commit()
     await db.refresh(assessment)
+
     return assessment
 
 
@@ -2030,11 +2053,16 @@ async def _rank_against_corpus(
 ) -> list:
     """The ``limit`` corpus verses closest to ``query_vector``, within one assessment.
 
-    The whole of the ranking, shared by both forms of the read so they cannot drift: the
-    GET calls it once with the query verse excluded, and the POST calls it once per query
-    point. Returns rows of ``(vref, distance)`` — the caller flips the sign and attaches
-    text, because the POST does that once across every query point's hits rather than per
-    ranking.
+    **The stored-vector ranking, and as of #973 the POST's only.** The GET no longer
+    calls it: it ranks over verse *text* through
+    :mod:`assessment_routes.v4.tfidf_retrieval`, because the corpus vectors this reads
+    are the thing #967 stops storing. So the two forms of the read no longer share one
+    ranking, and :func:`get_similar_verses` says what that costs. This half stays until
+    the POST moves too.
+
+    Returns ``(vref, similarity)`` pairs, most-similar-first — the sign is already
+    flipped (see below) and text is attached by the caller, because the POST does that
+    once across every query point's hits rather than per ranking.
 
     **Not v3's ``_rank_against_corpus``, and the difference is deliberate.** That function
     exists (``tfidf_artifact_routes.py:98``) and is what v3's four POSTs sit on, but the
@@ -2048,7 +2076,11 @@ async def _rank_against_corpus(
       the same request twice returns the same order — a guarantee the POST's contract
       states explicitly.
     * ``max_inner_product`` is pgvector's ``<#>``, the *negated* inner product, so
-      ascending order is most-similar-first.
+      ascending order is most-similar-first. The sign is flipped **here**, on the way
+      out, rather than in :func:`_hit`: this is the only ranking in the module that has a
+      sign to flip, and leaving the flip at the one place ``<#>`` is written keeps
+      :func:`_hit` free of the question. See :func:`get_similar_verses`, whose ranking
+      produces a cosine and so has nothing to negate.
 
     So the encoder machinery is reused from v3 and the ranking is not. Reusing this half
     too would have quietly undone two properties the GET already publishes.
@@ -2069,7 +2101,7 @@ async def _rank_against_corpus(
             conditions.append(TfidfPcaVector.vref != exclude_vref)
 
     distance = TfidfPcaVector.vector.max_inner_product(query_vector)
-    return (
+    rows = (
         await db.execute(
             select(TfidfPcaVector.vref, distance.label("distance"))
             .where(*conditions)
@@ -2077,22 +2109,30 @@ async def _rank_against_corpus(
             .limit(limit)
         )
     ).all()
+    return [(row.vref, -float(row.distance)) for row in rows]
 
 
-def _hit(row, revision_texts: dict, reference_texts: dict) -> dict:
-    """One ranked row as the dict the router shapes into a ``SimilarVerseOut``.
+def _hit(
+    vref: str, similarity: float, revision_texts: dict, reference_texts: dict
+) -> dict:
+    """One ranked pairing as the dict the router shapes into a ``SimilarVerseOut``.
 
-    Shared by both forms for the same reason :func:`_rank_against_corpus` is: the sign flip
-    is the one line in this read that is silently wrong if it goes missing, and having it
-    twice is having it in one place that can be fixed and one that cannot.
+    Still shared by both forms of the read even though #973 split the *rankings* apart,
+    and that is the point: the response row is the one thing the GET and the POST must
+    keep in common, so the shape and the text attachment stay in one place while each
+    ranking owns its own scoring.
+
+    Takes ``similarity`` already oriented — bigger is more similar — rather than a row
+    with a distance to negate. The two rankings arrive at that differently
+    (:func:`_rank_against_corpus` flips pgvector's ``<#>``;
+    :func:`~assessment_routes.v4.tfidf_retrieval.rerank` computes a cosine that needs no
+    flip), and a helper that took a raw distance would have to know which.
     """
     return {
-        "vref": row.vref,
-        # `<#>` is the negated inner product; flip it back so a bigger number means more
-        # similar, which is what the field promises and what v3 reports.
-        "similarity": -float(row.distance),
-        "text": revision_texts.get(row.vref),
-        "reference_text": reference_texts.get(row.vref),
+        "vref": vref,
+        "similarity": similarity,
+        "text": revision_texts.get(vref),
+        "reference_text": reference_texts.get(vref),
     }
 
 
@@ -2101,46 +2141,68 @@ async def get_similar_verses(
 ) -> list[dict]:
     """The ``limit`` verses most similar to ``vref`` within one ``tfidf`` assessment.
 
-    Three statements, in this order and for these reasons.
+    **Rewritten by #973 to read no stored vectors.** The shape of the answer is
+    unchanged and so is the wire contract; what changed is where the answer comes from.
+    Where this used to load ``vref``'s 300-dimensional vector and scan the assessment's
+    other vectors with ``<#>``, it now shortlists the revision's *text* on trigram
+    distance and reranks that shortlist exactly, through the assessment's own fitted
+    vocabulary and IDF. :mod:`assessment_routes.v4.tfidf_retrieval` holds both stages and
+    the evidence for the design; the three things a reader of *this* function needs are
+    below.
+
+    Five statements, in this order and for these reasons.
 
     **1. Authorize and load the parent.** :func:`get_assessment` with
     ``types=SIMILARITY_ASSESSMENT_TYPES`` — the family's one predicate, with "wrong type"
-    as a clause on the same statement — and it hands back the ``revision_id`` and
-    ``reference_id`` step 3 attaches text from. Nothing else is allowed to decide who may
-    read this.
+    as a clause on the same statement — and it hands back the ``revision_id`` the corpus
+    is now drawn from as well as the ``reference_id`` step 5 attaches text from. Nothing
+    else is allowed to decide who may read this. ``revision_id`` was previously used only
+    for hydration; it is now what the whole ranking is scoped to, which is the one place
+    this rewrite leans harder on :func:`get_assessment`'s output than it used to.
 
-    **2. Load the query point.** The caller's ``vref`` is not a filter, it *is* the query:
-    its vector is the thing everything else is ranked against. No vector for it means
-    :class:`SimilarityVrefNotFound` rather than an empty ranking, because an empty list
-    would be indistinguishable from "this assessment vectorized only one verse" and would
-    silently swallow a typo.
+    **2. Load the query point** — the query verse's own text, through
+    :func:`~assessment_routes.v4.tfidf_retrieval.query_text`. The caller's ``vref`` is not
+    a filter, it *is* the query. No usable text for it is
+    :class:`SimilarityVrefNotFound`, exactly as no stored vector was, and for the same
+    reason: an empty ranking would be indistinguishable from "this assessment vectorized
+    only one verse" and would silently swallow a typo. That helper deliberately collapses
+    "no row", "empty text" and the ``<range>`` marker into one ``None``, because all three
+    mean the runner never vectorized this verse — which is precisely the set of verses
+    that had no stored vector before.
 
-    ``(assessment_id, vref)`` has no uniqueness constraint, so this takes the **lowest
-    id** rather than v3's bare ``limit(1)``. v3's form picks an undefined row among
-    duplicates, and this is the worst place in the read for that: the query point decides
-    *every* similarity in the response, so an arbitrary pick reorders the whole ranking
-    rather than changing one field. Ordering costs nothing — the lookup is already a
-    handful of rows behind an index.
+    **3. Load the recipe** — the revision's two fitted vectorizers, cached per revision.
+    :class:`TfidfArtifactsNotFound` is **new on this endpoint**: the GET used to be unable
+    to raise it, because it needed no artifacts to compare two stored vectors. It needs
+    them now. An assessment can hold corpus vectors and no artifacts, so this is
+    reachable rather than defensive, and the router declares it.
 
-    **3. Rank, exactly, within the assessment**, through
-    :func:`_rank_against_corpus` with the query verse excluded — its own leakage guard,
-    expressed here as the one exclusion the caller never has to ask for. That helper holds
-    the bound-parameter query vector, the sign flip around pgvector's ``<#>`` and the
-    ``vref`` tiebreak, and says why each of the three departs from v3's ranking. It is
-    shared with :func:`get_similar_verses_batch` so the two forms of this read cannot
-    answer the same question differently.
+    **4. Shortlist, then rerank.** ``k`` candidates by trigram distance within the
+    revision (:func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size` says why ``k``
+    is not simply 100), then exact cosine over those candidates on a worker thread —
+    it is CPU-bound sklearn work, and running it inline would stall the event loop for
+    every other request on the worker. The query verse is excluded from its own results
+    by the shortlist's ``WHERE`` clause, so ``k`` candidates survive the drop.
 
-    **Deliberately not guarded: a duplicate vector appearing twice in the ranked list.**
-    Step 2 pins which duplicate is the *query point*, but the ranked set is not
-    deduplicated, so #721's retry-duplication class could still surface one vref twice
-    among the hits. The ``DISTINCT ON`` that :func:`_deduplicated_results` uses on the
-    results read is free there because it rides an existing index; here it would force
-    the planner to materialize and sort all of the assessment's vectors instead of taking
-    a top-N over the scan, turning a bounded cost into a full one for a defect nothing has
-    observed on this table. The two halves are worth separating: making the query point
-    deterministic is free and decides every number in the response, while deduplicating
-    the results is not free and costs one duplicated row. Recorded rather than silently
-    omitted.
+    **5. Hydrate.** Unchanged, and still two statements over the surviving hits.
+
+    Three consequences worth stating plainly, because none of them is visible in the
+    response shape.
+
+    * **``similarity`` has changed scale.** It is now a cosine in ``[0, 1]`` rather than a
+      raw inner product of un-normalized SVD output, so it can no longer be negative. The
+      ordering means what it always meant and the field is still a ranking score rather
+      than a calibrated one; the *numbers* are not comparable with ones captured before
+      this change.
+    * **This form is no longer exactly equal to a one-element POST batch.** They shared
+      :func:`_rank_against_corpus` and therefore could not disagree; now the GET
+      shortlists and the POST still scans stored vectors, so at corpus scale they can
+      return different rankings for the same ``vref``. Measured, the shortlist is the
+      *better* of the two (R@1 0.866 against 0.848 for exact full-corpus cosine), because
+      narrowing on trigrams first drops distractors that cosine alone ranks highly. The
+      parity test is narrowed to say what still holds rather than deleted.
+    * **Two assessments over one revision now answer identically** for the same ``vref``,
+      where before each ranked against its own separately-fitted vectors. See
+      :func:`~assessment_routes.v4.tfidf_retrieval._canonical_run`.
 
     Returns plain dicts for the router to shape — the row is a computed pairing, not an
     ORM row, so there is nothing to carry through.
@@ -2149,26 +2211,35 @@ async def get_similar_verses(
         db, user, assessment_id, types=SIMILARITY_ASSESSMENT_TYPES
     )
 
-    query_vector = await db.scalar(
-        select(TfidfPcaVector.vector)
-        .where(
-            TfidfPcaVector.assessment_id == assessment_id,
-            TfidfPcaVector.vref == vref,
-        )
-        .order_by(TfidfPcaVector.id)
-        .limit(1)
-    )
-    if query_vector is None:
+    text = await tfidf_retrieval.query_text(db, assessment.revision_id, vref)
+    if text is None:
         raise SimilarityVrefNotFound(assessment_id, vref)
 
-    hits = await _rank_against_corpus(
-        db, assessment_id, query_vector, limit=limit, exclude_vref=vref
-    )
+    try:
+        recipe = await tfidf_retrieval.recipe(
+            db, revision_id=assessment.revision_id, assessment_id=assessment_id
+        )
+    except tfidf_retrieval.TfidfRecipeNotFound as exc:
+        raise TfidfArtifactsNotFound(assessment_id, exc.detail) from exc
 
-    vrefs = [hit.vref for hit in hits]
+    candidates = await tfidf_retrieval.shortlist(
+        db,
+        revision_id=assessment.revision_id,
+        query_text=text,
+        k=tfidf_retrieval.shortlist_size(limit),
+        exclude_vref=vref,
+    )
+    ranked = (
+        await asyncio.to_thread(tfidf_retrieval.rerank, recipe, text, candidates)
+    )[:limit]
+
+    vrefs = [hit_vref for hit_vref, _ in ranked]
     revision_texts = await _verse_texts(db, assessment.revision_id, vrefs)
     reference_texts = await _verse_texts(db, assessment.reference_id, vrefs)
-    return [_hit(hit, revision_texts, reference_texts) for hit in hits]
+    return [
+        _hit(hit_vref, similarity, revision_texts, reference_texts)
+        for hit_vref, similarity in ranked
+    ]
 
 
 async def _tfidf_encoder(db: AsyncSession, assessment_id: int) -> tuple:
@@ -2371,13 +2442,17 @@ async def get_similar_verses_batch(
             exclude_book=exclude_book,
         )
         ranked.append(rows)
-        hit_vrefs.update(row.vref for row in rows)
+        hit_vrefs.update(vref for vref, _ in rows)
 
     vrefs = sorted(hit_vrefs)
     revision_texts = await _verse_texts(db, assessment.revision_id, vrefs)
     reference_texts = await _verse_texts(db, assessment.reference_id, vrefs)
     return [
-        [_hit(row, revision_texts, reference_texts) for row in rows] for rows in ranked
+        [
+            _hit(vref, similarity, revision_texts, reference_texts)
+            for vref, similarity in rows
+        ]
+        for rows in ranked
     ]
 
 
