@@ -1325,10 +1325,10 @@ class SimilarVersesExcludableQuery(SimilarVersesQueryBase):
 class SimilarVersesTextQuery(SimilarVersesExcludableQuery):
     """Rank against arbitrary text, encoded server-side. **The primary kind.**
 
-    This is the capability the GET does not have and cannot be given. The GET ranks
-    against a verse *already vectorized in the assessment*; text that is not in the
-    corpus — a draft verse, a back-translation, a search phrase — has no stored vector to
-    look up, so there is nothing for it to rank against. Here the server encodes the text
+    This is the capability the GET does not have. The GET ranks against a verse the
+    assessed revision *already holds*, using that verse's own text; text that is not in
+    the revision — a draft verse, a back-translation, a search phrase — has no verse to
+    name, so the GET cannot ask about it. Here the server encodes the text
     with the revision's own fitted vectorizers, which puts it in the same space as the
     revision's verses and makes the comparison meaningful. No SVD is involved.
 
