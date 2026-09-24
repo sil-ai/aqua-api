@@ -703,6 +703,51 @@ class TestCorpusIndexSearch:
         assert index.nbytes >= index.matrix.data.nbytes + index.matrix.indices.nbytes
 
 
+class TestCorpusIndexNeighbours:
+    """:meth:`CorpusIndex.neighbours`: corpus verses as query points (#978)."""
+
+    def test_it_matches_searching_with_the_verses_own_text(self):
+        """Reading a verse's column out of the index is the same as re-encoding it."""
+        index = _index()
+        got = index.neighbours(list(_INDEX_CORPUS), limit=10)
+        assert set(got) == set(_INDEX_CORPUS)
+        for vref, verse in _INDEX_CORPUS.items():
+            expected = _search(index, verse, limit=10, exclude_vref=vref)
+            assert [v for v, _ in got[vref]] == [v for v, _ in expected]
+            assert [s for _, s in got[vref]] == pytest.approx([s for _, s in expected])
+
+    def test_a_verse_is_never_its_own_neighbour(self):
+        index = _index()
+        for vref, ranked in index.neighbours(list(_INDEX_CORPUS), limit=10).items():
+            assert vref not in {v for v, _ in ranked}
+            assert len(ranked) == len(_INDEX_CORPUS) - 1
+
+    def test_a_vref_outside_the_corpus_is_left_out(self):
+        index = _index()
+        got = index.neighbours(["GEN 1:1", "REV 22:21"], limit=3)
+        assert set(got) == {"GEN 1:1"}
+        assert index.neighbours(["REV 22:21"], limit=3) == {}
+
+    def test_repeated_vrefs_are_answered_once(self):
+        index = _index()
+        got = index.neighbours(["GEN 1:1", "GEN 1:1"], limit=3)
+        assert list(got) == ["GEN 1:1"]
+
+    def test_more_verses_than_one_block(self):
+        """Past ``_SEARCH_BLOCK_ROWS``, every verse still gets its own ranking."""
+        count = tfidf_retrieval._SEARCH_BLOCK_ROWS + 9
+        corpus = {
+            f"GEN 1:{v}": f"word{v} word{v + 1} word{v + 2}"
+            for v in range(1, count + 1)
+        }
+        index = _index(corpus)
+        got = index.neighbours(list(corpus), limit=2)
+        assert set(got) == set(corpus)
+        for vref, ranked in got.items():
+            assert len(ranked) == 2
+            assert vref not in {v for v, _ in ranked}
+
+
 class _FakeRun:
     def __init__(self, assessment_id, created_at):
         self.assessment_id = assessment_id
@@ -854,17 +899,18 @@ class TestCorpusIndexCache:
 class TestCorpusRows:
     """The index's corpus is the shortlist's corpus: same filter, same dedup."""
 
-    async def test_empty_range_and_duplicate_rows_follow_the_gets_rules(
+    async def test_empty_blank_range_and_duplicate_rows_follow_the_runners_rules(
         self, test_db_session, test_revision_id
     ):
         vrefs = [
             row[0]
             for row in test_db_session.query(VerseReference.full_verse_id)
             .filter(VerseReference.full_verse_id.like("EXO %"))
-            .limit(4)
+            .limit(5)
             .all()
         ]
-        texts = ["kept", "", tfidf_retrieval.VERSE_RANGE_MARKER, "first"]
+        # Whitespace-only is out too: the runner's ``is_empty_verse`` strips first.
+        texts = ["kept", "", tfidf_retrieval.VERSE_RANGE_MARKER, "first", " \t\n "]
         for vref, verse_text in zip(vrefs, texts):
             test_db_session.add(
                 VerseText(
@@ -895,6 +941,7 @@ class TestCorpusRows:
         assert rows.get(vrefs[0]) == "kept"
         assert vrefs[1] not in rows and vrefs[2] not in rows
         assert rows.get(vrefs[3]) == "first"
+        assert vrefs[4] not in rows
         assert list(rows) == sorted(rows)
 
 

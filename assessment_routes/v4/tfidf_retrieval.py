@@ -19,14 +19,13 @@ artifacts with no change to aqua-assessments, no contract change, and no rebuild
 
 This does not by itself reclaim anything, and it does not by itself make the table unread
 either — the claim is narrower than that. It removes **these reads'** dependency on the
-column: the GET, and the POST's ``text`` and ``vref`` query kinds, whose batches use the
-in-process :class:`CorpusIndex` below (#973's second half). Three readers remain, and #967
-enumerates all five scoring call sites: the POST's ``vector`` kind
+column: the GET, the POST's ``text`` and ``vref`` query kinds, whose batches use the
+in-process :class:`CorpusIndex` below (#973's second half), and the training-session
+results (#978), whose neighbours come from the same index and whose vref listing comes
+from :func:`corpus_conditions`. Two readers remain, out of the call sites #967
+enumerates: the POST's ``vector`` kind
 (:func:`~assessment_routes.v4.assessment_service._rank_against_corpus`, whose future is
-decided with sil-ai/aqua-assessments#471), the training-session neighbours
-(``train_routes/v4/train_service.py:1059``, #978, which can reuse :class:`CorpusIndex`),
-and v3's own tfidf reads, which retire with v3. The delete-and-rebuild #967 sequences last
-needs all of them gone, not just these.
+decided with sil-ai/aqua-assessments#471), and v3's own tfidf reads, which retire with v3.
 
 Measured in ``aqua-tfidf-eval`` rounds 13-15, on 514 held-out queries (Berean Standard
 Bible Genesis 1-20 against an unmodified KJV corpus, so no query text is in the corpus
@@ -541,10 +540,17 @@ def rerank(
 def corpus_conditions(revision_id: int) -> list:
     """The ``WHERE`` clause that defines a revision's corpus, shared by every reader of it.
 
-    One definition for the shortlist (:func:`shortlist`) and the in-process index
-    (:func:`corpus_index`), so the two ways of ranking a revision cannot disagree about
-    which verses are in it. Empty and ``<range>`` verses are out, for the reason
-    :func:`shortlist` gives: the runner never vectorized them, so they were never hits.
+    One definition for the shortlist (:func:`shortlist`), the in-process index
+    (:func:`corpus_index`) and the training-session results' vref listing
+    (``train_routes/v4/train_service.py``), so no two of them can disagree about which
+    verses are in it. Empty, whitespace-only and ``<range>`` verses are out, for the
+    reason :func:`shortlist` gives: the runner never fit on them, so they were never hits.
+
+    **Whitespace-only is the runner's rule too** — its ``is_empty_verse`` tests
+    ``verse.strip() == ""`` — and it is spelled as "contains a non-space character" so
+    one predicate covers empty and blank alike. Postgres' ``[:space:]`` and Python's
+    ``str.isspace`` agree on ASCII whitespace; they can differ on a verse made *only* of
+    exotic Unicode spaces (U+00A0, say), which is not worth a second definition.
 
     The revision id rides as a literal rather than a bound parameter — insurance that the
     shortlist reaches its partial index, see the module docstring. ``int()`` is what makes
@@ -553,8 +559,11 @@ def corpus_conditions(revision_id: int) -> list:
     """
     return [
         VerseText.revision_id == literal_column(str(int(revision_id))),
+        # Nullable column. The runner's text read joins verse_reference, so a row without
+        # one was never in its corpus — and the index would fail splitting its book.
+        VerseText.verse_reference.isnot(None),
         VerseText.text.isnot(None),
-        VerseText.text != "",
+        VerseText.text.op("~")("[^[:space:]]"),
         VerseText.text != VERSE_RANGE_MARKER,
     ]
 
@@ -793,9 +802,9 @@ class CorpusIndex:
     build paid once per revision per process. **It stores nothing**: it is a cache derived
     from verse text and the ~1.4 MB recipe, so #967's "store no per-verse vectors" holds.
 
-    Not tied to the POST. #978 plans to reuse it for training-session neighbours, so it
-    takes texts and returns ``(vref, similarity)`` rankings and knows nothing about query
-    kinds or the response shape.
+    Not tied to the POST. Training-session neighbours (#978) read it too, through
+    :meth:`neighbours`, so it takes texts or vrefs and returns ``(vref, similarity)``
+    rankings and knows nothing about query kinds or the response shape.
 
     **The similarity is the GET's**, pair for pair: both sides are L2-normalized rows of
     the same recipe's encoding, so a dot product is their cosine, in ``[0, 1]``. The rows
@@ -893,6 +902,35 @@ class CorpusIndex:
             for offset, scores in enumerate(block):
                 exclude_vref, exclude_book = exclusions[start + offset]
                 results.append(self._top(scores, limit, exclude_vref, exclude_book))
+        return results
+
+    def neighbours(self, vrefs: Sequence[str], *, limit: int) -> dict[str, list[tuple]]:
+        """The ``limit`` closest verses to each of ``vrefs``, which are corpus verses.
+
+        ``{vref: [(vref, similarity), ...]}``. What :meth:`search` does, except the query
+        points are verses already in the index, so their vectors are read out of it
+        rather than re-encoded: a column of the ``features x verses`` matrix *is* that
+        verse's encoded row. ~30 ms to pull 100 of them out of a KJV-sized index.
+
+        **A verse is never its own neighbour** — it is excluded before the cut, so
+        ``limit`` rows survive. A vref the index has no row for (not in the corpus:
+        empty, ``<range>``, or simply absent from the revision) is left out of the
+        result, so the caller can tell "no row" from "no neighbours". Ties break on vref,
+        as everywhere on this path. Pure CPU; call through ``asyncio.to_thread``.
+        """
+        present = [vref for vref in dict.fromkeys(vrefs) if vref in self.row_of]
+        if not present:
+            return {}
+
+        queries = self.matrix[:, [self.row_of[vref] for vref in present]].T.tocsr()
+        results: dict[str, list[tuple]] = {}
+        for start in range(0, len(present), _SEARCH_BLOCK_ROWS):
+            block = (
+                queries[start : start + _SEARCH_BLOCK_ROWS] @ self.matrix
+            ).toarray()
+            for offset, scores in enumerate(block):
+                vref = present[start + offset]
+                results[vref] = self._top(scores, limit, vref, False)
         return results
 
     def _top(

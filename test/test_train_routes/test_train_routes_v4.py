@@ -34,6 +34,7 @@ What each group pins down:
   ``tfidf_top_k``, and that a retired resource did not come back.
 """
 
+import itertools
 from datetime import date, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -53,10 +54,15 @@ from database.models import (
     Group,
     NgramsTable,
     NgramVrefTable,
+    TfidfArtifactRun,
     TfidfPcaVector,
+    TfidfVectorizerArtifact,
     TrainingJob,
 )
 from database.models import UserDB as UserModel
+from database.models import (
+    VerseText,
+)
 from schemas.training import TrainingType
 from train_routes.v3.train_routes import TRAIN_APPS_ALIASES
 from train_routes.v4 import train_service
@@ -1161,55 +1167,176 @@ def _seed_ngrams(db_session, assessment_id, ngrams):
     db_session.commit()
 
 
-def _seed_vectors(db_session, assessment_id, vrefs):
-    """One 300-dimensional vector per vref, each pointing along its own axis.
+#: The ``<range>`` continuation marker as ``verse_text`` stores it.
+RANGE = "<range>"
 
-    Distinct axes with descending magnitudes make the ranking deterministic without
-    depending on anything about TF-IDF itself.
-    """
-    for index, vref in enumerate(vrefs):
-        vector = [0.0] * 300
-        vector[index] = 1.0
-        vector[299] = 1.0 / (index + 2)
+
+def _seed_text(db_session, revision_id, texts):
+    """``{vref: text}`` into ``verse_text`` for one revision. ``None`` stores a null."""
+    for vref, text in texts.items():
+        book, chapter, verse = _split(vref)
         db_session.add(
-            TfidfPcaVector(assessment_id=assessment_id, vref=vref, vector=vector)
+            VerseText(
+                revision_id=revision_id,
+                verse_reference=vref,
+                text=text,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
         )
     db_session.commit()
+
+
+def _runner_corpus(texts):
+    """The vrefs the runner fits on, by its own rules rather than the API's.
+
+    ``aqua-assessments/assessments/tfidf/app.py``: ``/v3/text?include_verses=all`` turns
+    a null text and the ``<range>`` marker into ``""``, and ``is_empty_verse`` then
+    drops anything that is empty after ``strip()``. Written out independently of
+    ``corpus_conditions`` so the two are checked against each other, not against
+    themselves.
+    """
+    corpus = []
+    for vref, text in texts.items():
+        text = "" if text is None or text == RANGE else text
+        if text.strip() == "":
+            continue
+        corpus.append(vref)
+    return corpus
+
+
+def _store_recipe(db_session, assessment_id, version_id, texts):
+    """Fit and store the two vectorizers for ``texts`` the way the runner does.
+
+    Returns the run's ``n_corpus_vrefs``. No SVD row, and — the point of #978 — no
+    ``tfidf_pca_vector`` rows: the read must work from text and this recipe alone.
+    ``n_components`` is written only because the column is ``NOT NULL``.
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    from utils.tfidf_tokenizer import unicode_word_tokenizer
+
+    corpus = [texts[vref] for vref in _runner_corpus(texts)]
+    word = TfidfVectorizer(
+        analyzer="word",
+        ngram_range=(1, 2),
+        min_df=1,
+        tokenizer=unicode_word_tokenizer,
+        token_pattern=None,
+    ).fit(corpus)
+    char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 6), min_df=1).fit(corpus)
+    db_session.add(
+        TfidfArtifactRun(
+            assessment_id=assessment_id,
+            source_version_id=version_id,
+            n_components=300,
+            n_word_features=len(word.vocabulary_),
+            n_char_features=len(char.vocabulary_),
+            n_corpus_vrefs=len(corpus),
+            sklearn_version="1.6.1",
+        )
+    )
+    db_session.commit()
+    for kind, vectorizer, analyzer, ngram_range in (
+        ("word", word, "word", (1, 2)),
+        ("char", char, "char_wb", (3, 6)),
+    ):
+        db_session.add(
+            TfidfVectorizerArtifact(
+                assessment_id=assessment_id,
+                kind=kind,
+                vocabulary={k: int(v) for k, v in vectorizer.vocabulary_.items()},
+                idf=vectorizer.idf_.tolist(),
+                params={
+                    "analyzer": analyzer,
+                    "ngram_range": list(ngram_range),
+                    "lowercase": True,
+                    "max_df": 1.0,
+                    "min_df": 1,
+                },
+            )
+        )
+    db_session.commit()
+    return len(corpus)
+
+
+def _tfidf_side(db_session, revision_id, version_id, assessment_id, texts, *, recipe):
+    """Seed one tfidf side: the revision's text, and optionally its recipe."""
+    _seed_text(db_session, revision_id, texts)
+    if recipe:
+        return _store_recipe(db_session, assessment_id, version_id, texts)
+    return None
+
+
+#: The target revision's text in :func:`finished_session`. ``GEN 1:2`` shares three of
+#: ``GEN 1:1``'s four words and ``GEN 1:4`` one, so ``GEN 1:1``'s neighbours are that
+#: order by construction.
+FINISHED_TARGET_TEXT = {
+    "GEN 1:1": "light darkness waters firmament",
+    "GEN 1:2": "light darkness waters",
+    "GEN 1:4": "light chariot pharaoh",
+}
+
+
+#: The verse-keyed types, and the vrefs :func:`_seed_finished` gives each one.
+FINISHED_TYPES = ("semantic-similarity", "word-alignment", "ngrams", "tfidf")
+FINISHED_VREFS = {
+    "semantic-similarity": {"GEN 1:1", "GEN 1:2"},
+    "word-alignment": {"GEN 1:1"},
+    "ngrams": {"GEN 1:1", "GEN 1:3"},
+    "tfidf": set(FINISHED_TARGET_TEXT),
+}
+
+
+def _seed_finished(db_session, pair, types=FINISHED_TYPES):
+    """A session with ``types`` finished and seeded, and nothing else."""
+    key = f"sess-{next(_names)}"
+    jobs = {}
+    for training_type in types:
+        job = _make_job(db_session, pair, training_type=training_type, session_id=key)
+        _set_status(db_session, job, "finished")
+        jobs[training_type] = job
+
+    if "semantic-similarity" in jobs:
+        _seed_scores(
+            db_session,
+            jobs["semantic-similarity"].assessment_id,
+            [("GEN 1:1", 0.9), ("GEN 1:2", 0.4)],
+        )
+    if "word-alignment" in jobs:
+        align = jobs["word-alignment"].assessment_id
+        _seed_alignments(
+            db_session,
+            align,
+            [
+                ("GEN 1:1", "beginning", "mwanzo", 0.8),
+                ("GEN 1:1", "God", "Mungu", 0.7),
+            ],
+        )
+        _seed_scores(db_session, align, [("GEN 1:1", 0.75)])
+    if "ngrams" in jobs:
+        _seed_ngrams(
+            db_session,
+            jobs["ngrams"].assessment_id,
+            [("in the", 2, ["GEN 1:1", "GEN 1:3"])],
+        )
+    if "tfidf" in jobs:
+        _tfidf_side(
+            db_session,
+            pair["target_revision_id"],
+            pair["target_version_id"],
+            jobs["tfidf"].assessment_id,
+            FINISHED_TARGET_TEXT,
+            recipe=True,
+        )
+    return {"key": key, "jobs": jobs, "pair": pair}
 
 
 @pytest.fixture
 def finished_session(client, regular_token1, db_session, pair):
     """A session with all four verse-keyed types finished and seeded."""
-    key = f"sess-{next(_names)}"
-    jobs = {}
-    for training_type in (
-        "semantic-similarity",
-        "word-alignment",
-        "ngrams",
-        "tfidf",
-    ):
-        job = _make_job(db_session, pair, training_type=training_type, session_id=key)
-        _set_status(db_session, job, "finished")
-        jobs[training_type] = job
-
-    sem_sim = jobs["semantic-similarity"].assessment_id
-    align = jobs["word-alignment"].assessment_id
-    _seed_scores(db_session, sem_sim, [("GEN 1:1", 0.9), ("GEN 1:2", 0.4)])
-    _seed_alignments(
-        db_session,
-        align,
-        [("GEN 1:1", "beginning", "mwanzo", 0.8), ("GEN 1:1", "God", "Mungu", 0.7)],
-    )
-    _seed_scores(db_session, align, [("GEN 1:1", 0.75)])
-    _seed_ngrams(
-        db_session,
-        jobs["ngrams"].assessment_id,
-        [("in the", 2, ["GEN 1:1", "GEN 1:3"])],
-    )
-    _seed_vectors(
-        db_session, jobs["tfidf"].assessment_id, ["GEN 1:1", "GEN 1:2", "GEN 1:4"]
-    )
-    return {"key": key, "jobs": jobs, "pair": pair}
+    return _seed_finished(db_session, pair)
 
 
 class TestResults:
@@ -1404,3 +1531,308 @@ class TestResults:
             headers=_auth(regular_token2),
         )
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The tfidf block without stored vectors (#978): verses from text, neighbours from the
+# in-process corpus index. Every fixture here stores a recipe and verse text and no
+# ``tfidf_pca_vector`` rows unless a test says otherwise.
+# ---------------------------------------------------------------------------
+
+
+def _swapped(pair):
+    """The same pair the other way round — how a source-side corpus gets trained."""
+    return {
+        "source_revision_id": pair["target_revision_id"],
+        "target_revision_id": pair["source_revision_id"],
+        "source_version_id": pair["target_version_id"],
+        "target_version_id": pair["source_version_id"],
+    }
+
+
+def _tfidf_session(
+    db_session,
+    pair,
+    target_texts,
+    *,
+    source_texts=None,
+    target_recipe=True,
+    source_recipe=True,
+):
+    """A tfidf-only session, and optionally a finished source-side tfidf corpus."""
+    key = f"sess-{next(_names)}"
+    job = _make_job(db_session, pair, training_type="tfidf", session_id=key)
+    _set_status(db_session, job, "finished")
+    target_n = _tfidf_side(
+        db_session,
+        pair["target_revision_id"],
+        pair["target_version_id"],
+        job.assessment_id,
+        target_texts,
+        recipe=target_recipe,
+    )
+    source_job, source_n = None, None
+    if source_texts is not None:
+        source_job = _make_job(db_session, _swapped(pair), training_type="tfidf")
+        _set_status(db_session, source_job, "finished")
+        source_n = _tfidf_side(
+            db_session,
+            pair["source_revision_id"],
+            pair["source_version_id"],
+            source_job.assessment_id,
+            source_texts,
+            recipe=source_recipe,
+        )
+    return {
+        "key": key,
+        "job": job,
+        "source_job": source_job,
+        "target_n": target_n,
+        "source_n": source_n,
+    }
+
+
+def _results(client, token, key, **params):
+    response = client.get(
+        f"{SESSIONS}/{key}/results", params=params, headers=_auth(token)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _canonical(vrefs):
+    return sorted(vrefs, key=_split)
+
+
+TARGET_TEXT = {
+    "GEN 1:1": "in the beginning god created the heaven and the earth",
+    "GEN 1:2": "and the earth was without form and void",
+    "GEN 1:3": "and god said let there be light and there was light",
+    "GEN 1:4": "and god saw the light that it was good",
+}
+SOURCE_TEXT = {
+    "GEN 1:1": "mwanzo mungu aliumba mbingu na nchi",
+    "GEN 1:2": "nchi ilikuwa ukiwa tena utupu",
+    "GEN 1:3": "mungu akasema iwe nuru ikawa nuru",
+    "GEN 1:4": "mungu akaiona nuru kuwa ni njema",
+}
+
+
+class TestResultsTfidfWithoutStoredVectors:
+    """The tfidf block reads text and the recipe, never ``tfidf_pca_vector`` (#978)."""
+
+    def test_a_recipe_and_no_vector_rows_gives_a_complete_page(
+        self, client, regular_token1, db_session, pair
+    ):
+        """#978's done-when: both sides' neighbours and the full count, no vectors."""
+        session = _tfidf_session(
+            db_session, pair, TARGET_TEXT, source_texts=SOURCE_TEXT
+        )
+        for job in (session["job"], session["source_job"]):
+            assert (
+                db_session.query(TfidfPcaVector)
+                .filter_by(assessment_id=job.assessment_id)
+                .count()
+                == 0
+            )
+
+        body = _results(client, regular_token1, session["key"], limit=100)
+
+        assert body["total"] == session["target_n"] == 4
+        assert [row["vref"] for row in body["items"]] == list(TARGET_TEXT)
+        for row in body["items"]:
+            for side in ("target_neighbours", "source_neighbours"):
+                neighbours = row["tfidf"][side]
+                assert len(neighbours) == 3, (row["vref"], side)
+                assert all(0.0 <= n["similarity"] <= 1.0 for n in neighbours)
+            # Each neighbour is shown with the text it was scored from.
+            for n in row["tfidf"]["target_neighbours"]:
+                assert n["target_text"] == TARGET_TEXT[n["vref"]]
+                assert n["source_text"] == SOURCE_TEXT[n["vref"]]
+
+    def test_the_listing_is_the_runners_corpus(
+        self, client, regular_token1, db_session, pair
+    ):
+        """Empty, blank, ``<range>`` and null verses are out; the count is the run's."""
+        texts = {
+            "GEN 1:1": "in the beginning god created the heaven and the earth",
+            "GEN 1:2": "",
+            "GEN 1:3": "   \t ",
+            "GEN 1:4": RANGE,
+            "GEN 1:5": None,
+            "GEN 1:6": "and god called the light day",
+            "GEN 1:7": "and god made the firmament",
+        }
+        session = _tfidf_session(db_session, pair, texts)
+        assert session["target_n"] == 3
+
+        body = _results(client, regular_token1, session["key"], limit=100)
+
+        assert [row["vref"] for row in body["items"]] == _runner_corpus(texts)
+        assert body["total"] == session["target_n"]
+        # Nor are they anyone's neighbours.
+        for row in body["items"]:
+            assert {n["vref"] for n in row["tfidf"]["target_neighbours"]} <= set(
+                _runner_corpus(texts)
+            )
+
+    @pytest.mark.parametrize(
+        "types",
+        [
+            combo
+            for size in range(1, len(FINISHED_TYPES) + 1)
+            for combo in itertools.combinations(FINISHED_TYPES, size)
+        ],
+        ids=lambda combo: "+".join(combo),
+    )
+    def test_total_is_the_union_for_every_combination_of_finished_types(
+        self, client, regular_token1, db_session, pair, types
+    ):
+        session = _seed_finished(db_session, pair, types)
+        expected = _canonical(set().union(*(FINISHED_VREFS[t] for t in types)))
+
+        body = _results(client, regular_token1, session["key"], limit=100)
+
+        assert [row["vref"] for row in body["items"]] == expected
+        assert body["total"] == len(expected)
+
+    @pytest.mark.parametrize(
+        "scope, expected",
+        [
+            ({"book": "GEN"}, ["GEN 1:1", "GEN 1:2", "GEN 2:1"]),
+            ({"book": "GEN", "chapter": 2}, ["GEN 2:1"]),
+            ({"book": "GEN", "chapter": 1, "verse": 2}, ["GEN 1:2"]),
+            ({"book": "EXO"}, ["EXO 1:1"]),
+        ],
+    )
+    def test_the_scope_narrows_the_tfidf_member(
+        self, client, regular_token1, db_session, pair, scope, expected
+    ):
+        texts = {
+            "GEN 1:1": "in the beginning god created the heaven",
+            "GEN 1:2": "and the earth was without form",
+            "GEN 2:1": "thus the heavens and the earth were finished",
+            "EXO 1:1": "now these are the names of the children of israel",
+        }
+        session = _tfidf_session(db_session, pair, texts)
+
+        body = _results(client, regular_token1, session["key"], limit=100, **scope)
+
+        assert [row["vref"] for row in body["items"]] == expected
+        assert body["total"] == len(expected)
+
+    @pytest.mark.parametrize("top_k", [1, 2, 5, 25, 50])
+    def test_top_k_self_exclusion_and_order(
+        self, client, regular_token1, db_session, pair, top_k
+    ):
+        """56 verses, so ``tfidf_top_k=50`` is really 50 rather than the corpus size."""
+        words = [f"word{i}" for i in range(30)]
+        vrefs = [f"GEN 1:{v}" for v in range(1, 32)] + [
+            f"GEN 2:{v}" for v in range(1, 26)
+        ]
+        texts = {
+            vref: " ".join(words[(i + t) % len(words)] for t in range(5))
+            for i, vref in enumerate(vrefs)
+        }
+        session = _tfidf_session(db_session, pair, texts)
+
+        params = {"limit": 3, "tfidf_top_k": top_k}
+        first = _results(client, regular_token1, session["key"], **params)
+        again = _results(client, regular_token1, session["key"], **params)
+
+        assert first == again
+        for row in first["items"]:
+            neighbours = row["tfidf"]["target_neighbours"]
+            assert len(neighbours) == min(top_k, len(vrefs) - 1)
+            assert row["vref"] not in {n["vref"] for n in neighbours}
+            assert neighbours == sorted(
+                neighbours, key=lambda n: (-n["similarity"], n["vref"])
+            )
+
+    def test_ties_break_on_vref_and_identical_text_scores_one(
+        self, client, regular_token1, db_session, pair
+    ):
+        """Ties go by vref *string*, the index's row order — so ``GEN 1:10`` first.
+
+        That is the rule the similar-verses GET and POST apply too.
+        """
+        texts = {
+            "GEN 1:1": "alpha beta gamma",
+            "GEN 1:2": "alpha beta",
+            "GEN 1:3": "alpha beta",
+            "GEN 1:10": "alpha beta",
+            "GEN 1:4": "alpha beta gamma",
+            "GEN 1:5": "omega",
+        }
+        session = _tfidf_session(db_session, pair, texts)
+
+        body = _results(client, regular_token1, session["key"], limit=1)
+
+        neighbours = body["items"][0]["tfidf"]["target_neighbours"]
+        assert [n["vref"] for n in neighbours] == [
+            "GEN 1:4",
+            "GEN 1:10",
+            "GEN 1:2",
+            "GEN 1:3",
+            "GEN 1:5",
+        ]
+        assert neighbours[0]["similarity"] == pytest.approx(1.0)
+        assert (
+            neighbours[1]["similarity"]
+            == neighbours[2]["similarity"]
+            == neighbours[3]["similarity"]
+        )
+        assert neighbours[4]["similarity"] == 0.0
+
+    def test_a_verse_outside_one_sides_corpus_has_no_neighbours_on_that_side(
+        self, client, regular_token1, db_session, pair
+    ):
+        """GEN 1:4 has no source text; GEN 1:5 has no target text but still pages."""
+        source = {k: v for k, v in SOURCE_TEXT.items() if k != "GEN 1:4"}
+        source["GEN 1:5"] = "mungu akaiita nuru mchana"
+        session = _tfidf_session(db_session, pair, TARGET_TEXT, source_texts=source)
+
+        body = _results(client, regular_token1, session["key"], limit=100)
+        rows = {row["vref"]: row["tfidf"] for row in body["items"]}
+
+        assert list(rows) == ["GEN 1:1", "GEN 1:2", "GEN 1:3", "GEN 1:4", "GEN 1:5"]
+        assert body["total"] == 5
+        assert rows["GEN 1:4"]["target_neighbours"] != []
+        assert rows["GEN 1:4"]["source_neighbours"] == []
+        assert rows["GEN 1:5"]["target_neighbours"] == []
+        assert rows["GEN 1:5"]["source_neighbours"] != []
+        assert "GEN 1:4" not in {
+            n["vref"] for n in rows["GEN 1:1"]["source_neighbours"]
+        }
+
+    def test_no_recipe_lists_the_rows_with_no_neighbours(
+        self, client, regular_token1, db_session, pair
+    ):
+        """Pre-artifact assessments: rows from text, no neighbours, no 500.
+
+        A stored vector row is seeded to show there is no fallback to it. The source
+        side exists, so it is an empty list rather than null.
+        """
+        session = _tfidf_session(
+            db_session,
+            pair,
+            TARGET_TEXT,
+            source_texts=SOURCE_TEXT,
+            target_recipe=False,
+            source_recipe=False,
+        )
+        db_session.add(
+            TfidfPcaVector(
+                assessment_id=session["job"].assessment_id,
+                vref="GEN 1:1",
+                vector=[1.0] + [0.0] * 299,
+            )
+        )
+        db_session.commit()
+
+        body = _results(client, regular_token1, session["key"], limit=100)
+
+        assert body["total"] == 4
+        for row in body["items"]:
+            assert row["tfidf"]["target_neighbours"] == []
+            assert row["tfidf"]["source_neighbours"] == []
