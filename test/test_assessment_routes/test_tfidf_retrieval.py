@@ -763,7 +763,7 @@ class TestCorpusIndexCache:
     ):
         """Span suggestions send twelve requests at once. Without the shared build each
         would encode the whole revision — twelve times the CPU, and twelve transients of
-        ~300 MB live together."""
+        ~170 MB live together."""
         indexes = await asyncio.gather(*(_get_index() for _ in range(12)))
         assert len(fake_corpus_source["builds"]) == 1
         assert all(index is indexes[0] for index in indexes)

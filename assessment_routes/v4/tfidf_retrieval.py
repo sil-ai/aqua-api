@@ -907,18 +907,23 @@ class CorpusIndex:
         """
         import numpy as np
 
-        scores = scores.astype(np.float64, copy=True)
+        # ``scores`` is a row of the block :meth:`search` just densified, so it is masked
+        # in place rather than copied. Kept float32 throughout: the returned value is then
+        # bit-for-bit what the GET's float32 rerank reports for the same pair.
+        available = len(scores)
         if exclude_vref is not None:
             if exclude_book:
                 code = self._book_codes.get(book_of(exclude_vref))
                 if code is not None:
-                    scores[self.books == code] = -np.inf
+                    mask = self.books == code
+                    scores[mask] = -np.inf
+                    available -= int(np.count_nonzero(mask))
             else:
                 row = self.row_of.get(exclude_vref)
                 if row is not None:
                     scores[row] = -np.inf
+                    available -= 1
 
-        available = int(np.count_nonzero(scores != -np.inf))
         k = min(limit, available)
         if k == 0:
             return []
@@ -993,8 +998,9 @@ _INDEX_CACHE: dict[int, CorpusIndex] = {}
 _INDEX_BUILDS: dict[tuple, asyncio.Task] = {}
 
 #: Held for the whole of a build, across revisions. Builds are serialized per worker so at
-#: most one build's transient memory (~300 MB for a Bible, on top of the finished index)
-#: is live at a time. The cost is that a second revision's build waits for the first.
+#: most one build's transient memory is live at a time — peak RSS rose ~170 MB for a KJV
+#: build, the kept index included. The cost is that a second revision's build waits for
+#: the first.
 _INDEX_BUILD_LOCK = asyncio.Lock()
 
 

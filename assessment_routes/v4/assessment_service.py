@@ -505,7 +505,6 @@ from assessment_routes.v3.assessment_routes import (
     _canonicalize_kwargs,
     call_assessment_runner,
 )
-
 from assessment_routes.v4 import tfidf_retrieval
 from bible_routes.v4 import revision_service, verse_range_service
 from config import settings

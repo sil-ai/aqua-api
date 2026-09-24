@@ -205,11 +205,12 @@ class Settings(BaseSettings):
     # batch of 250 texts in ~0.4 s. Only batches of more than TWO_STAGE_MAX_QUERIES text or
     # vref points build one, so single-text calls never add to it.
     #
-    # Sized from aqua-tfidf-eval round 15: a KJV index (36,694 verses x 173,585 features,
-    # 8.95M nonzeros, float32) is 72.3 MB, so 160 MB holds about two Bible-scale indexes.
-    # Least recently used is evicted first; the entry just built always survives. A build
-    # also holds a transient of ~300 MB on top of the finished index while it runs, and
-    # builds are serialized per worker, so only one transient is live at a time.
+    # Sized from a KJV build through this code (36,694 verses x 173,800 features, 8.98M
+    # nonzeros, float32): 76 MB as the cache counts it, against round 15's 72.3 MB for the
+    # bare matrix. So 160 MB holds about two Bible-scale indexes. Least recently used is
+    # evicted first; the entry just built always survives. Peak RSS rose ~170 MB during
+    # that build, the kept index included, and builds are serialized per worker, so only
+    # one build's transient is live at a time.
     #
     # Deliberately conservative. The 9 and 11 September outages were memory pressure from
     # the v3 encoder cache, and all three budgets are per worker and additive:
