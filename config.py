@@ -199,6 +199,25 @@ class Settings(BaseSettings):
     # and a lower worst-case total than sharing the larger budget would have given.
     tfidf_recipe_cache_max_bytes: int = Field(default=256 * 1024 * 1024, gt=0)
 
+    # The v4 similar-verses corpus index cache (assessment_routes/v4/tfidf_retrieval.py,
+    # CorpusIndex) — a THIRD per-worker cache, alongside the two above. It holds one
+    # revision's whole corpus encoded and transposed, which is what lets the POST answer a
+    # batch of 250 texts in ~0.4 s. Only batches of more than TWO_STAGE_MAX_QUERIES text or
+    # vref points build one, so single-text calls never add to it.
+    #
+    # Sized from aqua-tfidf-eval round 15: a KJV index (36,694 verses x 173,585 features,
+    # 8.95M nonzeros, float32) is 72.3 MB, so 160 MB holds about two Bible-scale indexes.
+    # Least recently used is evicted first; the entry just built always survives. A build
+    # also holds a transient of ~300 MB on top of the finished index while it runs, and
+    # builds are serialized per worker, so only one transient is live at a time.
+    #
+    # Deliberately conservative. The 9 and 11 September outages were memory pressure from
+    # the v3 encoder cache, and all three budgets are per worker and additive:
+    # 190 MB interpreter + 768 + 256 + 160 = ~1.37 GB steady per worker, ~5.5 GB at
+    # WEB_CONCURRENCY=4, before any transient. On an 8 GB host, lower this before raising
+    # it — the eviction logs say how often indexes are being rebuilt.
+    tfidf_corpus_index_cache_max_bytes: int = Field(default=160 * 1024 * 1024, gt=0)
+
     # --- Observability / Loki -------------------------------------------
     # A real bool so pydantic parses "true"/"false"/"1"/"0" correctly, instead
     # of the bool(os.getenv(...)) footgun where any non-empty string is truthy.

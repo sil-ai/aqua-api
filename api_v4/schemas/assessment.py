@@ -1166,17 +1166,19 @@ class SimilarVerseOut(V4BaseModel):
     )
     similarity: float = Field(
         description=(
-            "How close this verse is to the queried one, higher being more similar. "
-            "**Its scale depends on which endpoint returned it.** From the GET it is "
-            "the cosine between the two verses' TF-IDF representations, in `[0, 1]`. "
-            "From the POST it is still the un-normalized inner product of the stored "
-            "vectors, which is unbounded and can be negative, so scores from the two "
-            "endpoints are not comparable. **A ranking score, not a calibrated one**: "
-            "it says how the verses in this response compare to each other, not how "
-            "alike two verses are in any absolute sense. Do not threshold on it. The "
-            "GET's changed scale in the release that stopped reading stored vectors, "
-            "so a GET value captured before that release is not comparable with one "
-            "captured after."
+            "How close this verse is to the query, higher being more similar. **Its "
+            "scale depends on the kind of query.** For the GET, and for `text` and "
+            "`vref` query points on the POST, it is the cosine between the two TF-IDF "
+            "representations, in `[0, 1]`, and the same pair of verses gets the same "
+            "value on both methods. For a `vector` query point it is the raw inner "
+            "product with the stored vectors, which is unbounded and can be negative. "
+            "So a POST that mixes `vector` with other kinds carries two scales, one "
+            "per entry — compare values only within one entry. **A ranking score, not "
+            "a calibrated one**: it says how the verses in one ranking compare to each "
+            "other, not how alike two verses are in any absolute sense. Do not "
+            "threshold on it. The cosine replaced an inner product in the releases "
+            "that stopped reading stored vectors, so a value captured before those "
+            "releases is not comparable with one captured after."
         ),
     )
     text: str | None = Field(
@@ -1327,12 +1329,11 @@ class SimilarVersesTextQuery(SimilarVersesExcludableQuery):
     against a verse *already vectorized in the assessment*; text that is not in the
     corpus — a draft verse, a back-translation, a search phrase — has no stored vector to
     look up, so there is nothing for it to rank against. Here the server encodes the text
-    with the assessment's own fitted vectorizers and SVD, which puts it in the same space
-    as the corpus vectors and makes the comparison meaningful.
+    with the revision's own fitted vectorizers, which puts it in the same space as the
+    revision's verses and makes the comparison meaningful. No SVD is involved.
 
-    It is also the kind with a failure of its own: encoding needs those artifacts, and an
-    assessment can hold corpus vectors without them. See the endpoint's
-    ``TFIDF_ARTIFACTS_NOT_FOUND``.
+    Encoding needs those artifacts, and an assessment can hold results without them. See
+    the endpoint's ``TFIDF_ARTIFACTS_NOT_FOUND``, which the ``vref`` kind shares.
     """
 
     type: Literal["text"]
@@ -1340,8 +1341,8 @@ class SimilarVersesTextQuery(SimilarVersesExcludableQuery):
         min_length=1,
         max_length=TFIDF_MAX_TEXT_CHARS,
         description=(
-            f"The text to find neighbours for. Encoded server-side against this "
-            f"assessment's own vectorizers and SVD, so it does not have to be a verse "
+            f"The text to find neighbours for. Encoded server-side against the "
+            f"assessed revision's own fitted vocabulary, so it does not have to be a verse "
             f"the assessment covers — that is the whole point of this kind. At most "
             f"{TFIDF_MAX_TEXT_CHARS:,} characters (v3's bound, unchanged): a verse is "
             f"far under it, and the cap only stops a pathological multi-megabyte string "
@@ -1351,7 +1352,7 @@ class SimilarVersesTextQuery(SimilarVersesExcludableQuery):
 
 
 class SimilarVersesVrefQuery(SimilarVersesQueryBase):
-    """Rank against a verse already vectorized in this assessment. **Convenience.**
+    """Rank against a verse the assessed revision holds. **Convenience.**
 
     Exactly what the GET does, and accepted here so a caller with fifty verses makes one
     request rather than fifty. That is the only reason it exists: excluding it would mean
@@ -1375,10 +1376,11 @@ class SimilarVersesVrefQuery(SimilarVersesQueryBase):
         max_length=VREF_MAX_LENGTH,
         description=(
             "The verse to find neighbours for, as a canonical vref (`MAT 9:20`). Its "
-            "stored vector is the query point, so a verse this assessment holds no "
-            "vector for is a `404 VREF_NOT_FOUND` naming this query point's index — not "
-            "an empty result, which would be indistinguishable from a verse with no "
-            "neighbours. This verse is excluded from its own ranking."
+            "text in the assessed revision is the query point, so a verse with no text "
+            "there (missing, empty, or printed within the verse above) is a "
+            "`404 VREF_NOT_FOUND` naming this query point's index — not an empty "
+            "result, which would be indistinguishable from a verse with no neighbours. "
+            "This verse is excluded from its own ranking."
         ),
     )
 
@@ -1398,6 +1400,10 @@ class SimilarVersesVectorQuery(SimilarVersesExcludableQuery):
     promise of the endpoint. A caller who cannot state which artifact run produced their
     vector wants :class:`SimilarVersesTextQuery`, which has no such coupling because the
     server does the encoding.
+
+    **The only kind still ranked against stored vectors**, and so the only one whose
+    ``similarity`` is a raw inner product rather than a cosine. What it should accept once
+    the SVD is dropped (sil-ai/aqua-assessments#471) is decided with that work.
     """
 
     type: Literal["vector"]

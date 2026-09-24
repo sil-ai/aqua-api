@@ -264,26 +264,27 @@ a ranking**, which is the one thing here that used to be guaranteed and now is n
   already on the column, partial per revision rather than global, and the revision id as
   a literal rather than a bound parameter. Do not reach for ``tfidf_pca_vector`` from
   this path; #967 stops storing it.
-* **The POST still reads them, and that is the seam.** :func:`_rank_against_corpus`
-  survives for the batch form only. So a one-element ``vref`` batch and the equivalent
-  GET can now order the same verse's neighbours differently at corpus scale, where
-  previously a test could assert they were identical. This is accepted rather than
-  overlooked: the alternative shapes were measured and both are worse. Running the
-  shortlist per query point inside the batch costs 15.7 s at N=250 against today's ~6 s,
-  because the trigram KNN scans have no batched form; making the GET exact over the whole
-  revision means a ~7 s in-process index build on a cold worker for a read that is
-  otherwise ~117 ms. The batch's own replacement — one transposed sparse index per
-  revision per process, 372 ms at N=250 after the build — is the second half of #973.
-* **The GET can now fail the way the POST could.** :class:`TfidfArtifactsNotFound` is
-  reachable from both, because both now need the fitted vectorizers.
-  :class:`TfidfArtifactDimensionMismatch` remains POST-only and always will: it compares
-  an encoder's output width against a ``Vector(300)`` column, and the GET no longer has a
-  column to compare against.
-* **One cache, keyed on the revision.** :data:`~assessment_routes.v4.tfidf_retrieval._RECIPE_CACHE`,
+* **Neither does the POST, except for the ``vector`` kind.** ``text`` and ``vref`` query
+  points rank from verse text too: up to
+  :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through the
+  GET's own shortlist-and-rerank, so a one-element ``vref`` batch answers exactly as the
+  GET does, and larger batches through one in-process
+  :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex` per revision per worker —
+  372 ms at N=250 after a ~7 s build, where running the shortlist per query point would
+  cost ~20 s. The split is by request size, never by whether an index is warm, so a
+  request answers the same way on every worker. A caller-supplied ``vector`` has nothing
+  but the stored vectors to be compared with, so :func:`_rank_against_corpus` survives for
+  that kind alone.
+* **Both forms fail the same way on artifacts.** :class:`TfidfArtifactsNotFound` is
+  reachable from the GET and from the POST's ``text`` and ``vref`` kinds, because all of
+  them need the fitted vectorizers. Nothing on either form reads the SVD any more.
+* **Caches keyed on the revision.** :data:`~assessment_routes.v4.tfidf_retrieval._RECIPE_CACHE`,
   not v3's ``_ENCODER_CACHE`` re-keyed — v3 is frozen, and more to the point v3's encoder
   requires the SVD and 404s without one, so anything sitting on it stops working when
   sil-ai/aqua-assessments#471 lands. Dropping the SVD also makes the cached object ~8x
   smaller, which is what makes per-revision caching cheap rather than merely tidier.
+  :data:`~assessment_routes.v4.tfidf_retrieval._INDEX_CACHE` holds the POST's corpus
+  indexes on the same key, under its own byte budget.
 
 The verse text is fetched in the same layer, so the router never touches the database.
 No hit's ``text`` should be the ``<range>`` marker — but **not** by the mechanism
@@ -304,32 +305,22 @@ paragraph above is now an explanation of the data rather than the only thing kee
 marker out of the response.
 
 **The POST is the same search with the query point arriving differently, and N of them.**
-:func:`get_similar_verses_batch` shares the ranking (:func:`_rank_against_corpus`) and the
-row shaping (:func:`_hit`) with the GET rather than restating either, so the two forms
-cannot answer the same question differently — a test asserts that
-``?vref=X&limit=N`` and a one-element ``vref`` batch return identical items. Three things
-are genuinely new below the wire:
+:func:`get_similar_verses_batch` shares the row shaping (:func:`_hit`) with the GET, and
+for small batches the ranking too (:func:`~assessment_routes.v4.tfidf_retrieval.two_stage`)
+— a test asserts that ``?vref=X&limit=N`` and a one-element ``vref`` batch return identical
+items, similarities included. Three things are genuinely new below the wire:
 
-* **Server-side encoding, which is the reason the POST exists.** The GET can only rank
-  against a verse already vectorized in the assessment; text that is not in the corpus has
-  no stored vector to look up. :func:`_tfidf_encoder` rehydrates the assessment's own
-  fitted vectorizers and SVD through v3's memoised ``_get_encoder`` and the transform runs
-  on a worker thread — it is CPU-bound sklearn work, and running it inline would stall the
-  event loop for every other request on the worker.
-* **Two failures the GET cannot have**, both of them the ``text`` kind's:
-  :class:`TfidfArtifactsNotFound` and :class:`TfidfArtifactDimensionMismatch`. An
-  assessment can hold corpus vectors and no artifacts, so the first is reachable rather
-  than defensive.
-* **Query-count discipline.** N + 4 statements at the top, not 3N: one parent, one lookup
-  covering *every* ``vref`` query point, N rankings, and two hydrations over the union of all
-  hits. Fewer when there is nothing to do — no ``vref`` query point means no lookup, and
-  rankings that all come back empty mean no hydration, so the floor is N + 1. A ``text``
-  query point adds the encoder's own reads on top, once for the batch rather than once per
-  text: v3's ``_get_encoder`` reads the artifact run on every call to validate its memo, and
-  the two vectorizers and the SVD on a miss — so a batch carrying one runs to N + 5 warm and
-  N + 7 cold. The rankings are sequential because ``AsyncSession`` cannot run concurrent
-  statements — ``asyncio.gather`` over the database here would corrupt the session rather
-  than speed it up.
+* **Arbitrary text, which is the reason the POST exists.** The GET can only rank against a
+  verse the revision holds. A ``text`` query point is encoded with the revision's fitted
+  recipe, on a worker thread — CPU-bound sklearn work that would otherwise stall the event
+  loop for every other request on the worker. v3's encoder, which needs the SVD, is no
+  longer on this path at all.
+* **A second scale.** ``vector`` hits carry the stored vectors' raw inner product, not a
+  cosine, so a request mixing kinds carries two scales. Documented per kind on
+  ``SimilarVerseOut.similarity``.
+* **Query-count discipline.** Every ``vref`` query point is resolved in one statement, and
+  the hydration runs once over the union of all hits; see
+  :func:`get_similar_verses_batch` for the full count.
 
 
 How the alignment reads are shaped (:func:`get_alignment_scores`, :func:`get_missing_words`)
@@ -491,7 +482,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from api_v4.schemas.assessment import (
-    TFIDF_CORPUS_VECTOR_DIM,
     AgentCritiqueOptions,
     AlignmentScoreType,
     ReferencedAssessmentOptions,
@@ -516,14 +506,6 @@ from assessment_routes.v3.assessment_routes import (
     call_assessment_runner,
 )
 
-# Imported, never modified, for the same reason as the four names above — and this pair
-# is the *core* of the similarity POST rather than a convenience. Together they rehydrate
-# an assessment's fitted vectorizers and SVD from the artifact tables (memoised, see
-# :func:`_tfidf_encoder`) and run the transform that puts arbitrary text into the same
-# 300-dimensional space as the stored corpus vectors. Reimplementing either in v4 would
-# be a bug: the encoding has to match the one ``aqua-assessments`` fitted, exactly, or
-# every similarity it produces is meaningless while looking entirely plausible.
-from assessment_routes.v3.tfidf_artifact_routes import _encode_texts, _get_encoder
 from assessment_routes.v4 import tfidf_retrieval
 from bible_routes.v4 import revision_service, verse_range_service
 from config import settings
@@ -657,13 +639,11 @@ class AssessmentNotFound(AssessmentServiceError):
 class SimilarityVrefNotFound(AssessmentServiceError):
     """The assessment is readable, but it never vectorized the requested ``vref``.
 
-    **Deliberately worded around "vectorized" rather than "has no vector"**, because the
-    two forms of the read now establish it differently: the POST finds no row in
-    ``tfidf_pca_vector``, and the GET finds no usable text for the verse in the assessed
-    revision (no row, empty, or the ``<range>`` marker). Those are the *same set of
-    verses* — the runner skips empty verses, so a verse with no usable text is exactly one
-    that never got a vector — which is why one signal still covers both. A message naming
-    a vector would be wrong on the path that reads none.
+    **Deliberately worded around "vectorized" rather than "has no vector"**, because no
+    form of the read looks for a vector any more: both find no usable text for the verse
+    in the assessed revision (no row, empty, or the ``<range>`` marker). That is the *same
+    set of verses* that never got a stored vector — the runner skips empty verses — which
+    is why the wording, and the code, survived the move off stored vectors.
 
     A *different* signal from :class:`AssessmentNotFound` on purpose, even though both
     become a 404. By the time this can be raised the caller has already established that
@@ -691,14 +671,13 @@ class SimilarityVrefNotFound(AssessmentServiceError):
 class TfidfArtifactsNotFound(AssessmentServiceError):
     """The assessment is readable, but it cannot encode text: no usable artifact run.
 
-    The ``text`` query point's own failure, and **not** the same thing as
-    :class:`SimilarityVrefNotFound` even though both are 404s on one endpoint. Encoding
-    needs the fitted vectorizers and the SVD components that ``POST
-    /v3/assessment/{id}/tfidf-artifacts`` stores; ranking a ``vref`` or a caller-supplied
-    ``vector`` needs none of them, only the corpus vectors. An assessment can hold the
-    second without the first — the artifact push is a separate call the runner makes after
-    the vectors land, so a run that was interrupted between the two is exactly this state —
-    which is why this is a reachable failure rather than a defensive branch.
+    **Not** the same thing as :class:`SimilarityVrefNotFound`, even though both are 404s on
+    one endpoint. Ranking from text — the GET, and the POST's ``text`` and ``vref`` kinds —
+    needs the fitted vectorizers that ``POST /v3/assessment/{id}/tfidf-artifacts`` stores;
+    only a caller-supplied ``vector`` does not. An assessment can hold results without
+    artifacts — the artifact push is a separate call the runner makes after the vectors
+    land, and assessments from before 12 May 2026 never had one — which is why this is a
+    reachable failure rather than a defensive branch.
 
     Covers both of v3's messages, "no artifacts" and "incomplete artifacts", under one
     code: a caller's options are identical either way, and the difference is about how the
@@ -710,35 +689,6 @@ class TfidfArtifactsNotFound(AssessmentServiceError):
         super().__init__(
             f"Assessment {assessment_id} has no TF-IDF encoder artifacts, so it cannot "
             f"rank against arbitrary text. ({detail})"
-        )
-
-
-class TfidfArtifactDimensionMismatch(AssessmentServiceError):
-    """The artifacts encode to a width the corpus column cannot hold.
-
-    ``tfidf_pca_vector.vector`` is ``Vector(300)``, so an SVD that produces anything else
-    yields a query point pgvector will refuse to compare. Reachable rather than
-    theoretical: ``POST /v3/assessment/{id}/tfidf-artifacts`` validates that the pushed
-    ``n_components`` agrees with the SVD payload's, but never that either equals 300.
-
-    Measured from ``components_`` — the matrix the transform actually multiplies by —
-    rather than from the ``tfidf_artifact_runs.n_components`` column v3 checks. Same number
-    when the push was consistent, and the right one when it was not: the column is a claim
-    about the artifacts, and this is the artifacts.
-
-    A 422 rather than a 500, matching v3. The caller cannot fix it, so it is an
-    uncomfortable status either way — but nothing failed *unexpectedly*, and naming the two
-    widths tells whoever pushed the artifacts exactly what is wrong. It is the fifth
-    failure on this endpoint; #893's Q4 ruling lists four and does not reach this one.
-    """
-
-    def __init__(self, assessment_id: int, produced: int, expected: int) -> None:
-        self.assessment_id = assessment_id
-        self.produced = produced
-        self.expected = expected
-        super().__init__(
-            f"Assessment {assessment_id}'s TF-IDF artifacts encode to {produced} "
-            f"dimensions, but its stored corpus vectors are {expected}-dimensional."
         )
 
 
@@ -2053,12 +2003,12 @@ async def _rank_against_corpus(
 ) -> list:
     """The ``limit`` corpus verses closest to ``query_vector``, within one assessment.
 
-    **The stored-vector ranking, and as of #973 the POST's only.** The GET no longer
-    calls it: it ranks over verse *text* through
+    **The stored-vector ranking, and since #973 only the ``vector`` query kind's.** The GET
+    and the POST's ``text`` and ``vref`` kinds rank over verse *text* through
     :mod:`assessment_routes.v4.tfidf_retrieval`, because the corpus vectors this reads
-    are the thing #967 stops storing. So the two forms of the read no longer share one
-    ranking, and :func:`get_similar_verses` says what that costs. This half stays until
-    the POST moves too.
+    are the thing #967 stops storing. A caller-supplied vector has nothing else to be
+    compared with, so this stays for that kind alone; what that kind should accept once
+    the SVD is gone is decided with sil-ai/aqua-assessments#471's emit side, not here.
 
     Returns ``(vref, similarity)`` pairs, most-similar-first — the sign is already
     flipped (see below) and text is attached by the caller, because the POST does that
@@ -2176,12 +2126,13 @@ async def get_similar_verses(
     them now. An assessment can hold corpus vectors and no artifacts, so this is
     reachable rather than defensive, and the router declares it.
 
-    **4. Shortlist, then rerank.** ``k`` candidates by trigram distance within the
-    revision (:func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size` says why ``k``
-    is not simply 100), then exact cosine over those candidates on a worker thread —
-    it is CPU-bound sklearn work, and running it inline would stall the event loop for
-    every other request on the worker. The query verse is excluded from its own results
-    by the shortlist's ``WHERE`` clause, so ``k`` candidates survive the drop.
+    **4. Shortlist, then rerank** — :func:`~assessment_routes.v4.tfidf_retrieval.two_stage`,
+    the same function the POST uses for small batches. ``k`` candidates by trigram
+    distance within the revision (:func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`
+    says why ``k`` is not simply 100), then exact cosine over those candidates on a worker
+    thread — it is CPU-bound sklearn work, and running it inline would stall the event
+    loop for every other request on the worker. The query verse is excluded from its own
+    results by the shortlist's ``WHERE`` clause, so ``k`` candidates survive the drop.
 
     **5. Hydrate.** Unchanged, and still two statements over the surviving hits.
 
@@ -2193,13 +2144,14 @@ async def get_similar_verses(
       ordering means what it always meant and the field is still a ranking score rather
       than a calibrated one; the *numbers* are not comparable with ones captured before
       this change.
-    * **This form is no longer exactly equal to a one-element POST batch.** They shared
-      :func:`_rank_against_corpus` and therefore could not disagree; now the GET
-      shortlists and the POST still scans stored vectors, so at corpus scale they can
-      return different rankings for the same ``vref``. Measured, the shortlist is the
-      *better* of the two (R@1 0.866 against 0.848 for exact full-corpus cosine), because
-      narrowing on trigrams first drops distractors that cosine alone ranks highly. The
-      parity test is narrowed to say what still holds rather than deleted.
+    * **A one-element POST batch answers exactly as this does**, because both run
+      :func:`~assessment_routes.v4.tfidf_retrieval.two_stage`. A POST batch larger than
+      :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` scores the whole
+      revision instead, which gives every pair the same similarity as here but can admit
+      a different tail: the shortlist only considers trigram-near verses. Measured, the
+      shortlist is the *better* of the two (R@1 0.866 against 0.848 for exact full-corpus
+      cosine), because narrowing on trigrams first drops distractors that cosine alone
+      ranks highly.
     * **Two assessments over one revision now answer identically** for the same ``vref``,
       where before each ranked against its own separately-fitted vectors. See
       :func:`~assessment_routes.v4.tfidf_retrieval._canonical_run`.
@@ -2222,16 +2174,14 @@ async def get_similar_verses(
     except tfidf_retrieval.TfidfRecipeNotFound as exc:
         raise TfidfArtifactsNotFound(assessment_id, exc.detail) from exc
 
-    candidates = await tfidf_retrieval.shortlist(
+    ranked = await tfidf_retrieval.two_stage(
         db,
+        recipe,
         revision_id=assessment.revision_id,
         query_text=text,
-        k=tfidf_retrieval.shortlist_size(limit),
+        limit=limit,
         exclude_vref=vref,
     )
-    ranked = (
-        await asyncio.to_thread(tfidf_retrieval.rerank, recipe, text, candidates)
-    )[:limit]
 
     vrefs = [hit_vref for hit_vref, _ in ranked]
     revision_texts = await _verse_texts(db, assessment.revision_id, vrefs)
@@ -2242,123 +2192,94 @@ async def get_similar_verses(
     ]
 
 
-async def _tfidf_encoder(db: AsyncSession, assessment_id: int) -> tuple:
-    """The assessment's rehydrated encoder, or the two failures that stop it encoding.
+async def _query_point_texts(
+    db: AsyncSession, assessment, queries: Sequence
+) -> list[str | None]:
+    """The text each ``text`` and ``vref`` query point ranks with, in request order.
 
-    A thin adapter over v3's :func:`_get_encoder`, which is the machinery this endpoint
-    exists to expose and is reused rather than reimplemented. It reads the fitted word and
-    char vectorizers and the SVD components out of the artifact tables, rebuilds the
-    sklearn objects on a worker thread, and memoises the result per assessment
-    (``tfidf_artifact_routes.py``'s ``_ENCODER_CACHE``; bounded per worker by
-    ``TFIDF_ENCODER_CACHE_MAX_BYTES``, oldest evicted, keyed on the run's
-    ``created_at`` so a re-push invalidates the stale entry transparently). Rebuilding any
-    of that here would be a bug rather than a duplication — the same reasoning this module
-    already records for importing v3's dedup and dispatch helpers.
+    ``None`` for a ``vector`` query point, which arrives as a vector and is ranked by
+    :func:`_rank_against_corpus` against the stored ones.
 
-    Two things the adapter adds:
+    * ``text`` — the text as sent.
+    * ``vref`` — the verse's own text in the assessed revision, **all of them in one
+      statement** through :func:`~assessment_routes.v4.tfidf_retrieval.query_texts`, the
+      batched form of the lookup the GET uses. Same rules as the GET: lowest id wins among
+      duplicates, and no row, an empty text and the ``<range>`` marker all mean the verse
+      has no query point — :class:`SimilarityVrefNotFound`, reporting the **lowest**
+      failing index so the same bad request always names the same query point.
 
-    **It translates v3's ``HTTPException`` into a service signal.** ``_get_encoder``
-    raises ``HTTPException(404)`` in both of its failure branches — no artifact run, and a
-    run missing a vectorizer or the SVD — and a bare ``HTTPException`` escaping into a v4
-    handler would be shaped by the #828 fallback into a generic ``NOT_FOUND`` rather than
-    this endpoint's own code. Anything other than a 404 is re-raised untouched rather than
-    relabelled: v3 is frozen so today there is nothing else, and guessing on behalf of a
-    future branch would be worse than passing it through.
-
-    **It checks the encoded width against the corpus column.** See
-    :class:`TfidfArtifactDimensionMismatch` — measured off ``components_``, which is what
-    the transform multiplies by, rather than off the ``n_components`` column v3 trusts.
+    This runs before the recipe is loaded, so a request that cannot succeed on its vrefs
+    does not first pay for a rehydration — the same cheap-first order as the GET.
     """
-    try:
-        encoder = await _get_encoder(db, assessment_id)
-    except HTTPException as exc:
-        if exc.status_code != status.HTTP_404_NOT_FOUND:
-            raise
-        raise TfidfArtifactsNotFound(assessment_id, str(exc.detail)) from exc
-
-    _, _, svd = encoder
-    produced = svd.components_.shape[0]
-    if produced != TFIDF_CORPUS_VECTOR_DIM:
-        raise TfidfArtifactDimensionMismatch(
-            assessment_id, produced, TFIDF_CORPUS_VECTOR_DIM
-        )
-    return encoder
-
-
-async def _query_point_vectors(
-    db: AsyncSession, assessment_id: int, queries: Sequence
-) -> list:
-    """One vector per query point, in request order — the step that differs by kind.
-
-    Everything after this is identical for all three kinds, which is the point of the
-    discriminated union: a query point *is* a vector, and ``text``/``vref``/``vector`` are
-    three ways of naming one.
-
-    * ``vector`` — already a vector. Validated for width and finiteness by the request
-      model, so nothing is left to check here.
-    * ``vref`` — **all of them in one statement**, not one lookup per query point. v3 has
-      no vref kind to batch, so this is new: it keeps the query count independent of how
-      many verses were named, which matters at the 500-query ceiling. ``ORDER BY id`` with
-      ``setdefault`` reproduces the GET's lowest-id-wins rule for duplicate vectors, for
-      the reason :func:`get_similar_verses` gives — the query point decides *every*
-      similarity in its ranking, so an arbitrary pick among duplicates reorders the whole
-      thing rather than changing one field.
-    * ``text`` — **all of them in one transform**, on one worker thread. ``_encode_texts``
-      is CPU-bound sklearn work, so it goes through ``asyncio.to_thread`` exactly as v3
-      does; running it inline would stall the event loop for every other request on the
-      worker, and this is the primary path rather than a side branch.
-
-    **The two failures are resolved cheap-first: vref lookups, then encoding.** Both fail
-    the whole request, so the only question is which is reported when a request contains
-    both — and doing the single indexed lookup first means a request that cannot succeed
-    does not first pay for an encoder rehydration (~100–200 ms of CPU on a cache miss).
-    A batch reports the **lowest** failing index, so the same bad request always names the
-    same query point.
-    """
-    vectors: list = [None] * len(queries)
-
-    # Deduplicated, then sorted for the same reason the hydration union is: a set binds
-    # its parameters in hash order, which is stable within a process and not across them.
-    wanted = {
+    wanted = [
         query.vref for query in queries if isinstance(query, SimilarVersesVrefQuery)
-    }
-    if wanted:
-        rows = (
-            await db.execute(
-                select(TfidfPcaVector.vref, TfidfPcaVector.vector)
-                .where(
-                    TfidfPcaVector.assessment_id == assessment_id,
-                    TfidfPcaVector.vref.in_(sorted(wanted)),
-                )
-                .order_by(TfidfPcaVector.id)
-            )
-        ).all()
-        stored: dict = {}
-        for row in rows:
-            stored.setdefault(row.vref, row.vector)
-        for index, query in enumerate(queries):
-            if isinstance(query, SimilarVersesVrefQuery):
-                if query.vref not in stored:
-                    raise SimilarityVrefNotFound(assessment_id, query.vref, index)
-                vectors[index] = stored[query.vref]
-
-    texts = [
-        (index, query.text)
-        for index, query in enumerate(queries)
-        if isinstance(query, SimilarVersesTextQuery)
     ]
-    if texts:
-        encoder = await _tfidf_encoder(db, assessment_id)
-        encoded = await asyncio.to_thread(
-            _encode_texts, encoder, [text for _, text in texts]
-        )
-        for (index, _), vector in zip(texts, encoded):
-            vectors[index] = vector
+    found = await tfidf_retrieval.query_texts(db, assessment.revision_id, wanted)
 
+    texts: list[str | None] = []
     for index, query in enumerate(queries):
-        if isinstance(query, SimilarVersesVectorQuery):
-            vectors[index] = query.vector
-    return vectors
+        if isinstance(query, SimilarVersesVrefQuery):
+            if query.vref not in found:
+                raise SimilarityVrefNotFound(assessment.id, query.vref, index)
+            texts.append(found[query.vref])
+        elif isinstance(query, SimilarVersesTextQuery):
+            texts.append(query.text)
+        else:
+            texts.append(None)
+    return texts
+
+
+async def _rank_texts(
+    db: AsyncSession,
+    assessment,
+    texts: list[str],
+    exclusions: list[tuple],
+    *,
+    limit: int,
+) -> list[list]:
+    """Rank each text against the assessed revision: one ``(vref, similarity)`` list each.
+
+    **Which method is decided by how many texts there are, never by cache state** — see
+    :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` for the number and
+    why. Up to that many, each text goes through
+    :func:`~assessment_routes.v4.tfidf_retrieval.two_stage`, the GET's own ranking, so a
+    one-element batch answers exactly as the GET does. Beyond it, the whole batch is one
+    search of the revision's :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex`,
+    built once per revision per worker — 372 ms for 250 texts, where 250 shortlists would
+    cost ~20 s. Either way ``similarity`` is the same cosine for the same pair.
+
+    Both need the revision's fitted recipe, so an assessment without one is
+    :class:`TfidfArtifactsNotFound` on either path.
+    """
+    revision_id = assessment.revision_id
+    try:
+        if len(texts) <= tfidf_retrieval.TWO_STAGE_MAX_QUERIES:
+            recipe = await tfidf_retrieval.recipe(
+                db, revision_id=revision_id, assessment_id=assessment.id
+            )
+        else:
+            index = await tfidf_retrieval.corpus_index(
+                db, revision_id=revision_id, assessment_id=assessment.id
+            )
+            return await asyncio.to_thread(
+                index.search, texts, limit=limit, exclusions=exclusions
+            )
+    except tfidf_retrieval.TfidfRecipeNotFound as exc:
+        raise TfidfArtifactsNotFound(assessment.id, exc.detail) from exc
+
+    # Sequential: AsyncSession cannot run concurrent statements.
+    return [
+        await tfidf_retrieval.two_stage(
+            db,
+            recipe,
+            revision_id=revision_id,
+            query_text=text,
+            limit=limit,
+            exclude_vref=exclude_vref,
+            exclude_book=exclude_book,
+        )
+        for text, (exclude_vref, exclude_book) in zip(texts, exclusions)
+    ]
 
 
 def _exclusion(query) -> tuple[str | None, bool]:
@@ -2391,24 +2312,36 @@ async def get_similar_verses_batch(
     text, verses and vectors, never another assessment or revision, so unlike
     ``/score-comparison`` and ``/missing-words`` there is nothing else to authorize.
 
-    **2. Resolve every query point to a vector** — :func:`_query_point_vectors`, which is
-    the only step that knows about the three kinds.
+    **2. Resolve the query points** — :func:`_query_point_texts`, which looks up every
+    ``vref`` query point's text in one statement and fails on the lowest missing one.
 
-    **3. Rank, then hydrate once.** The rankings are **sequential**: ``AsyncSession``
-    cannot run concurrent statements, so ``asyncio.gather`` over the database would not
-    parallelize them, it would corrupt the session. The verse texts are then fetched
-    **once over the union of every ranking's hits** rather than per query point, which is
-    what keeps this at N + 4 statements rather than 3N: one for the parent, one covering
-    *every* ``vref`` query point, N rankings, and two for the text. Fewer when there is
-    nothing to fetch — a request of only ``text`` and ``vector`` query points issues no
-    vref lookup, and rankings that all come back empty issue no text queries. v3 does the
-    same and comments it in both of its batch handlers.
+    **3. Rank, then hydrate once.** ``text`` and ``vref`` query points are ranked from
+    verse text by :func:`_rank_texts`: up to
+    :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through
+    the GET's own shortlist-and-rerank, more than that through the revision's in-process
+    :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex`. Neither reads
+    ``tfidf_pca_vector``. ``vector`` query points are still ranked against the stored
+    vectors by :func:`_rank_against_corpus`, one statement each. Everything that touches
+    the database is **sequential**: ``AsyncSession`` cannot run concurrent statements, so
+    ``asyncio.gather`` over it would corrupt the session rather than speed it up. The
+    verse texts are then fetched **once over the union of every ranking's hits**, not per
+    query point.
 
-    **A ``text`` query point costs more than N + 4**, and the accounting above does not
-    cover it: :func:`_tfidf_encoder` reads the artifact run on every call to validate v3's
-    memo, and the two vectorizers and the SVD on a miss, so a batch carrying one is N + 5
-    warm and N + 7 cold. Paid once for the batch however many texts it holds — the same
-    reason the encode itself is one transform.
+    **So the two scales differ by kind**, and a mixed request carries both: ``text`` and
+    ``vref`` hits carry a cosine in ``[0, 1]``, ``vector`` hits the raw inner product with
+    the stored vectors. See ``SimilarVerseOut.similarity``.
+
+    **Statement count**, with T text-or-vref query points and V vector ones: one for the
+    parent, one covering *every* ``vref`` query point (none if there are none), one to
+    resolve the canonical artifact run, then
+
+    * T <= 8: one shortlist per text-or-vref point, plus one for the vectorizers on a
+      recipe-cache miss — T + V + 5 warm;
+    * T > 8: no per-point statements at all — V + 5 warm. A cold index is built in its
+      own session, adding the vectorizers (on a recipe miss) and one full read of the
+      revision's text, once per revision per worker;
+
+    and two for the hydration, skipped when every ranking comes back empty.
 
     The union is **sorted** before it is looked up. A ``set`` iterates in hash order,
     which is stable within a process and not across them, so without this the two
@@ -2427,23 +2360,36 @@ async def get_similar_verses_batch(
         db, user, assessment_id, types=SIMILARITY_ASSESSMENT_TYPES
     )
 
-    vectors = await _query_point_vectors(db, assessment_id, queries)
+    texts = await _query_point_texts(db, assessment, queries)
+    ranked: list[list | None] = [None] * len(queries)
 
-    ranked: list[list] = []
-    hit_vrefs: set[str] = set()
-    for query, vector in zip(queries, vectors):
-        exclude_vref, exclude_book = _exclusion(query)
-        rows = await _rank_against_corpus(
+    # text and vref query points: ranked from verse text, never stored vectors.
+    textual = [position for position, text in enumerate(texts) if text is not None]
+    if textual:
+        rankings = await _rank_texts(
             db,
-            assessment_id,
-            vector,
+            assessment,
+            [texts[position] for position in textual],
+            [_exclusion(queries[position]) for position in textual],
             limit=limit,
-            exclude_vref=exclude_vref,
-            exclude_book=exclude_book,
         )
-        ranked.append(rows)
-        hit_vrefs.update(vref for vref, _ in rows)
+        for position, rows in zip(textual, rankings):
+            ranked[position] = rows
 
+    # vector query points: unchanged, against the stored corpus vectors.
+    for position, query in enumerate(queries):
+        if isinstance(query, SimilarVersesVectorQuery):
+            exclude_vref, exclude_book = _exclusion(query)
+            ranked[position] = await _rank_against_corpus(
+                db,
+                assessment_id,
+                query.vector,
+                limit=limit,
+                exclude_vref=exclude_vref,
+                exclude_book=exclude_book,
+            )
+
+    hit_vrefs = {vref for rows in ranked for vref, _ in rows}
     vrefs = sorted(hit_vrefs)
     revision_texts = await _verse_texts(db, assessment.revision_id, vrefs)
     reference_texts = await _verse_texts(db, assessment.reference_id, vrefs)

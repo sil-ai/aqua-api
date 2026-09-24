@@ -566,3 +566,333 @@ class TestShortlistIndexIsScheduledOnSubmit:
         )
         assert resp.status_code == 202, resp.text
         scheduled.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# The batch path's in-process corpus index
+# ---------------------------------------------------------------------------
+
+#: A small corpus with every property the index has to get right: two books, a pair of
+#: identical verses (an exact tie), and a verse sharing nothing with the others (a
+#: zero score). Deliberately **not** in vref order, so sorting is the index's job.
+_INDEX_CORPUS = {
+    "GEN 1:3": "light darkness serpent garden",
+    "GEN 1:1": "light darkness waters firmament",
+    "EXO 1:2": "light darkness waters firmament",
+    "GEN 1:2": "light darkness waters",
+    "EXO 1:1": "vineyard shepherd",
+}
+
+
+def _fitted_recipe(corpus):
+    """A recipe fitted on ``corpus`` the way the runner fits one, then rehydrated."""
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    from utils.tfidf_tokenizer import unicode_word_tokenizer
+
+    word = TfidfVectorizer(
+        analyzer="word",
+        ngram_range=(1, 2),
+        min_df=1,
+        tokenizer=unicode_word_tokenizer,
+        token_pattern=None,
+    ).fit(corpus)
+    char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 6), min_df=1).fit(corpus)
+
+    def stored(vectorizer):
+        return {k: int(v) for k, v in vectorizer.vocabulary_.items()}, list(
+            vectorizer.idf_
+        )
+
+    return tfidf_retrieval._rehydrate(
+        (*stored(word), _PARAMS_WORD), (*stored(char), _PARAMS_CHAR)
+    )
+
+
+def _index(corpus=None, *, revision_id=1, fingerprint=("run", 1)):
+    corpus = _INDEX_CORPUS if corpus is None else corpus
+    recipe = _fitted_recipe(list(corpus.values()))
+    return tfidf_retrieval._build_corpus_index(
+        revision_id, fingerprint, recipe, sorted(corpus.items())
+    )
+
+
+def _search(index, text, limit=10, exclude_vref=None, exclude_book=False):
+    (ranked,) = index.search(
+        [text], limit=limit, exclusions=[(exclude_vref, exclude_book)]
+    )
+    return ranked
+
+
+class TestCorpusIndexSearch:
+    """What the index answers, below the endpoint and without a database."""
+
+    def test_each_pair_scores_exactly_what_the_gets_rerank_scores(self):
+        """The invariant the POST's index path exists to keep: the same pair of verses
+        gets the same similarity from :func:`rerank` (the GET) and from the index."""
+        index = _index()
+        query = "light darkness waters firmament"
+        reranked = dict(
+            tfidf_retrieval.rerank(index.recipe, query, list(_INDEX_CORPUS.items()))
+        )
+        searched = dict(_search(index, query, limit=len(_INDEX_CORPUS)))
+        assert searched.keys() == reranked.keys()
+        for vref, similarity in reranked.items():
+            assert searched[vref] == pytest.approx(similarity, abs=1e-6), vref
+
+    def test_ties_break_on_vref_and_zero_scores_rank_last(self):
+        """GEN 1:1 and EXO 1:2 are identical, so they tie at 1.0 and come back in vref
+        order; EXO 1:1 shares nothing and still ranks, last, rather than being dropped.
+        """
+        ranked = _search(_index(), "light darkness waters firmament")
+        vrefs = [vref for vref, _ in ranked]
+        assert vrefs[:2] == ["EXO 1:2", "GEN 1:1"]
+        assert vrefs[-1] == "EXO 1:1"
+        assert ranked[-1][1] == 0.0
+        assert [score for _, score in ranked] == sorted(
+            (score for _, score in ranked), reverse=True
+        )
+
+    def test_a_limit_bigger_than_the_corpus_returns_the_whole_corpus(self):
+        assert len(_search(_index(), "light", limit=100)) == len(_INDEX_CORPUS)
+
+    def test_a_boundary_tie_is_decided_by_vref_not_by_the_partition(self):
+        """``limit=1`` cuts between the two tied verses. Which survives must be the rule's
+        answer, not whichever the partition happened to leave in front."""
+        assert _search(_index(), "light darkness waters firmament", limit=1) == [
+            ("EXO 1:2", pytest.approx(1.0, abs=1e-6))
+        ]
+
+    def test_exclude_vref_drops_one_verse_and_the_limit_still_fills(self):
+        ranked = _search(_index(), "light darkness", limit=3, exclude_vref="GEN 1:2")
+        assert "GEN 1:2" not in [vref for vref, _ in ranked]
+        assert len(ranked) == 3
+
+    def test_exclude_book_drops_the_whole_book(self):
+        ranked = _search(_index(), "light", exclude_vref="GEN 1:9", exclude_book=True)
+        assert [vref for vref, _ in ranked] == ["EXO 1:2", "EXO 1:1"]
+
+    @pytest.mark.parametrize("vref", ["REV 22:21", "%", "GEN_1:1"])
+    def test_an_exclusion_naming_nothing_excludes_nothing(self, vref):
+        """Including a would-be wildcard: the book is compared for equality, never as a
+        pattern."""
+        for exclude_book in (False, True):
+            ranked = _search(
+                _index(), "light", exclude_vref=vref, exclude_book=exclude_book
+            )
+            assert len(ranked) == len(_INDEX_CORPUS)
+
+    def test_results_stay_aligned_across_score_blocks(self):
+        """More queries than one densified block, so a misaligned block boundary would
+        hand one query's ranking to its neighbour."""
+        corpus = {f"GEN 1:{n}": f"word{n} common" for n in range(1, 81)}
+        index = _index(corpus)
+        texts = list(corpus.values())
+        rankings = index.search(texts, limit=1, exclusions=[(None, False)] * len(texts))
+        assert len(rankings) == len(texts) > tfidf_retrieval._SEARCH_BLOCK_ROWS
+        assert [ranking[0][0] for ranking in rankings] == list(corpus)
+
+    def test_an_empty_corpus_answers_every_query_with_nothing(self):
+        index = tfidf_retrieval._build_corpus_index(
+            1, ("run", 1), _fitted_recipe(["alpha beta"]), []
+        )
+        assert index.search(["alpha"], limit=5, exclusions=[(None, False)]) == [[]]
+
+    def test_the_index_accounts_for_its_own_bytes(self):
+        index = _index()
+        assert index.nbytes >= index.matrix.data.nbytes + index.matrix.indices.nbytes
+
+
+class _FakeRun:
+    def __init__(self, assessment_id, created_at):
+        self.assessment_id = assessment_id
+        self.created_at = created_at
+
+
+@pytest.fixture
+def fake_corpus_source(monkeypatch):
+    """Stand in for the database behind :func:`tfidf_retrieval.corpus_index`.
+
+    The cache logic is the thing under test, not the queries, so the canonical run, the
+    recipe and the corpus rows are supplied directly and each build is counted. The build
+    sleeps briefly on its worker thread so concurrent callers genuinely overlap it.
+    ``state["run"]`` is the canonical run a request would resolve right now.
+    """
+    import time
+
+    recipe = _fitted_recipe(list(_INDEX_CORPUS.values()))
+    state = {"run": _FakeRun(10, 1), "builds": [], "fail": False}
+
+    async def canonical_run(db, revision_id, assessment_id):
+        return state["run"]
+
+    async def recipe_for_run(db, **kwargs):
+        if state["fail"]:
+            raise tfidf_retrieval.TfidfRecipeNotFound(kwargs["assessment_id"], "nope")
+        return recipe
+
+    async def corpus_rows(db, revision_id):
+        return sorted(_INDEX_CORPUS.items())
+
+    real_build = tfidf_retrieval._build_corpus_index
+
+    def build(revision_id, fingerprint, recipe_pair, rows):
+        state["builds"].append((revision_id, fingerprint))
+        time.sleep(0.05)
+        return real_build(revision_id, fingerprint, recipe_pair, rows)
+
+    monkeypatch.setattr(tfidf_retrieval, "_canonical_run", canonical_run)
+    monkeypatch.setattr(tfidf_retrieval, "_recipe_for_run", recipe_for_run)
+    monkeypatch.setattr(tfidf_retrieval, "corpus_rows", corpus_rows)
+    monkeypatch.setattr(tfidf_retrieval, "_build_corpus_index", build)
+    return state
+
+
+async def _get_index(revision_id=1):
+    return await tfidf_retrieval.corpus_index(
+        None, revision_id=revision_id, assessment_id=10
+    )
+
+
+@pytest.mark.asyncio
+class TestCorpusIndexCache:
+    """Built once per revision per process, invalidated by a newer run, bounded in bytes."""
+
+    async def test_twelve_concurrent_requests_on_a_cold_revision_build_once(
+        self, fake_corpus_source
+    ):
+        """Span suggestions send twelve requests at once. Without the shared build each
+        would encode the whole revision — twelve times the CPU, and twelve transients of
+        ~300 MB live together."""
+        indexes = await asyncio.gather(*(_get_index() for _ in range(12)))
+        assert len(fake_corpus_source["builds"]) == 1
+        assert all(index is indexes[0] for index in indexes)
+        assert tfidf_retrieval._INDEX_BUILDS == {}
+
+    async def test_a_warm_revision_does_not_build_again(self, fake_corpus_source):
+        first = await _get_index()
+        assert await _get_index() is first
+        assert len(fake_corpus_source["builds"]) == 1
+
+    async def test_a_cancelled_waiter_does_not_cancel_the_shared_build(
+        self, fake_corpus_source
+    ):
+        """A client that disconnects cancels its own wait. The other waiters, and the
+        build they share, carry on."""
+        doomed = asyncio.create_task(_get_index())
+        survivor = asyncio.create_task(_get_index())
+        await asyncio.sleep(0.01)
+        doomed.cancel()
+        index = await survivor
+        assert doomed.cancelled()
+        assert index.revision_id == 1
+        assert len(fake_corpus_source["builds"]) == 1
+
+    async def test_a_newer_run_invalidates_the_cached_index(self, fake_corpus_source):
+        """A re-push, or a newer assessment's run for the same revision, changes the
+        fingerprint. The old index must not keep being served."""
+        old = await _get_index()
+        fake_corpus_source["run"] = _FakeRun(11, 2)
+        new = await _get_index()
+        assert new is not old
+        assert new.fingerprint == (11, 2)
+        assert fake_corpus_source["builds"] == [(1, (10, 1)), (1, (11, 2))]
+        assert tfidf_retrieval._INDEX_CACHE == {1: new}
+
+    async def test_a_failed_build_is_not_cached(self, fake_corpus_source):
+        fake_corpus_source["fail"] = True
+        with pytest.raises(tfidf_retrieval.TfidfRecipeNotFound):
+            await _get_index()
+        assert tfidf_retrieval._INDEX_BUILDS == {}
+        fake_corpus_source["fail"] = False
+        assert (await _get_index()).revision_id == 1
+
+    async def test_eviction_keeps_the_cache_inside_its_byte_budget(
+        self, fake_corpus_source, monkeypatch
+    ):
+        """Room for two indexes: a third evicts the least recently *used*, so touching
+        revision 1 first makes revision 2 the one to go."""
+        one = await _get_index(1)
+        monkeypatch.setattr(
+            settings, "tfidf_corpus_index_cache_max_bytes", int(one.nbytes * 2.5)
+        )
+        await _get_index(2)
+        await _get_index(1)  # touch
+        await _get_index(3)
+        assert set(tfidf_retrieval._INDEX_CACHE) == {1, 3}
+        total = sum(i.nbytes for i in tfidf_retrieval._INDEX_CACHE.values())
+        assert total <= settings.tfidf_corpus_index_cache_max_bytes
+
+    async def test_the_newest_index_survives_even_over_budget(
+        self, fake_corpus_source, monkeypatch
+    ):
+        """Evicting it would mean rebuilding it on the very next request."""
+        monkeypatch.setattr(settings, "tfidf_corpus_index_cache_max_bytes", 1)
+        await _get_index(1)
+        await _get_index(2)
+        assert set(tfidf_retrieval._INDEX_CACHE) == {2}
+
+    async def test_the_build_runs_off_the_event_loop(self, fake_corpus_source):
+        """The encode and the transpose are ~7 s of CPU for a Bible."""
+        seen = []
+        wrapped = tfidf_retrieval._build_corpus_index
+
+        def spy(*args):
+            try:
+                asyncio.get_running_loop()
+                seen.append("loop")
+            except RuntimeError:
+                seen.append("thread")
+            return wrapped(*args)
+
+        with patch.object(tfidf_retrieval, "_build_corpus_index", spy):
+            await _get_index()
+        assert seen == ["thread"]
+
+
+@pytest.mark.asyncio
+class TestCorpusRows:
+    """The index's corpus is the shortlist's corpus: same filter, same dedup."""
+
+    async def test_empty_range_and_duplicate_rows_follow_the_gets_rules(
+        self, test_db_session, test_revision_id
+    ):
+        vrefs = [
+            row[0]
+            for row in test_db_session.query(VerseReference.full_verse_id)
+            .filter(VerseReference.full_verse_id.like("EXO %"))
+            .limit(4)
+            .all()
+        ]
+        texts = ["kept", "", tfidf_retrieval.VERSE_RANGE_MARKER, "first"]
+        for vref, verse_text in zip(vrefs, texts):
+            test_db_session.add(
+                VerseText(
+                    revision_id=test_revision_id,
+                    verse_reference=vref,
+                    text=verse_text,
+                    book="EXO",
+                    chapter=1,
+                    verse=1,
+                )
+            )
+        test_db_session.commit()
+        # A later duplicate of the last verse, which must lose to the lowest id.
+        test_db_session.add(
+            VerseText(
+                revision_id=test_revision_id,
+                verse_reference=vrefs[3],
+                text="second",
+                book="EXO",
+                chapter=1,
+                verse=1,
+            )
+        )
+        test_db_session.commit()
+
+        async with AsyncSessionLocal() as db:
+            rows = dict(await tfidf_retrieval.corpus_rows(db, test_revision_id))
+        assert rows.get(vrefs[0]) == "kept"
+        assert vrefs[1] not in rows and vrefs[2] not in rows
+        assert rows.get(vrefs[3]) == "first"
+        assert list(rows) == sorted(rows)
