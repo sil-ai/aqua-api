@@ -712,3 +712,34 @@ def test_encoder_cache_keeps_entries_that_fit(
     _encode_once(client, regular_token1, encoded_tfidf_assessment)
 
     assert sorted(cache) == sorted([-1, encoded_tfidf_assessment["assessment_id"]])
+
+
+def test_components_are_viewed_in_place_not_copied():
+    """A stored .npy payload becomes an array without copying it.
+
+    np.load(BytesIO(blob)) copies twice, which on a real corpus is the dominant
+    cost of a cache miss — staging's largest components matrix is 427MB.
+    """
+    original = np.arange(300 * 50, dtype=np.float32).reshape(300, 50)
+    buf = io.BytesIO()
+    np.save(buf, original, allow_pickle=False)
+    blob = buf.getvalue()
+
+    viewed = tfidf_routes._components_from_npy(blob)
+
+    assert np.array_equal(viewed, original)
+    assert viewed.dtype == original.dtype
+    # The view shares the blob's storage rather than owning a copy of it.
+    assert not viewed.flags.writeable
+    assert viewed.base is not None
+
+
+def test_a_fortran_ordered_payload_still_loads():
+    """The in-place view only handles C order; F order falls back to np.load."""
+    original = np.asfortranarray(np.arange(12, dtype=np.float32).reshape(3, 4))
+    buf = io.BytesIO()
+    np.save(buf, original, allow_pickle=False)
+
+    loaded = tfidf_routes._components_from_npy(buf.getvalue())
+
+    assert np.array_equal(loaded, original)
