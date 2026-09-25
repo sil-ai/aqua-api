@@ -17,15 +17,13 @@ buildable now: ``word_vectorizer`` and ``char_vectorizer`` are already in the pu
 contract and already in the database, so this can be validated against current production
 artifacts with no change to aqua-assessments, no contract change, and no rebuild.
 
-This does not by itself reclaim anything, and it does not by itself make the table unread
-either — the claim is narrower than that. It removes **these reads'** dependency on the
+This does not by itself reclaim anything. It removes **these reads'** dependency on the
 column: the GET, the POST's ``text`` and ``vref`` query kinds, whose batches use the
 in-process :class:`CorpusIndex` below (#973's second half), and the training-session
 results (#978), whose neighbours come from the same index and whose vref listing comes
-from :func:`corpus_conditions`. Two readers remain, out of the call sites #967
-enumerates: the POST's ``vector`` kind
-(:func:`~assessment_routes.v4.assessment_service._rank_against_corpus`, whose future is
-decided with sil-ai/aqua-assessments#471), and v3's own tfidf reads, which retire with v3.
+from :func:`corpus_conditions`. The POST's ``vector`` kind, the last other v4 reader, was
+retired by #984, so of the call sites #967 enumerates only v3's own tfidf reads still
+read the table, and they retire with v3.
 
 Measured in ``aqua-tfidf-eval`` rounds 13-15, on 514 held-out queries (Berean Standard
 Bible Genesis 1-20 against an unmodified KJV corpus, so no query text is in the corpus
@@ -770,8 +768,8 @@ async def two_stage(
 # ---------------------------------------------------------------------------
 
 #: The largest batch answered by :func:`two_stage` per query point; anything bigger goes
-#: to :class:`CorpusIndex`. Counted over the ``text`` and ``vref`` query points only —
-#: ``vector`` points use neither.
+#: to :class:`CorpusIndex`. Counted over every query point, since each kind uses one or
+#: the other.
 #:
 #: **Chosen by request size, never by whether an index happens to be warm.** Each worker
 #: holds its own cache, so routing on cache state would give the same request a different

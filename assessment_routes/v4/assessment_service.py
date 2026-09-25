@@ -264,20 +264,20 @@ a ranking**, which is the one thing here that used to be guaranteed and now is n
   already on the column, partial per revision rather than global, and the revision id as
   a literal rather than a bound parameter. Do not reach for ``tfidf_pca_vector`` from
   this path; #967 stops storing it.
-* **Neither does the POST, except for the ``vector`` kind.** ``text`` and ``vref`` query
-  points rank from verse text too: up to
+* **Neither does the POST.** Both of its kinds, ``text`` and ``vref``, rank from verse
+  text too: up to
   :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through the
   GET's own shortlist-and-rerank, so a one-element ``vref`` batch answers exactly as the
   GET does, and larger batches through one in-process
   :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex` per revision per worker —
   372 ms at N=250 after a ~7 s build, where running the shortlist per query point would
   cost ~20 s. The split is by request size, never by whether an index is warm, so a
-  request answers the same way on every worker. A caller-supplied ``vector`` has nothing
-  but the stored vectors to be compared with, so :func:`_rank_against_corpus` survives for
-  that kind alone.
+  request answers the same way on every worker. The POST's old third kind, ``vector``, was
+  the last v4 read of ``tfidf_pca_vector`` and was retired by #984, so nothing in v4
+  reads that table any more; only v3 does.
 * **Both forms fail the same way on artifacts.** :class:`TfidfArtifactsNotFound` is
-  reachable from the GET and from the POST's ``text`` and ``vref`` kinds, because all of
-  them need the fitted vectorizers. Nothing on either form reads the SVD any more.
+  reachable from the GET and from both of the POST's kinds, because all of them need the
+  fitted vectorizers. Nothing on either form reads the SVD any more.
 * **Caches keyed on the revision.** :data:`~assessment_routes.v4.tfidf_retrieval._RECIPE_CACHE`,
   not v3's ``_ENCODER_CACHE`` re-keyed — v3 is frozen, and more to the point v3's encoder
   requires the SVD and 404s without one, so anything sitting on it stops working when
@@ -308,16 +308,13 @@ marker out of the response.
 :func:`get_similar_verses_batch` shares the row shaping (:func:`_hit`) with the GET, and
 for small batches the ranking too (:func:`~assessment_routes.v4.tfidf_retrieval.two_stage`)
 — a test asserts that ``?vref=X&limit=N`` and a one-element ``vref`` batch return identical
-items, similarities included. Three things are genuinely new below the wire:
+items, similarities included. Two things are genuinely new below the wire:
 
 * **Arbitrary text, which is the reason the POST exists.** The GET can only rank against a
   verse the revision holds. A ``text`` query point is encoded with the revision's fitted
   recipe, on a worker thread — CPU-bound sklearn work that would otherwise stall the event
   loop for every other request on the worker. v3's encoder, which needs the SVD, is no
   longer on this path at all.
-* **A second scale.** ``vector`` hits carry the stored vectors' raw inner product, not a
-  cosine, so a request mixing kinds carries two scales. Documented per kind on
-  ``SimilarVerseOut.similarity``.
 * **Query-count discipline.** Every ``vref`` query point is resolved in one statement, and
   the hydration runs once over the union of all hits; see
   :func:`get_similar_verses_batch` for the full count.
@@ -487,8 +484,6 @@ from api_v4.schemas.assessment import (
     ReferencedAssessmentOptions,
     ResultAggregate,
     ResultScope,
-    SimilarVersesTextQuery,
-    SimilarVersesVectorQuery,
     SimilarVersesVrefQuery,
     VerseScope,
     WordAlignmentOptions,
@@ -521,7 +516,6 @@ from database.models import (
     NgramsTable,
     NgramVrefTable,
     TextLengthsTable,
-    TfidfPcaVector,
     UserDB,
     UserGroup,
     VerseReference,
@@ -672,8 +666,8 @@ class TfidfArtifactsNotFound(AssessmentServiceError):
 
     **Not** the same thing as :class:`SimilarityVrefNotFound`, even though both are 404s on
     one endpoint. Ranking from text — the GET, and the POST's ``text`` and ``vref`` kinds —
-    needs the fitted vectorizers that ``POST /v3/assessment/{id}/tfidf-artifacts`` stores;
-    only a caller-supplied ``vector`` does not. An assessment can hold results without
+    needs the fitted vectorizers that ``POST /v3/assessment/{id}/tfidf-artifacts`` stores,
+    and so does every other kind. An assessment can hold results without
     artifacts — the artifact push is a separate call the runner makes after the vectors
     land, and assessments from before 12 May 2026 never had one — which is why this is a
     reachable failure rather than a defensive branch.
@@ -1991,76 +1985,6 @@ async def _verse_texts(
     return texts
 
 
-async def _rank_against_corpus(
-    db: AsyncSession,
-    assessment_id: int,
-    query_vector: Sequence[float],
-    *,
-    limit: int,
-    exclude_vref: str | None = None,
-    exclude_book: bool = False,
-) -> list:
-    """The ``limit`` corpus verses closest to ``query_vector``, within one assessment.
-
-    **The stored-vector ranking, and since #973 only the ``vector`` query kind's.** The GET
-    and the POST's ``text`` and ``vref`` kinds rank over verse *text* through
-    :mod:`assessment_routes.v4.tfidf_retrieval`, because the corpus vectors this reads
-    are the thing #967 stops storing. A caller-supplied vector has nothing else to be
-    compared with, so this stays for that kind alone; what that kind should accept once
-    the SVD is gone is decided with sil-ai/aqua-assessments#471's emit side, not here.
-
-    Returns ``(vref, similarity)`` pairs, most-similar-first — the sign is already
-    flipped (see below) and text is attached by the caller, because the POST does that
-    once across every query point's hits rather than per ranking.
-
-    **Not v3's ``_rank_against_corpus``, and the difference is deliberate.** That function
-    exists (``tfidf_artifact_routes.py:98``) and is what v3's four POSTs sit on, but the
-    shipped GET has never used it, for three reasons that all still hold:
-
-    * v3 interpolates the query vector into the statement text as a literal at six decimal
-      places (``build_vector_literal``), which truncates the query point *and* defeats plan
-      caching. Here it rides as a bound parameter.
-    * v3 has no tiebreak, so equally similar verses come back in whatever order the scan
-      produced and which of them survives ``limit`` is arbitrary. ``vref`` breaks ties, so
-      the same request twice returns the same order — a guarantee the POST's contract
-      states explicitly.
-    * ``max_inner_product`` is pgvector's ``<#>``, the *negated* inner product, so
-      ascending order is most-similar-first. The sign is flipped **here**, on the way
-      out, rather than in :func:`_hit`: this is the only ranking in the module that has a
-      sign to flip, and leaving the flip at the one place ``<#>`` is written keeps
-      :func:`_hit` free of the question. See :func:`get_similar_verses`, whose ranking
-      produces a cosine and so has nothing to negate.
-
-    So the encoder machinery is reused from v3 and the ranking is not. Reusing this half
-    too would have quietly undone two properties the GET already publishes.
-
-    **Exclusion is pushed into the ``WHERE`` clause** rather than filtered afterwards, so
-    ``limit`` rows survive the drop — v3 does the same, and it is the difference between
-    "ten neighbours" and "ten neighbours minus however many were excluded".
-    ``exclude_book`` compares the token before the first space with ``split_part`` rather
-    than a ``LIKE`` pattern, so a ``%`` or ``_`` in a caller-supplied vref cannot act as a
-    wildcard.
-    """
-    conditions = [TfidfPcaVector.assessment_id == assessment_id]
-    if exclude_vref is not None:
-        if exclude_book:
-            book = exclude_vref.split(" ", 1)[0]
-            conditions.append(func.split_part(TfidfPcaVector.vref, " ", 1) != book)
-        else:
-            conditions.append(TfidfPcaVector.vref != exclude_vref)
-
-    distance = TfidfPcaVector.vector.max_inner_product(query_vector)
-    rows = (
-        await db.execute(
-            select(TfidfPcaVector.vref, distance.label("distance"))
-            .where(*conditions)
-            .order_by(distance.asc(), TfidfPcaVector.vref.asc())
-            .limit(limit)
-        )
-    ).all()
-    return [(row.vref, -float(row.distance)) for row in rows]
-
-
 def _hit(
     vref: str, similarity: float, revision_texts: dict, reference_texts: dict
 ) -> dict:
@@ -2071,11 +1995,9 @@ def _hit(
     keep in common, so the shape and the text attachment stay in one place while each
     ranking owns its own scoring.
 
-    Takes ``similarity`` already oriented — bigger is more similar — rather than a row
-    with a distance to negate. The two rankings arrive at that differently
-    (:func:`_rank_against_corpus` flips pgvector's ``<#>``;
-    :func:`~assessment_routes.v4.tfidf_retrieval.rerank` computes a cosine that needs no
-    flip), and a helper that took a raw distance would have to know which.
+    Takes ``similarity`` already oriented — bigger is more similar — as the cosine
+    :func:`~assessment_routes.v4.tfidf_retrieval.rerank` and the corpus index compute, so
+    there is no distance to negate.
     """
     return {
         "vref": vref,
@@ -2193,11 +2115,8 @@ async def get_similar_verses(
 
 async def _query_point_texts(
     db: AsyncSession, assessment, queries: Sequence
-) -> list[str | None]:
-    """The text each ``text`` and ``vref`` query point ranks with, in request order.
-
-    ``None`` for a ``vector`` query point, which arrives as a vector and is ranked by
-    :func:`_rank_against_corpus` against the stored ones.
+) -> list[str]:
+    """The text each query point ranks with, in request order.
 
     * ``text`` — the text as sent.
     * ``vref`` — the verse's own text in the assessed revision, **all of them in one
@@ -2215,16 +2134,14 @@ async def _query_point_texts(
     ]
     found = await tfidf_retrieval.query_texts(db, assessment.revision_id, wanted)
 
-    texts: list[str | None] = []
+    texts: list[str] = []
     for index, query in enumerate(queries):
         if isinstance(query, SimilarVersesVrefQuery):
             if query.vref not in found:
                 raise SimilarityVrefNotFound(assessment.id, query.vref, index)
             texts.append(found[query.vref])
-        elif isinstance(query, SimilarVersesTextQuery):
-            texts.append(query.text)
         else:
-            texts.append(None)
+            texts.append(query.text)
     return texts
 
 
@@ -2287,8 +2204,8 @@ def _exclusion(query) -> tuple[str | None, bool]:
     The kind decides how the exclusion is expressed, not whether there is one. A ``vref``
     query point excludes itself — automatic, exactly as on the GET, and not something the
     caller can turn off or redirect, which is why :class:`SimilarVersesVrefQuery` has no
-    exclusion fields to carry. The other two have no verse of their own, so whatever the
-    caller named is used, and ``None`` means exclude nothing.
+    exclusion fields to carry. A ``text`` query point has no verse of its own, so whatever
+    the caller named is used, and ``None`` means exclude nothing.
     """
     if isinstance(query, SimilarVersesVrefQuery):
         return query.vref, False
@@ -2301,42 +2218,40 @@ async def get_similar_verses_batch(
     """One ranking per query point, index-aligned with ``queries``.
 
     The POST form of :func:`get_similar_verses`: the same three steps, with the query point
-    arriving in one of three ways and N of them at once. ``queries`` is a list of validated
+    arriving in one of two ways and N of them at once. ``queries`` is a list of validated
     ``SimilarVersesQuery`` members; the return is a list of the same length, each entry the
     plain dicts the router shapes into ``SimilarVerseOut`` rows.
 
     **1. Authorize and load the parent** — :func:`get_assessment` with
     ``types=SIMILARITY_ASSESSMENT_TYPES``, the family's one predicate, called exactly as
     the GET calls it. There is no second authorization surface here: the query points name
-    text, verses and vectors, never another assessment or revision, so unlike
+    text and verses, never another assessment or revision, so unlike
     ``/score-comparison`` and ``/missing-words`` there is nothing else to authorize.
 
     **2. Resolve the query points** — :func:`_query_point_texts`, which looks up every
     ``vref`` query point's text in one statement and fails on the lowest missing one.
 
-    **3. Rank, then hydrate once.** ``text`` and ``vref`` query points are ranked from
-    verse text by :func:`_rank_texts`: up to
+    **3. Rank, then hydrate once.** Every query point is ranked from verse text by
+    :func:`_rank_texts`: up to
     :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through
     the GET's own shortlist-and-rerank, more than that through the revision's in-process
     :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex`. Neither reads
-    ``tfidf_pca_vector``. ``vector`` query points are still ranked against the stored
-    vectors by :func:`_rank_against_corpus`, one statement each. Everything that touches
+    ``tfidf_pca_vector``. Everything that touches
     the database is **sequential**: ``AsyncSession`` cannot run concurrent statements, so
     ``asyncio.gather`` over it would corrupt the session rather than speed it up. The
     verse texts are then fetched **once over the union of every ranking's hits**, not per
     query point.
 
-    **So the two scales differ by kind**, and a mixed request carries both: ``text`` and
-    ``vref`` hits carry a cosine in ``[0, 1]``, ``vector`` hits the raw inner product with
-    the stored vectors. See ``SimilarVerseOut.similarity``.
+    **One scale throughout**: every hit carries a cosine in ``[0, 1]``, whatever its query
+    point's kind. See ``SimilarVerseOut.similarity``.
 
-    **Statement count**, with T text-or-vref query points and V vector ones: one for the
+    **Statement count**, with T query points: one for the
     parent, one covering *every* ``vref`` query point (none if there are none), one to
     resolve the canonical artifact run, then
 
-    * T <= 8: one shortlist per text-or-vref point, plus one for the vectorizers on a
-      recipe-cache miss — T + V + 5 warm;
-    * T > 8: no per-point statements at all — V + 5 warm. A cold index is built in its
+    * T <= 8: one shortlist per query point, plus one for the vectorizers on a
+      recipe-cache miss — T + 5 warm;
+    * T > 8: no per-point statements at all — 5 warm. A cold index is built in its
       own session, adding the vectorizers (on a recipe miss) and one full read of the
       revision's text, once per revision per worker;
 
@@ -2349,9 +2264,9 @@ async def get_similar_verses_batch(
     of strings the ranking has already produced.
 
     **One bad query point fails the whole request.** No partial-success shape and no
-    per-item error object: v3's ``by_vectors`` already rejects the entire request on a
-    single wrong-length vector, and the alternative makes every client write two error
-    paths for one call. Nothing is deduplicated either — two identical query points are
+    per-item error object: v3's batch POSTs already reject the entire request on a single
+    bad entry, and the alternative makes every client write two error paths for one
+    call. Nothing is deduplicated either — two identical query points are
     ranked twice and answered twice, because collapsing them would break the index
     alignment the response depends on.
     """
@@ -2360,33 +2275,13 @@ async def get_similar_verses_batch(
     )
 
     texts = await _query_point_texts(db, assessment, queries)
-    ranked: list[list | None] = [None] * len(queries)
-
-    # text and vref query points: ranked from verse text, never stored vectors.
-    textual = [position for position, text in enumerate(texts) if text is not None]
-    if textual:
-        rankings = await _rank_texts(
-            db,
-            assessment,
-            [texts[position] for position in textual],
-            [_exclusion(queries[position]) for position in textual],
-            limit=limit,
-        )
-        for position, rows in zip(textual, rankings):
-            ranked[position] = rows
-
-    # vector query points: unchanged, against the stored corpus vectors.
-    for position, query in enumerate(queries):
-        if isinstance(query, SimilarVersesVectorQuery):
-            exclude_vref, exclude_book = _exclusion(query)
-            ranked[position] = await _rank_against_corpus(
-                db,
-                assessment_id,
-                query.vector,
-                limit=limit,
-                exclude_vref=exclude_vref,
-                exclude_book=exclude_book,
-            )
+    ranked = await _rank_texts(
+        db,
+        assessment,
+        texts,
+        [_exclusion(query) for query in queries],
+        limit=limit,
+    )
 
     hit_vrefs = {vref for rows in ranked for vref, _ in rows}
     vrefs = sorted(hit_vrefs)
