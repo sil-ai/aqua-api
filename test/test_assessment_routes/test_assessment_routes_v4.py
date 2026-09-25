@@ -83,10 +83,10 @@ What each group of tests pins down:
   accident: no ``total``, no ``offset``, a required ``vref``, a bounded ``limit``, and
   ``reference_id`` ignored rather than honoured.
 * ``TestSimilarVersesPostText`` — the ``POST`` form's primary kind and the reason it
-  exists. ``encoded_assessment`` fits a **real** vectorizer/SVD pair, so encoding a
-  verse's own text must rank that verse first at similarity 1.0 and must not return it
-  when ``exclude_vref`` names it. That pair is the only thing in the suite that proves the
-  encoder shares a vector space with the stored corpus.
+  exists. ``encoded_assessment`` fits a **real** vectorizer pair, so encoding a verse's
+  own text must rank that verse first at similarity 1.0 and must not return it when
+  ``exclude_vref`` names it. That is what proves the encoder shares a space with the
+  revision's verses.
 * ``TestSimilarVersesPostArtifacts`` — the ``text`` kind's own 404, kept distinct from the
   vref one on the same assessment, plus the artifact-width 422 that #893's Q4 ruling does
   not reach.
@@ -126,7 +126,6 @@ What each group of tests pins down:
 
 import asyncio
 import itertools
-import json
 import os
 import time
 from contextlib import contextmanager
@@ -152,7 +151,6 @@ from api_v4.pagination import (
     V4Page,
 )
 from api_v4.schemas.assessment import (
-    TFIDF_CORPUS_VECTOR_DIM,
     TFIDF_MAX_BATCH_RESULTS,
     TFIDF_MAX_BATCH_VECTORS,
     TFIDF_MAX_TEXT_CHARS,
@@ -183,8 +181,6 @@ from api_v4.schemas.assessment import (
     SimilarVersesResultOut,
     SimilarVersesTextQuery,
     SimilarVersesTextQueryOut,
-    SimilarVersesVectorQuery,
-    SimilarVersesVectorQueryOut,
     SimilarVersesVrefQuery,
     SimilarVersesVrefQueryOut,
     TextLengthsAggregateOut,
@@ -4473,26 +4469,9 @@ SIMILARITY_UNSERVED_TYPES = tuple(
     t.value for t in AssessmentType if t.value not in SIMILARITY_SERVED_TYPES
 )
 
-#: ``tfidf_pca_vector.vector`` is a fixed 300-dimensional column.
+#: The SVD width a fixture's artifact run records. Nothing ranks against it any more; it
+#: only fills ``tfidf_artifact_run.n_components``.
 VECTOR_DIMENSIONS = 300
-
-
-def _vector(head):
-    """A 300-dimensional vector that is ``head`` on the first axis and zero elsewhere.
-
-    Chosen so the inner product against ``_vector(1)`` is exactly ``head``: the expected
-    ranking is then readable straight off the fixture, and the assertions do not depend on
-    floating-point behaviour or on how pgvector rounds.
-    """
-    return [float(head)] + [0.0] * (VECTOR_DIMENSIONS - 1)
-
-
-def _make_vector(db_session, assessment_id, vref, head):
-    row = TfidfPcaVector(assessment_id=assessment_id, vref=vref, vector=_vector(head))
-    db_session.add(row)
-    db_session.commit()
-    db_session.refresh(row)
-    return row.id
 
 
 def _make_duplicate_verse_text(db_session, revision_id, vref, text):
@@ -4698,10 +4677,8 @@ class TestSimilarVersesAuthorization:
         changed only what the read looks at. Not :func:`_texted` itself because these
         tests need the ``deleted`` and ``is_training`` flags passed straight through.
 
-        Note this is no longer the same helper as
-        :class:`TestSimilarVersesPostAuthorization`'s, which is byte-identical to what
-        this used to be. The POST still ranks stored vectors, so it still has to write
-        them; that the two drifted apart is the seam #973 opened, not an oversight.
+        Not the same helper as :class:`TestSimilarVersesPostAuthorization`'s, which
+        builds its fixture through ``_textual``; neither writes stored vectors any more.
         """
         revision_id, reference_id = _pair(db_session, version_id)
         _make_verse_texts(db_session, revision_id, SHORTLIST_CORPUS)
@@ -4778,7 +4755,6 @@ class TestSimilarVersesAuthorization:
         assessment_id = _make_assessment(
             db_session, revision_id, reference_id, type_="tfidf"
         )
-        _make_vector(db_session, assessment_id, "GEN 1:1", 1)
         resp = _similar(client, regular_token1, assessment_id, vref="GEN 1:1")
         assert resp.status_code == 404, resp.text
         assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
@@ -4941,9 +4917,9 @@ class TestSimilarVersesRanking:
         are non-negative and the rows are L2-normalized, so every similarity is in
         ``[0, 1]``.
 
-        The sign flip is still live on the POST, which still ranks stored vectors, and
-        :class:`TestSimilarVersesPostBatch` keeps a test for it. Deleting this one outright
-        would have left the *new* invariant — the published ``[0, 1]`` range — unpinned.
+        The POST's ``vector`` kind kept the flip until #984 retired it, so no v4 ranking
+        has one now. Deleting this test outright would have left the *new* invariant —
+        the published ``[0, 1]`` range — unpinned.
         """
         assessment_id = self._texted(
             db_session,
@@ -5344,10 +5320,10 @@ class TestSimilarVersesText:
         assessed revision, and the shortlist excludes null, empty and ``<range>`` rows —
         so a hit is by construction a verse with text, and ``text`` is never null here.
 
-        It is still nullable on the **POST**, which ranks stored vectors and so can return
-        a vref the revision holds no text for. The field stays optional for that reason;
-        this pins that the GET simply never exercises it, rather than that the field
-        changed.
+        The field stays optional: the POST's retired ``vector`` kind ranked stored vectors
+        and could return a vref the revision held no text for, and narrowing a published
+        field is its own decision. This pins that the GET simply never exercises it,
+        rather than that the field changed.
         """
         assessment_id = self._texted(db_session, group1_version)
         hits = _hits(
@@ -5623,10 +5599,8 @@ class TestSimilarVersesContract:
 # ---------------------------------------------------------------------------
 
 #: The corpus the encoder fixture fits on. 200 GEN plus 100 EXO, so ``exclude_book`` has
-#: a whole book to remove, and 300 documents in total so the corpus spans an at-most-300
-#: dimensional subspace that 300 SVD components capture entirely — which is what makes a
-#: verse's own text encode back to its stored vector with an inner product of ≈ 1.0. The
-#: same construction ``test_tfidf_by_text.py`` uses against v3, and for the same reason.
+#: a whole book to remove, and 300 documents in total so the GET's shortlist narrows
+#: rather than covering the whole revision.
 _ENCODER_GEN_DOCS = 200
 _ENCODER_EXO_DOCS = 100
 _ENCODER_DOCS = _ENCODER_GEN_DOCS + _ENCODER_EXO_DOCS
@@ -5648,47 +5622,6 @@ def _corpus_vrefs(db_session, book, count):
     return [row[0] for row in rows]
 
 
-def _fit_encoder(corpus, n_components):
-    """Fit the word + char TF-IDF pair and the SVD, exactly as ``aqua-assessments`` does.
-
-    Returns ``(word, char, svd, vectors)``. sklearn and scipy are imported here rather than
-    at module scope so a run of this file that never asks for an encoder does not pay for
-    them — the same reason ``_rehydrate_encoder`` imports them lazily.
-
-    The runner's pipeline: word and char TF-IDF horizontally stacked, L2-normalized, then
-    projected. Only the projected ``vectors`` are used now, as the stored corpus vectors a
-    ``vector`` query point ranks against; ``text`` and ``vref`` query points rank from the
-    verse text through :func:`_store_recipe`'s vectorizers, fitted with the same settings.
-    """
-    from scipy.sparse import hstack
-    from sklearn.decomposition import TruncatedSVD
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.preprocessing import normalize
-
-    # The runner's tokenizer (sil-ai/aqua-assessments#470), so the fixture fits the way
-    # production does. Fitting with sklearn's default here would hide a read that forgot
-    # to pass it.
-    word = TfidfVectorizer(
-        analyzer="word",
-        ngram_range=(1, 2),
-        lowercase=True,
-        max_df=1.0,
-        min_df=1,
-        tokenizer=unicode_word_tokenizer,
-        token_pattern=None,
-    )
-    char = TfidfVectorizer(
-        analyzer="char_wb", ngram_range=(3, 6), lowercase=True, max_df=1.0, min_df=1
-    )
-    stacked = normalize(
-        hstack([word.fit_transform(corpus), char.fit_transform(corpus)]),
-        norm="l2",
-        axis=1,
-    )
-    svd = TruncatedSVD(n_components=n_components, random_state=0)
-    return word, char, svd, svd.fit_transform(stacked)
-
-
 class _Encoded:
     """What :func:`encoded_assessment` hands a test: the ids, the corpus and its vrefs."""
 
@@ -5708,7 +5641,7 @@ class _Encoded:
 
 @pytest.fixture(scope="module")
 def encoded_assessment(db_session, group1_version):
-    """A ``tfidf`` assessment over a real 300-verse corpus: verse text, recipe, vectors.
+    """A ``tfidf`` assessment over a real 300-verse corpus: verse text and a recipe.
 
     Big enough that the GET's shortlist (``k`` of 100-200) narrows rather than covering
     the whole revision, which is what makes the GET-versus-index comparison in
@@ -5727,21 +5660,12 @@ def encoded_assessment(db_session, group1_version):
         db_session, "EXO", _ENCODER_EXO_DOCS
     )
 
-    word, char, svd, vectors = _fit_encoder(corpus, VECTOR_DIMENSIONS)
-
     revision_id, reference_id = _pair(db_session, group1_version)
     assessment_id = _make_assessment(
         db_session, revision_id, reference_id, type_="tfidf"
     )
-    for vref, vector in zip(vrefs, vectors):
-        db_session.add(
-            TfidfPcaVector(
-                assessment_id=assessment_id, vref=vref, vector=vector.tolist()
-            )
-        )
-    db_session.commit()
-    # The recipe alone — no SVD row. ``text`` and ``vref`` query points rank from the
-    # revision's text through it; only ``vector`` ones read the stored vectors above.
+    # The recipe alone — no SVD row and no stored vectors. Every query point ranks from
+    # the revision's text through it.
     _store_recipe(db_session, assessment_id, group1_version, corpus)
     _make_verse_texts(db_session, revision_id, dict(zip(vrefs, corpus)))
     # Reference text for the handful of verses the assertions name.
@@ -5795,16 +5719,13 @@ def _textual(
     version_id,
     corpus,
     *,
-    vectors=None,
     artifacts=True,
     type_="tfidf",
     **assessment_kwargs,
 ):
-    """A POST fixture: verse text for the revision, the recipe, and optionally vectors.
+    """A POST fixture: verse text for the revision, and the recipe.
 
-    ``text`` and ``vref`` query points rank from ``corpus`` through the recipe; ``vector``
-    query points still rank against stored vectors, so ``vectors`` (``{vref: head}``, as
-    :func:`_vector` builds them) is only needed by tests that send one. Returns
+    Every query point ranks from ``corpus`` through the recipe. Returns
     ``(revision_id, assessment_id)``.
     """
     revision_id, reference_id = _pair(db_session, version_id)
@@ -5815,8 +5736,6 @@ def _textual(
     if artifacts:
         texts = [text for text in corpus.values() if text and text != RANGE]
         _store_recipe(db_session, assessment_id, version_id, texts)
-    for vref, head in (vectors or {}).items():
-        _make_vector(db_session, assessment_id, vref, head)
     return revision_id, assessment_id
 
 
@@ -6028,17 +5947,13 @@ class TestSimilarVersesPostArtifacts:
 
     Both rank from text through the fitted recipe, as the GET does, so an assessment with
     results but no artifacts can answer neither — the state the ~2,200 assessments from
-    before 12 May 2026 are in. Only ``vector`` still needs no artifacts.
+    before 12 May 2026 are in.
     """
 
     def _unpushed(self, db_session, group1_version):
-        """Verse text and stored vectors, and **no** artifacts."""
+        """Verse text and **no** artifacts."""
         _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            TWO_VERSES,
-            vectors={"GEN 1:1": 1, "GEN 1:2": 5},
-            artifacts=False,
+            db_session, group1_version, TWO_VERSES, artifacts=False
         )
         return assessment_id
 
@@ -6073,28 +5988,12 @@ class TestSimilarVersesPostArtifacts:
         )
         assert (resp.status_code, _error_code(resp)) == (404, "VREF_NOT_FOUND")
 
-    def test_a_vector_query_needs_no_artifacts(
-        self, client, regular_token1, db_session, group1_version
-    ):
-        """It arrives as a vector and is compared with the stored ones, so it answers on
-        an assessment that cannot encode at all."""
-        assessment_id = self._unpushed(db_session, group1_version)
-        resp = _post_similar(
-            client,
-            regular_token1,
-            assessment_id,
-            queries=[{"type": "vector", "vector": _vector(1)}],
-        )
-        assert _one(resp) == ["GEN 1:2", "GEN 1:1"]
-
     def test_no_svd_is_needed_for_any_kind(
         self, client, regular_token1, db_session, group1_version
     ):
         """The fixture stores vectorizers and **no** ``tfidf_svd`` row — the post-#471
         world. Every kind answers: nothing on this endpoint reads the SVD any more."""
-        _, assessment_id = _textual(
-            db_session, group1_version, TWO_VERSES, vectors={"GEN 1:2": 1}
-        )
+        _, assessment_id = _textual(db_session, group1_version, TWO_VERSES)
         assert (
             db_session.query(TfidfSvd).filter_by(assessment_id=assessment_id).count()
             == 0
@@ -6106,12 +6005,11 @@ class TestSimilarVersesPostArtifacts:
             queries=[
                 {"type": "text", "text": "light darkness"},
                 {"type": "vref", "vref": "GEN 1:1"},
-                {"type": "vector", "vector": _vector(1)},
             ],
         )
-        text, vref, vector = _entry_vrefs(resp)
+        text, vref = _entry_vrefs(resp)
         assert sorted(text) == ["GEN 1:1", "GEN 1:2"]
-        assert vref == vector == ["GEN 1:2"]
+        assert vref == ["GEN 1:2"]
 
 
 class TestSimilarVersesPostAuthorization:
@@ -6119,7 +6017,7 @@ class TestSimilarVersesPostAuthorization:
 
     Deliberately a near-copy of ``TestSimilarVersesAuthorization``. The POST has the **same
     single authorization surface** as the GET — enumerated rather than assumed: its query
-    points name text, verses and vectors, and none of them names another assessment or
+    points name text and verses, and none of them names another assessment or
     another revision. So unlike ``TestScoreComparisonPeers``, where ``against`` gives the
     read a second surface, there is exactly one thing to authorize here and it goes through
     the same predicate.
@@ -6314,8 +6212,8 @@ class TestSimilarVersesPostAuthorization:
     def test_one_bad_query_point_fails_the_whole_request(
         self, client, regular_token1, db_session, group1_version
     ):
-        """No partial-success shape. v3's ``by_vectors`` already rejects the whole request
-        on one wrong-length vector, and the alternative makes every client write two error
+        """No partial-success shape. v3's batch POSTs already reject the whole request
+        on one bad entry, and the alternative makes every client write two error
         paths for one call — a body that is sometimes results and sometimes an error."""
         _, assessment_id = self._vectorized(db_session, group1_version)
         resp = _post_similar(
@@ -6347,12 +6245,12 @@ class TestSimilarVersesPostAuthorization:
 
 
 class TestSimilarVersesPostBatch:
-    """Index alignment, the equivalence with the GET, and the two scales.
+    """Index alignment, the equivalence with the GET, and the one scale.
 
     The equivalence broke in #973's first half, when the GET moved to verse text and the
     POST stayed on stored vectors. It is back: a one-element ``vref`` batch runs the GET's
     own code, and a batch large enough to use the corpus index scores each pair exactly as
-    the GET does. Only the ``vector`` kind still reads stored vectors.
+    the GET does.
     """
 
     def test_results_are_aligned_with_queries_across_kinds(
@@ -6360,74 +6258,59 @@ class TestSimilarVersesPostBatch:
     ):
         """Several query points of *different* kinds in one request, with two identical
         entries so a de-duplicating bug cannot pass. Interleaved rather than grouped: the
-        kinds are ranked by different code, so a resolver that wrote answers back in
-        resolution order instead of request order would pass a grouped fixture and
-        scramble this one."""
-        _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            SHORTLIST_CORPUS,
-            vectors={"GEN 1:1": 1, "GEN 1:2": 5, "GEN 1:3": -4},
-        )
+        kinds are resolved differently — every ``vref`` point in one lookup, ``text``
+        points as sent — so a resolver that wrote answers back in lookup order instead
+        of request order would pass a grouped fixture and scramble this one."""
+        _, assessment_id = _textual(db_session, group1_version, SHORTLIST_CORPUS)
         resp = _post_similar(
             client,
             regular_token1,
             assessment_id,
             queries=[
                 {"type": "vref", "vref": SHORTLIST_QUERY_VREF},
-                {"type": "vector", "vector": _vector(-1)},
+                {"type": "text", "text": "vineyard shepherd mountain"},
                 {"type": "vref", "vref": SHORTLIST_QUERY_VREF},
                 {"type": "text", "text": "vineyard shepherd mountain"},
-                {"type": "vector", "vector": _vector(1)},
             ],
             limit=3,
         )
         ranked = _entry_vrefs(resp)
         assert ranked[0] == ranked[2] == SHORTLIST_ORDER[:3]
-        assert ranked[1] == ["GEN 1:3", "GEN 1:1", "GEN 1:2"]
-        assert ranked[3][0] == "GEN 1:5"
-        assert ranked[4] == ["GEN 1:2", "GEN 1:1", "GEN 1:3"]
+        assert ranked[1] == ranked[3]
+        assert ranked[1][0] == "GEN 1:5"
 
     def test_the_echo_names_the_kind_in_request_order(
         self, client, regular_token1, db_session, group1_version
     ):
-        _, assessment_id = _textual(
-            db_session, group1_version, TWO_VERSES, vectors={"GEN 1:2": 5}
-        )
+        _, assessment_id = _textual(db_session, group1_version, TWO_VERSES)
         resp = _post_similar(
             client,
             regular_token1,
             assessment_id,
             queries=[
-                {"type": "vector", "vector": _vector(1)},
+                {"type": "text", "text": "light darkness"},
                 {"type": "vref", "vref": "GEN 1:1"},
             ],
         )
         assert [entry["query"] for entry in _entries(resp)] == [
-            {"type": "vector"},
+            {"type": "text"},
             {"type": "vref", "vref": "GEN 1:1"},
         ]
 
-    def test_the_echo_carries_neither_the_text_nor_the_vector(
+    def test_the_echo_does_not_carry_the_text(
         self, client, regular_token1, encoded_assessment
     ):
         """Echoing input verbatim would let one request double its own response size — up
-        to 500 query points of 10,000 characters or 300 floats each — and the caller
-        already holds it. Array position is what identifies a query point."""
+        to 500 query points of 10,000 characters each — and the caller already holds it.
+        Array position is what identifies a query point."""
         resp = _post_similar(
             client,
             regular_token1,
             encoded_assessment.assessment_id,
-            queries=[
-                {"type": "text", "text": "alpha beta gamma"},
-                {"type": "vector", "vector": _vector(1)},
-            ],
+            queries=[{"type": "text", "text": "alpha beta gamma"}],
             limit=1,
         )
-        assert [entry["query"] for entry in _entries(resp)] == [
-            {"type": "text"},
-            {"type": "vector"},
-        ]
+        assert [entry["query"] for entry in _entries(resp)] == [{"type": "text"}]
 
     def test_a_one_element_vref_batch_is_the_get_exactly(
         self, client, regular_token1, encoded_assessment
@@ -6502,57 +6385,29 @@ class TestSimilarVersesPostBatch:
             checked += len(common)
         assert checked > 100, checked
 
-    def test_a_mixed_batch_carries_each_kinds_own_scale(
+    def test_every_kind_carries_a_cosine(
         self, client, regular_token1, db_session, group1_version, ranking_path
     ):
-        """What the field description promises: ``text`` and ``vref`` entries are cosines
-        in [0, 1], a ``vector`` entry is the stored vectors' raw inner product — here 5.0
-        and -4.0, which no cosine could be."""
-        _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            SHORTLIST_CORPUS,
-            vectors={"GEN 1:2": 5, "GEN 1:3": -4},
-        )
+        """What the field description promises: one scale on every entry, whatever the
+        kind of query point. There used to be a second — the retired ``vector`` kind
+        carried a raw inner product."""
+        _, assessment_id = _textual(db_session, group1_version, SHORTLIST_CORPUS)
         resp = _post_similar(
             client,
             regular_token1,
             assessment_id,
             queries=[
                 {"type": "vref", "vref": SHORTLIST_QUERY_VREF},
-                {"type": "vector", "vector": _vector(1)},
                 {"type": "text", "text": "light darkness"},
             ],
         )
-        vref_scores, vector_scores, text_scores = [
+        vref_scores, text_scores = [
             [hit["similarity"] for hit in entry["items"]] for entry in _entries(resp)
         ]
         for scores in (vref_scores, text_scores):
+            assert scores
             assert all(-1e-6 <= value <= 1.0 + 1e-6 for value in scores), scores
         assert vref_scores[0] == pytest.approx(1.0, abs=1e-5)  # the identical verse
-        assert vector_scores == [5.0, -4.0]
-
-    def test_the_vector_kinds_similarity_still_flips_pgvectors_negated_inner_product(
-        self, client, regular_token1, db_session, group1_version
-    ):
-        """The sign flip, kept on the one kind that still has one. ``max_inner_product``
-        is pgvector's ``<#>``, the *negated* inner product, so a missing flip inverts the
-        ranking silently."""
-        _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            TWO_VERSES,
-            vectors={"GEN 1:1": 1, "GEN 1:2": 3, "GEN 1:3": -4},
-        )
-        resp = _post_similar(
-            client,
-            regular_token1,
-            assessment_id,
-            queries=[{"type": "vector", "vector": _vector(1)}],
-        )
-        (items,) = [entry["items"] for entry in _entries(resp)]
-        assert [hit["vref"] for hit in items] == ["GEN 1:2", "GEN 1:1", "GEN 1:3"]
-        assert [hit["similarity"] for hit in items] == [3.0, 1.0, -4.0]
 
     def test_an_empty_ranking_is_an_entry_rather_than_a_dropped_one(
         self, client, regular_token1, db_session, group1_version, ranking_path
@@ -6562,10 +6417,7 @@ class TestSimilarVersesPostBatch:
         result by one and silently break the index alignment the response is built on.
         """
         _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            {"GEN 1:1": "light darkness"},
-            vectors={"GEN 1:1": 1},
+            db_session, group1_version, {"GEN 1:1": "light darkness"}
         )
         resp = _post_similar(
             client,
@@ -6573,7 +6425,7 @@ class TestSimilarVersesPostBatch:
             assessment_id,
             queries=[
                 {"type": "vref", "vref": "GEN 1:1"},
-                {"type": "vector", "vector": _vector(1)},
+                {"type": "text", "text": "light darkness"},
             ],
         )
         assert _entry_vrefs(resp) == [[], ["GEN 1:1"]]
@@ -6710,25 +6562,18 @@ class TestSimilarVersesPostBatch:
     ):
         """A performance contract, so it can only be pinned by looking at the statements.
 
-        Warm, with T text-or-vref points and V vector ones: the two-stage path issues one
-        shortlist per text-or-vref point, the index path none at all, and both issue one
-        ranking per vector point. On both, every vref point is resolved in one lookup and
+        Warm, with T query points: the two-stage path issues one shortlist per point and
+        the index path none at all. On both, every vref point is resolved in one lookup and
         the verse text is fetched once over the union of all hits — so those are three
         ``verse_text … IN`` statements however many query points there are.
         """
         if path == "index":
             monkeypatch.setattr(tfidf_retrieval, "TWO_STAGE_MAX_QUERIES", 0)
-        _, assessment_id = _textual(
-            db_session,
-            group1_version,
-            SHORTLIST_CORPUS,
-            vectors={"GEN 1:1": 1, "GEN 1:2": 5},
-        )
+        _, assessment_id = _textual(db_session, group1_version, SHORTLIST_CORPUS)
         queries = [
             {"type": "vref", "vref": "GEN 1:1"},
             {"type": "vref", "vref": "GEN 1:2"},
             {"type": "text", "text": "light darkness"},
-            {"type": "vector", "vector": _vector(1)},
         ]
 
         def ask():
@@ -6741,11 +6586,8 @@ class TestSimilarVersesPostBatch:
             resp = ask()
         assert resp.status_code == 200, resp.text
 
-        vector_rankings = [
-            s for s, _ in _touching(captured, "tfidf_pca_vector") if "<#>" in s
-        ]
         shortlists = [s for s, _ in _touching(captured, "verse_text") if "<->" in s]
-        assert len(vector_rankings) == 1, vector_rankings
+        assert _touching(captured, "tfidf_pca_vector") == []
         assert len(shortlists) == (3 if path == "two-stage" else 0), shortlists
         assert len(_hydration_statements(captured)) == 3
         # The corpus is read to build the index, never on a warm request.
@@ -6874,14 +6716,13 @@ class TestSimilarVersesPostLimits:
 
     def test_the_bounds_are_v3s_own_constants_rather_than_restated_numbers(self):
         """The one v3 caller chunks its batches to honour both ceilings *by value*, so
-        keeping them identical is what lets it migrate without a rewrite. Imported rather
+        keeping them identical lets that chunking carry over to v4. Imported rather
         than retyped, and pinned here so a well-meaning round number cannot replace one.
         """
         from schemas import tfidf as v3_tfidf
 
         assert TFIDF_MAX_BATCH_VECTORS is v3_tfidf.TFIDF_MAX_BATCH_VECTORS
         assert TFIDF_MAX_BATCH_RESULTS is v3_tfidf.TFIDF_MAX_BATCH_RESULTS
-        assert TFIDF_CORPUS_VECTOR_DIM is v3_tfidf.TFIDF_CORPUS_VECTOR_DIM
         assert TFIDF_MAX_TEXT_CHARS is v3_tfidf.TFIDF_MAX_TEXT_CHARS
 
     def test_the_get_and_the_post_share_one_limit_bound(self):
@@ -6906,27 +6747,23 @@ class TestSimilarVersesPostLimits:
 
 
 #: The exclusion tests' corpus, arranged so that a ``text`` query of GEN 1:1's own words
-#: and a ``vector`` query of ``_vector(1)`` rank it **identically** — each later verse
-#: shares strictly fewer words, and the stored heads fall in the same order. One set of
-#: expectations then covers both kinds, on both ranking paths.
+#: ranks it in the mapping's own order — each later verse shares strictly fewer words.
+#: One set of expectations then covers both ranking paths.
 EXCLUSION_CORPUS = {
     "GEN 1:1": "light darkness waters firmament",
     "GEN 1:2": "light darkness waters",
     "EXO 1:1": "light darkness",
     "EXO 1:2": "light",
 }
-EXCLUSION_HEADS = {"GEN 1:1": 9, "GEN 1:2": 5, "EXO 1:1": 2, "EXO 1:2": 1}
 
 
-@pytest.fixture(params=["vector", "text-two-stage", "text-index"])
+@pytest.fixture(params=["text-two-stage", "text-index"])
 def excludable_query(request, monkeypatch):
-    """A factory for an excludable query point, once per kind and ranking path."""
+    """A factory for an excludable ``text`` query point, once per ranking path."""
     if request.param == "text-index":
         monkeypatch.setattr(tfidf_retrieval, "TWO_STAGE_MAX_QUERIES", 0)
 
     def build(**exclusions):
-        if request.param == "vector":
-            return {"type": "vector", "vector": _vector(1), **exclusions}
         return {"type": "text", "text": EXCLUSION_CORPUS["GEN 1:1"], **exclusions}
 
     return build
@@ -6936,9 +6773,7 @@ class TestSimilarVersesPostExclusions:
     """The leakage guard, and the combination that must be unconstructible."""
 
     def _vectorized(self, db_session, group1_version):
-        _, assessment_id = _textual(
-            db_session, group1_version, EXCLUSION_CORPUS, vectors=EXCLUSION_HEADS
-        )
+        _, assessment_id = _textual(db_session, group1_version, EXCLUSION_CORPUS)
         return assessment_id
 
     def test_exclude_book_without_exclude_vref_is_a_422(
@@ -6952,7 +6787,7 @@ class TestSimilarVersesPostExclusions:
             client,
             regular_token1,
             assessment_id,
-            queries=[{"type": "vector", "vector": _vector(1), "exclude_book": True}],
+            queries=[{"type": "text", "text": "light", "exclude_book": True}],
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
@@ -7003,8 +6838,8 @@ class TestSimilarVersesPostExclusions:
     def test_nothing_excluded_is_the_whole_ranking(
         self, client, regular_token1, db_session, group1_version, excludable_query
     ):
-        """The baseline the other tests subtract from, and the check that the two kinds
-        really do rank this corpus identically."""
+        """The baseline the other tests subtract from, and the check that both ranking
+        paths really do rank this corpus identically."""
         assessment_id = self._vectorized(db_session, group1_version)
         resp = _post_similar(
             client,
@@ -7199,52 +7034,31 @@ class TestSimilarVersesPostContract:
     def test_an_unknown_query_kind_names_the_discriminator(
         self, client, regular_token1, db_session, group1_version
     ):
-        """What the discriminated union buys: one error about ``type`` rather than three
+        """What the discriminated union buys: one error about ``type`` rather than
         unrelated per-member failures a caller has to read past."""
         assessment_id = self._vectorized(db_session, group1_version)
         resp = _post_similar(
             client,
             regular_token1,
             assessment_id,
-            queries=[{"type": "embedding", "vector": _vector(1)}],
+            queries=[{"type": "embedding", "text": "alpha"}],
         )
         assert resp.status_code == 422, resp.text
         (error,) = resp.json()["error"]["details"]["errors"]
         # Pydantic reports one ``union_tag_invalid`` against the query point, naming the
-        # discriminator and every tag it would have accepted — rather than three
-        # per-member failures a caller has to read past to find the real problem.
+        # discriminator and every tag it would have accepted — rather than one
+        # per-member failure per kind a caller has to read past to find the real problem.
         assert error["type"] == "union_tag_invalid", error
         assert error["ctx"]["discriminator"] == "'type'"
-        assert error["ctx"]["expected_tags"] == "'text', 'vref', 'vector'"
+        assert error["ctx"]["expected_tags"] == "'text', 'vref'"
 
-    def test_a_query_point_cannot_mix_two_kinds(
+    def test_the_retired_vector_kind_is_a_422(
         self, client, regular_token1, db_session, group1_version
     ):
-        """The union's real payoff: ``{"type": "vref", "text": ...}`` is unconstructible
-        rather than accepted with one field quietly ignored. One model with three optional
-        fields would have had to catch this in a validator, or not catch it."""
-        assessment_id = self._vectorized(db_session, group1_version)
-        resp = _post_similar(
-            client,
-            regular_token1,
-            assessment_id,
-            queries=[{"type": "vref", "vref": "GEN 1:1", "text": "alpha"}],
-        )
-        assert resp.status_code == 422, resp.text
-
-    @pytest.mark.parametrize(
-        "vector,label",
-        [
-            pytest.param([1.0] * (VECTOR_DIMENSIONS - 1), "short", id="too-short"),
-            pytest.param([1.0] * (VECTOR_DIMENSIONS + 1), "long", id="too-long"),
-        ],
-    )
-    def test_a_wrong_length_vector_is_a_422_naming_its_query_points_index(
-        self, client, regular_token1, db_session, group1_version, vector, label
-    ):
-        """Caught before pgvector can raise it against a ``Vector(300)`` column, and ``loc``
-        locates the failing query point — the validation-error equivalent of the vref 404's
-        ``details.index``."""
+        """#984 retired ``type: "vector"``: it had no v4 caller, the SVD output it took
+        is being dropped, and it was the last v4 read of ``tfidf_pca_vector``. It is now
+        an unknown tag like any other, rejected before anything is ranked, and ``loc``
+        names the failing query point."""
         assessment_id = self._vectorized(db_session, group1_version)
         resp = _post_similar(
             client,
@@ -7252,32 +7066,29 @@ class TestSimilarVersesPostContract:
             assessment_id,
             queries=[
                 {"type": "vref", "vref": "GEN 1:1"},
-                {"type": "vector", "vector": vector},
+                {"type": "vector", "vector": [0.0] * 300},
             ],
         )
         assert resp.status_code == 422, resp.text
-        errors = resp.json()["error"]["details"]["errors"]
-        assert any(
-            "queries" in error["loc"] and 1 in error["loc"] for error in errors
-        ), errors
+        assert _error_code(resp) == "VALIDATION_ERROR"
+        (error,) = resp.json()["error"]["details"]["errors"]
+        assert error["type"] == "union_tag_invalid", error
+        assert error["ctx"]["tag"] == "vector"
+        assert 1 in error["loc"], error
 
-    @pytest.mark.parametrize("bad", ["nan", "inf", "-inf"], ids=["nan", "inf", "-inf"])
-    def test_a_non_finite_vector_is_a_422(
-        self, client, regular_token1, db_session, group1_version, bad
+    def test_a_query_point_cannot_mix_two_kinds(
+        self, client, regular_token1, db_session, group1_version
     ):
-        """Strict JSON has no literal for either, but Python's own encoder emits
-        ``NaN``/``Infinity`` and its parser accepts them — so a Python client can send one
-        without noticing. pgvector rejects them at insert but not in a query expression, so
-        unguarded a ``nan`` would make every similarity ``nan`` and return an arbitrary
-        ranking with a 200 rather than an error."""
+        """The union's real payoff: ``{"type": "vref", "text": ...}`` is unconstructible
+        rather than accepted with one field quietly ignored. One model with optional
+        fields for every kind would have had to catch this in a validator, or not catch
+        it."""
         assessment_id = self._vectorized(db_session, group1_version)
-        vector = [float(bad)] + [0.0] * (VECTOR_DIMENSIONS - 1)
-        resp = client.post(
-            f"{PREFIX}/assessments/{assessment_id}/similar-verses",
-            content=json.dumps(
-                {"queries": [{"type": "vector", "vector": vector}]}
-            ).encode(),
-            headers={**_auth(regular_token1), "Content-Type": "application/json"},
+        resp = _post_similar(
+            client,
+            regular_token1,
+            assessment_id,
+            queries=[{"type": "vref", "vref": "GEN 1:1", "text": "alpha"}],
         )
         assert resp.status_code == 422, resp.text
 
@@ -7345,7 +7156,7 @@ class TestSimilarVersesPostContract:
             declared |= {param.name for param in dependency.query_params}
         assert declared == set()
 
-    def test_the_three_query_kinds_are_the_union_members(self):
+    def test_the_two_query_kinds_are_the_union_members(self):
         """A union member added without a home in the echo would serialize as the wrong
         shape, so both sides are pinned together and against each other."""
         request_kinds = {
@@ -7356,14 +7167,14 @@ class TestSimilarVersesPostContract:
             member.model_fields["type"].annotation.__args__[0]
             for member in get_args(get_args(SimilarVersesQueryOut)[0])
         }
-        assert request_kinds == echo_kinds == {"text", "vref", "vector"}
+        assert request_kinds == echo_kinds == {"text", "vref"}
 
     def test_every_query_kind_has_an_echo_builder(self):
         """The gap the test above does not close.
 
         It pins that the request union and the echo union agree on their *tags*. The
         handler does not index the echo union — it indexes a mapping, by the request
-        model's class. So a fourth kind added to both unions and forgotten in that mapping
+        model's class. So a third kind added to both unions and forgotten in that mapping
         passes every other test here and raises ``KeyError`` on the first request that uses
         it, which the #828 catch-all turns into a 500. Cheap to pin, and invisible until
         production otherwise.
@@ -7374,21 +7185,17 @@ class TestSimilarVersesPostContract:
 
     def test_only_the_vref_echo_carries_a_payload(self):
         """``vref`` is short and names a verse a client wants to label the ranking with;
-        the other two would return the caller's own input. Pinned as *absent* rather than
+        the text echo would return the caller's own input. Pinned as *absent* rather than
         null, which is why the echo is a union rather than one model with a nullable
         field."""
         assert set(SimilarVersesVrefQueryOut.model_fields) == {"type", "vref"}
         assert set(SimilarVersesTextQueryOut.model_fields) == {"type"}
-        assert set(SimilarVersesVectorQueryOut.model_fields) == {"type"}
 
-    def test_only_the_two_kinds_without_a_verse_carry_exclusions(self):
-        """A ``vref`` query point excludes itself, so there is nothing to ask for; the other
-        two have no verse of their own, so the caller names one. v3 offers the exclusions on
-        its text variants only — v4 adds ``vector``, because the exclusion filters results
-        and so is orthogonal to how the query point arrived."""
+    def test_only_the_text_kind_carries_exclusions(self):
+        """A ``vref`` query point excludes itself, so there is nothing to ask for; a
+        ``text`` one has no verse of its own, so the caller names one."""
         exclusions = {"exclude_vref", "exclude_book"}
         assert exclusions <= set(SimilarVersesTextQuery.model_fields)
-        assert exclusions <= set(SimilarVersesVectorQuery.model_fields)
         assert not exclusions & set(SimilarVersesVrefQuery.model_fields)
 
     def test_the_entry_row_is_the_gets_row_verbatim(self):

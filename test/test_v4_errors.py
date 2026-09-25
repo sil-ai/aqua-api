@@ -746,7 +746,7 @@ def test_the_depth_cap_clears_the_most_nested_real_request_body(client):
     """The other half of the cap: it must not clip an ordinary payload.
 
     ``POST /v4/assessments/{id}/similar-verses`` takes the most structured body on the
-    surface — a discriminated union of query points, one carrying 300 floats — so its
+    surface — a discriminated union of query points — so its
     validation failures are the deepest ``details`` v4 really produces. They come to 6
     levels at most, against a ceiling of 24. If that stopped being true the ceiling
     would be wrong, which is what this asserts rather than assumes.
@@ -754,12 +754,12 @@ def test_the_depth_cap_clears_the_most_nested_real_request_body(client):
     bodies = {
         "no discriminator": {"queries": [{"text": "in the beginning"}], "limit": 10},
         "unknown discriminator": {"queries": [{"type": "nope"}], "limit": 10},
-        "wrong vector length": {
-            "queries": [{"type": "vector", "vector": [0.1, 0.2]}],
+        "empty text": {
+            "queries": [{"type": "text", "text": ""}],
             "limit": 10,
         },
-        "non-finite vector": {
-            "queries": [{"type": "vector", "vector": [float("nan")] * 300}],
+        "exclude_book without exclude_vref": {
+            "queries": [{"type": "text", "text": "light", "exclude_book": True}],
             "limit": 10,
         },
         # The model-level combined cap, which rejects after parsing and so echoes the
