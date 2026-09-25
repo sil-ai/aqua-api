@@ -128,7 +128,8 @@ one-element one. The kinds are **not equals**: ``text`` is why the endpoint exis
 ``vref`` is convenience. There is no ``vector`` kind: it shipped briefly for the Modal
 TF-IDF worker (the only non-test caller of v3's ``by_vectors``) and was retired by #984,
 because that worker never called v4 and the SVD output it would have sent is being
-dropped (sil-ai/aqua-assessments#471). The worker sends ``text`` instead.
+dropped (sil-ai/aqua-assessments#471). Once #471 moves it off v3, the worker sends
+``text``.
 
 **The similarity POST's zero-caller sweep is not an argument against it.** ``by_text`` and
 ``by_texts`` — the kinds a *client* would use, because a client has no artifacts and needs

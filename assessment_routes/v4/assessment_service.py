@@ -666,8 +666,8 @@ class TfidfArtifactsNotFound(AssessmentServiceError):
 
     **Not** the same thing as :class:`SimilarityVrefNotFound`, even though both are 404s on
     one endpoint. Ranking from text — the GET, and the POST's ``text`` and ``vref`` kinds —
-    needs the fitted vectorizers that ``POST /v3/assessment/{id}/tfidf-artifacts`` stores,
-    and so does every other kind. An assessment can hold results without
+    needs the fitted vectorizers that ``POST /v3/assessment/{id}/tfidf-artifacts`` stores.
+    An assessment can hold results without
     artifacts — the artifact push is a separate call the runner makes after the vectors
     land, and assessments from before 12 May 2026 never had one — which is why this is a
     reachable failure rather than a defensive branch.
