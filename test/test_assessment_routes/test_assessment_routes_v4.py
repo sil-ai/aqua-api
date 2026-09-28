@@ -4469,10 +4469,6 @@ SIMILARITY_UNSERVED_TYPES = tuple(
     t.value for t in AssessmentType if t.value not in SIMILARITY_SERVED_TYPES
 )
 
-#: The SVD width a fixture's artifact run records. Nothing ranks against it any more; it
-#: only fills ``tfidf_artifact_run.n_components``.
-VECTOR_DIMENSIONS = 300
-
 
 def _make_duplicate_verse_text(db_session, revision_id, vref, text):
     """A second ``verse_text`` row for a ``(revision, vref)`` that already has one.
@@ -4540,17 +4536,8 @@ def _vectorizer_payload(vectorizer, analyzer, ngram_range):
     }
 
 
-def _store_recipe(db_session, assessment_id, version_id, corpus):
-    """Fit and store the two vectorizers the GET reranks with — and **no SVD row**.
-
-    Deliberately no ``tfidf_svd``. The GET's ranking never loads one, and
-    sil-ai/aqua-assessments#471 stops pushing one at all, so a fixture that stored an SVD
-    would hide a path that had silently come to depend on it. This is also what makes
-    these fixtures a live check that the read works in the post-#471 world.
-
-    ``n_components`` on the run row is still written because the column is ``NOT NULL``;
-    nothing on this path reads it.
-    """
+def _fit_recipe(corpus):
+    """The word and char vectorizers the runner would fit on ``corpus``."""
     from sklearn.feature_extraction.text import TfidfVectorizer
 
     # The runner's tokenizer (sil-ai/aqua-assessments#470), so the fixture fits the way
@@ -4570,11 +4557,24 @@ def _store_recipe(db_session, assessment_id, version_id, corpus):
     )
     word.fit(corpus)
     char.fit(corpus)
+    return word, char
+
+
+def _store_recipe(db_session, assessment_id, version_id, corpus):
+    """Fit and store the two vectorizers the GET reranks with — and **no SVD row**.
+
+    Deliberately no ``tfidf_svd``, and a null ``n_components``: the run row exactly as
+    an SVD-less push (#979) writes it. The GET's ranking never loads an SVD, and
+    sil-ai/aqua-assessments#471 stops pushing one at all, so a fixture that stored an SVD
+    would hide a path that had silently come to depend on it. This is also what makes
+    these fixtures a live check that the read works in the post-#471 world.
+    """
+    word, char = _fit_recipe(corpus)
     db_session.add(
         TfidfArtifactRun(
             assessment_id=assessment_id,
             source_version_id=version_id,
-            n_components=VECTOR_DIMENSIONS,
+            n_components=None,
             n_word_features=len(word.vocabulary_),
             n_char_features=len(char.vocabulary_),
             n_corpus_vrefs=len(corpus),
@@ -6010,6 +6010,61 @@ class TestSimilarVersesPostArtifacts:
         text, vref = _entry_vrefs(resp)
         assert sorted(text) == ["GEN 1:1", "GEN 1:2"]
         assert vref == ["GEN 1:2"]
+
+
+class TestSimilarVersesFromAnSvdLessPush:
+    """The whole path #979 opens, through the endpoints rather than a fixture.
+
+    Every other similar-verses test stores its recipe straight into the tables. This one
+    pushes it through v3 ``POST /assessment/{id}/tfidf-artifacts`` with no ``svd`` and
+    no ``n_components`` — the push sil-ai/aqua-assessments#471 will make — pulls it back,
+    and ranks with it, so a push that stored something the read could not load would
+    fail here rather than in production.
+    """
+
+    def test_a_push_without_an_svd_round_trips_and_ranks(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, SHORTLIST_CORPUS)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, type_="tfidf"
+        )
+        word, char = _fit_recipe(list(SHORTLIST_CORPUS.values()))
+        headers = _auth(regular_token1)
+
+        pushed = client.post(
+            f"/v3/assessment/{assessment_id}/tfidf-artifacts",
+            json={
+                "n_corpus_vrefs": len(SHORTLIST_CORPUS),
+                "sklearn_version": "1.6.1",
+                "word_vectorizer": _vectorizer_payload(word, "word", (1, 2)),
+                "char_vectorizer": _vectorizer_payload(char, "char_wb", (3, 6)),
+            },
+            headers=headers,
+        )
+        assert pushed.status_code == 200, pushed.text
+        assert pushed.json()["components_bytes"] == 0
+
+        pulled = client.get(
+            "/v3/assessment/tfidf/artifacts",
+            params={"assessment_id": assessment_id},
+            headers=headers,
+        )
+        assert pulled.status_code == 200, pulled.text
+        assert (pulled.json()["svd"], pulled.json()["n_components"]) == (None, None)
+        assert pulled.json()["word_vectorizer"]["vocabulary"] == {
+            k: int(v) for k, v in word.vocabulary_.items()
+        }
+
+        assert (
+            _hit_vrefs(
+                _similar(
+                    client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF
+                )
+            )
+            == SHORTLIST_ORDER
+        )
 
 
 class TestSimilarVersesPostAuthorization:

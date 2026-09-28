@@ -1326,7 +1326,8 @@ class TfidfArtifactRun(Base):
         primary_key=True,
     )
     source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
-    n_components = Column(Integer, nullable=False)
+    # Null for a run pushed without an SVD (#979); then no tfidf_svd row exists.
+    n_components = Column(Integer, nullable=True)
     n_word_features = Column(Integer, nullable=False)
     n_char_features = Column(Integer, nullable=False)
     n_corpus_vrefs = Column(Integer, nullable=False)
