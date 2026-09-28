@@ -1368,6 +1368,27 @@ def test_svd_push_replaces_an_svdless_run(
     assert data["svd"]["n_components"] == 5
 
 
+def test_svdless_push_replaces_an_svd_run(
+    client, regular_token1, test_db_session, fresh_tfidf_assessment_id
+):
+    """The re-push must take the old SVD with it. A leftover tfidf_svd row beside
+    a null n_components would make the pull serve a stale SVD."""
+    for body in (_make_artifact_body(), _make_svdless_body()):
+        assert (
+            _push(client, regular_token1, fresh_tfidf_assessment_id, body).status_code
+            == 200
+        )
+    test_db_session.expire_all()
+    assert (
+        test_db_session.query(TfidfSvd)
+        .filter_by(assessment_id=fresh_tfidf_assessment_id)
+        .count()
+        == 0
+    )
+    data = _pull(client, regular_token1, fresh_tfidf_assessment_id).json()
+    assert (data["svd"], data["n_components"]) == (None, None)
+
+
 def test_a_run_that_declares_an_svd_but_lost_it_still_404s(
     client, regular_token1, test_db_session, fresh_tfidf_assessment_id
 ):
