@@ -249,6 +249,11 @@ async def push_tfidf_artifacts(
     """Store TF-IDF encoder artifacts (vectorizers + SVD) for an assessment.
 
     Re-posting replaces all artifacts for this assessment — safe to retry.
+
+    `svd` and `n_components` are optional as a pair (#979). A run fitted without
+    a TruncatedSVD (sil-ai/aqua-assessments#471) sends neither: it stores the two
+    vectorizers, a null `n_components` and no `tfidf_svd` row, and skips every
+    SVD check. A push that sends `svd` is validated exactly as before.
     """
     assessment = await db.scalar(
         select(Assessment).where(Assessment.id == assessment_id).limit(1)
@@ -276,21 +281,31 @@ async def push_tfidf_artifacts(
             "the assessment's corpus revision",
         )
 
-    try:
-        components_bytes = base64.b64decode(body.svd.components_b64, validate=True)
-    except (binascii.Error, ValueError) as e:
+    # One without the other is a malformed push, not an SVD-less one:
+    # n_components describes the SVD and means nothing without it.
+    if (body.svd is None) != (body.n_components is None):
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid base64 in svd.components_b64: {e}",
+            detail="n_components and svd must be sent together, or both left out",
         )
-    if len(components_bytes) > _MAX_COMPONENTS_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=(
-                f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
-                f"over the {_MAX_COMPONENTS_BYTES}-byte limit"
-            ),
-        )
+
+    components_bytes = b""
+    if body.svd is not None:
+        try:
+            components_bytes = base64.b64decode(body.svd.components_b64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid base64 in svd.components_b64: {e}",
+            )
+        if len(components_bytes) > _MAX_COMPONENTS_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
+                    f"over the {_MAX_COMPONENTS_BYTES}-byte limit"
+                ),
+            )
 
     n_word_features = len(body.word_vectorizer.vocabulary)
     n_char_features = len(body.char_vectorizer.vocabulary)
@@ -304,38 +319,39 @@ async def push_tfidf_artifacts(
             status_code=422,
             detail="char_vectorizer.vocabulary and idf must have the same length",
         )
-    if body.n_components != body.svd.n_components:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"body.n_components ({body.n_components}) must equal "
-                f"svd.n_components ({body.svd.n_components})"
-            ),
-        )
-    if body.svd.n_features != n_word_features + n_char_features:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"svd.n_features ({body.svd.n_features}) must equal "
-                f"n_word_features + n_char_features ({n_word_features + n_char_features})"
-            ),
-        )
-    # Sanity-check the components bytes against the declared shape/dtype. np.save
-    # adds a small header (~128 bytes); allow 1KB of slack.
-    dtype_bytes = {"float32": 4, "float64": 8}[body.svd.dtype]
-    expected_payload = body.svd.n_components * body.svd.n_features * dtype_bytes
-    if (
-        len(components_bytes) < expected_payload
-        or len(components_bytes) > expected_payload + 1024
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
-                f"expected ~{expected_payload} for "
-                f"{body.svd.n_components} x {body.svd.n_features} {body.svd.dtype}"
-            ),
-        )
+    if body.svd is not None:
+        if body.n_components != body.svd.n_components:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"body.n_components ({body.n_components}) must equal "
+                    f"svd.n_components ({body.svd.n_components})"
+                ),
+            )
+        if body.svd.n_features != n_word_features + n_char_features:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"svd.n_features ({body.svd.n_features}) must equal "
+                    f"n_word_features + n_char_features ({n_word_features + n_char_features})"
+                ),
+            )
+        # Sanity-check the components bytes against the declared shape/dtype. np.save
+        # adds a small header (~128 bytes); allow 1KB of slack.
+        dtype_bytes = {"float32": 4, "float64": 8}[body.svd.dtype]
+        expected_payload = body.svd.n_components * body.svd.n_features * dtype_bytes
+        if (
+            len(components_bytes) < expected_payload
+            or len(components_bytes) > expected_payload + 1024
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
+                    f"expected ~{expected_payload} for "
+                    f"{body.svd.n_components} x {body.svd.n_features} {body.svd.dtype}"
+                ),
+            )
 
     try:
         # ON DELETE CASCADE on the run row removes dependent vectorizer + svd rows.
@@ -376,15 +392,16 @@ async def push_tfidf_artifacts(
                 params=body.char_vectorizer.params,
             )
         )
-        db.add(
-            TfidfSvd(
-                assessment_id=assessment_id,
-                n_components=body.svd.n_components,
-                n_features=body.svd.n_features,
-                components_npy=components_bytes,
-                dtype=body.svd.dtype,
+        if body.svd is not None:
+            db.add(
+                TfidfSvd(
+                    assessment_id=assessment_id,
+                    n_components=body.svd.n_components,
+                    n_features=body.svd.n_features,
+                    components_npy=components_bytes,
+                    dtype=body.svd.dtype,
+                )
             )
-        )
         await db.commit()
     except SQLAlchemyError:
         logger.exception(
@@ -1013,6 +1030,10 @@ async def pull_tfidf_artifacts(
     """Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.
 
     Exactly one of assessment_id or source_version_id must be provided.
+
+    A run pushed without an SVD (#979) comes back with `svd` and
+    `n_components` null; `dtype` then has nothing to act on. A run that
+    records `n_components` but has lost its `tfidf_svd` row still 404s.
     """
     request_start = time.perf_counter()
 
@@ -1059,26 +1080,40 @@ async def pull_tfidf_artifacts(
         select(TfidfSvd).where(TfidfSvd.assessment_id == run.assessment_id)
     )
     svd_read_s = time.perf_counter() - svd_read_start
-    if svd is None:
+    # A null n_components is how a run records that it was pushed without an
+    # SVD. A missing row on a run that declares one is still a broken run.
+    if svd is None and run.n_components is not None:
         raise HTTPException(
             status_code=404, detail="No TF-IDF SVD artifact found for this run"
         )
 
-    # Bound concurrent encode jobs and run the numpy + base64 work off the
-    # event loop. A single ~200MB blob takes seconds of CPU through both
-    # the numpy decode/re-encode and the base64 pass; either one would
-    # otherwise stall other coroutines on this worker.
-    encode_start = time.perf_counter()
-    async with _DOWNCAST_SEMAPHORE:
-        (
-            components_npy,
-            components_b64,
-            out_dtype,
-            int8_scale,
-        ) = await asyncio.to_thread(
-            _encode_components_for_response, svd.components_npy, svd.dtype, dtype
+    svd_payload = None
+    components_npy = b""
+    out_dtype = None
+    encode_s = 0.0
+    if svd is not None:
+        # Bound concurrent encode jobs and run the numpy + base64 work off the
+        # event loop. A single ~200MB blob takes seconds of CPU through both
+        # the numpy decode/re-encode and the base64 pass; either one would
+        # otherwise stall other coroutines on this worker.
+        encode_start = time.perf_counter()
+        async with _DOWNCAST_SEMAPHORE:
+            (
+                components_npy,
+                components_b64,
+                out_dtype,
+                int8_scale,
+            ) = await asyncio.to_thread(
+                _encode_components_for_response, svd.components_npy, svd.dtype, dtype
+            )
+        encode_s = time.perf_counter() - encode_start
+        svd_payload = TfidfSvdPullPayload(
+            n_components=svd.n_components,
+            n_features=svd.n_features,
+            dtype=out_dtype,
+            components_b64=components_b64,
+            int8_scale=int8_scale,
         )
-    encode_s = time.perf_counter() - encode_start
 
     response = TfidfArtifactsPullResponse(
         assessment_id=run.assessment_id,
@@ -1099,13 +1134,7 @@ async def pull_tfidf_artifacts(
             idf=by_kind["char"].idf,
             params=by_kind["char"].params,
         ),
-        svd=TfidfSvdPullPayload(
-            n_components=svd.n_components,
-            n_features=svd.n_features,
-            dtype=out_dtype,
-            components_b64=components_b64,
-            int8_scale=int8_scale,
-        ),
+        svd=svd_payload,
     )
 
     duration_s = round(time.perf_counter() - request_start, 3)
@@ -1405,6 +1434,10 @@ async def _resolve_assessment_for_by_vector(
     # The corpus vectors are stored as Vector(300), so queries must always be
     # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
     # than letting pgvector raise a dimension-mismatch error at query time.
+    # A run pushed without an SVD (#979) has a null n_components and lands
+    # here too: every endpoint behind this check ranks in SVD space, which
+    # that run does not have. For by_text/by_texts this 422 fires before the
+    # encoder's missing-SVD 404.
     if run is not None and run.n_components != TFIDF_CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,

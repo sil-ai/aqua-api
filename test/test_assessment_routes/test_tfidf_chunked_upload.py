@@ -309,6 +309,31 @@ def test_init_n_components_mismatch(client, regular_token1, chunk_tfidf_assessme
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "dropped", [("svd",), ("svd", "n_components")], ids=["svd", "svd+n_components"]
+)
+def test_init_still_requires_an_svd(
+    client, regular_token1, test_db_session, chunk_tfidf_assessment_id, dropped
+):
+    """The single POST accepts a push with no SVD (#979); init does not. The chunks
+    carry only SVD bytes, so an SVD-less push has nothing to chunk. The 422 is
+    FastAPI's own "field required", and no staging row is opened."""
+    body = _init_body()
+    for field in dropped:
+        del body[field]
+    before = test_db_session.query(TfidfSvdStaging).count()
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    missing = {tuple(err["loc"]) for err in resp.json()["detail"]}
+    assert ("body", "svd") in missing
+    test_db_session.expire_all()
+    assert test_db_session.query(TfidfSvdStaging).count() == before
+
+
 def test_commit_missing_chunks_rejected(
     client, regular_token1, chunk_tfidf_assessment_id
 ):
