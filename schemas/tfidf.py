@@ -51,27 +51,33 @@ class TfidfSvdPullPayload(TfidfSvdMeta):
         return self
 
 
+# `svd` and `n_components` are optional as a pair (issue #979): a run fitted
+# without a TruncatedSVD (sil-ai/aqua-assessments#471) pushes the two
+# vectorizers alone. The handler rejects one without the other.
 class TfidfArtifactsPushRequest(BaseModel):
     source_version_id: Optional[int] = None
-    n_components: int
+    n_components: Optional[int] = None
     n_corpus_vrefs: int
     sklearn_version: str
     word_vectorizer: TfidfVectorizerPayload
     char_vectorizer: TfidfVectorizerPayload
-    svd: TfidfSvdPayload
+    svd: Optional[TfidfSvdPayload] = None
 
 
 class TfidfArtifactsPushResponse(BaseModel):
     assessment_id: int
     n_word_features: int
     n_char_features: int
+    # Size of the stored SVD components blob; 0 for a push without an SVD.
     components_bytes: int
 
 
+# `svd` and `n_components` are null for a run pushed without an SVD (#979).
+# No such run can exist before that change, so no earlier caller sees null.
 class TfidfArtifactsPullResponse(BaseModel):
     assessment_id: int
     source_version_id: int
-    n_components: int
+    n_components: Optional[int] = None
     n_word_features: int
     n_char_features: int
     n_corpus_vrefs: int
@@ -79,10 +85,12 @@ class TfidfArtifactsPullResponse(BaseModel):
     created_at: Optional[datetime.datetime] = None
     word_vectorizer: TfidfVectorizerPayload
     char_vectorizer: TfidfVectorizerPayload
-    svd: TfidfSvdPullPayload
+    svd: Optional[TfidfSvdPullPayload] = None
 
 
 # --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
+# `svd` stays required here: the chunks carry only SVD bytes, so a push without
+# an SVD has nothing to chunk and goes through the single POST (#979).
 
 
 class TfidfArtifactsInitRequest(BaseModel):

@@ -73,6 +73,26 @@ engine = create_engine(SYNC_AQUA_DB_URL)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def pg_trgm_extension():
+    """Install ``pg_trgm``, which the similar-verses shortlist needs to run at all.
+
+    ``GET /v4/assessments/{id}/similar-verses`` orders by the trigram distance operator
+    ``<->`` (``assessment_routes/v4/tfidf_retrieval.py``), which does not exist without
+    this extension. The fixtures build the schema with ``create_all``, which runs no
+    migrations, so ``7f2e9a4b8c31`` — the migration that installs the extension in a real
+    deployment — never fires here. Same reason ``vector`` has to be installed by hand for
+    a local database.
+
+    Session-scoped and autouse rather than requested by the tests that need it: a missing
+    extension fails as an opaque ``UndefinedFunction`` from inside a route, which reads as
+    a bug in the route.
+    """
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    yield
+
+
 @pytest.fixture(scope="module")
 async def async_test_db_session_2():
     async_engine = create_async_engine(AQUA_DB_URL)

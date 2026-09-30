@@ -1,5 +1,6 @@
 """Tests for /v3/assessment/{id}/tfidf-artifacts, /v3/assessment/tfidf/artifacts,
-/v3/tfidf_result/by_vector, and /v3/tfidf_result/by_vectors.
+/v3/tfidf_result/by_vector, and /v3/tfidf_result/by_vectors — plus how
+/v3/tfidf_result/by_text(s) answer for a run pushed without an SVD (#979).
 """
 
 import base64
@@ -8,7 +9,7 @@ import io
 import numpy as np
 import pytest
 
-from database.models import Assessment, TfidfPcaVector
+from database.models import Assessment, TfidfArtifactRun, TfidfPcaVector, TfidfSvd
 
 prefix = "v3"
 
@@ -136,6 +137,29 @@ def tfidf_vector_assessment_id(test_db_session, test_revision_id, test_revision_
             )
         )
     test_db_session.commit()
+    return assessment.id
+
+
+def _make_svdless_body(**kwargs) -> dict:
+    """The push sil-ai/aqua-assessments#471 will make: the vectorizers alone."""
+    body = _make_artifact_body(**kwargs)
+    del body["svd"], body["n_components"]
+    return body
+
+
+@pytest.fixture
+def fresh_tfidf_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
+    """A tfidf assessment of its own per test, so an SVD-less run on it can't leak
+    into the module-scoped fixtures the rest of this file pushes to."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="tfidf",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
     return assessment.id
 
 
@@ -1216,3 +1240,201 @@ def test_pull_by_source_version_isolates_versions_with_same_iso_language(
     )
     assert hit.status_code == 200, hit.text
     assert hit.json()["assessment_id"] == a_a.id
+
+
+# ---------------------------------------------------------------------------
+# Pushes without an SVD (#979). A push that sends `svd` is pinned by the
+# validation tests above, which are unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _push(client, token, assessment_id, body):
+    return client.post(
+        f"{prefix}/assessment/{assessment_id}/tfidf-artifacts",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def _pull(client, token, assessment_id, **params):
+    return client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": assessment_id, **params},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_svdless_push_stores_the_vectorizers_and_no_svd(
+    client, regular_token1, test_db_session, fresh_tfidf_assessment_id
+):
+    resp = _push(
+        client, regular_token1, fresh_tfidf_assessment_id, _make_svdless_body()
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "assessment_id": fresh_tfidf_assessment_id,
+        "n_word_features": 3,
+        "n_char_features": 4,
+        "components_bytes": 0,
+    }
+
+    test_db_session.expire_all()
+    run = (
+        test_db_session.query(TfidfArtifactRun)
+        .filter_by(assessment_id=fresh_tfidf_assessment_id)
+        .one()
+    )
+    assert run.n_components is None
+    assert (
+        test_db_session.query(TfidfSvd)
+        .filter_by(assessment_id=fresh_tfidf_assessment_id)
+        .count()
+        == 0
+    )
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float16", "int8"])
+def test_svdless_run_pulls_with_a_null_svd(
+    client, regular_token1, fresh_tfidf_assessment_id, dtype
+):
+    """Not a 404: the run is complete, it just has no SVD. `dtype` has nothing to
+    act on and is accepted as before."""
+    body = _make_svdless_body()
+    assert (
+        _push(client, regular_token1, fresh_tfidf_assessment_id, body).status_code
+        == 200
+    )
+
+    resp = _pull(client, regular_token1, fresh_tfidf_assessment_id, dtype=dtype)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["svd"] is None
+    assert data["n_components"] is None
+    assert data["n_word_features"] == 3
+    assert data["n_char_features"] == 4
+    assert data["n_corpus_vrefs"] == 42
+    assert data["word_vectorizer"] == body["word_vectorizer"]
+    assert data["char_vectorizer"] == body["char_vectorizer"]
+
+
+def test_svd_without_n_components_is_rejected(
+    client, regular_token1, fresh_tfidf_assessment_id
+):
+    body = _make_artifact_body()
+    del body["n_components"]
+    resp = _push(client, regular_token1, fresh_tfidf_assessment_id, body)
+    assert resp.status_code == 422
+    assert "together" in resp.json()["detail"]
+
+
+def test_n_components_without_svd_is_rejected(
+    client, regular_token1, fresh_tfidf_assessment_id
+):
+    body = _make_artifact_body()
+    del body["svd"]
+    resp = _push(client, regular_token1, fresh_tfidf_assessment_id, body)
+    assert resp.status_code == 422
+    assert "together" in resp.json()["detail"]
+
+
+def test_svdless_push_still_checks_the_vectorizers(
+    client, regular_token1, fresh_tfidf_assessment_id
+):
+    """Only the SVD checks are skipped."""
+    body = _make_svdless_body()
+    body["word_vectorizer"]["idf"].append(9.9)
+    resp = _push(client, regular_token1, fresh_tfidf_assessment_id, body)
+    assert resp.status_code == 422
+    assert "word_vectorizer" in resp.json()["detail"]
+
+
+def test_svd_push_replaces_an_svdless_run(
+    client, regular_token1, fresh_tfidf_assessment_id
+):
+    assert (
+        _push(
+            client, regular_token1, fresh_tfidf_assessment_id, _make_svdless_body()
+        ).status_code
+        == 200
+    )
+    assert (
+        _push(
+            client, regular_token1, fresh_tfidf_assessment_id, _make_artifact_body()
+        ).status_code
+        == 200
+    )
+    data = _pull(client, regular_token1, fresh_tfidf_assessment_id).json()
+    assert data["n_components"] == 5
+    assert data["svd"]["n_components"] == 5
+
+
+def test_svdless_push_replaces_an_svd_run(
+    client, regular_token1, test_db_session, fresh_tfidf_assessment_id
+):
+    """The re-push must take the old SVD with it. A leftover tfidf_svd row beside
+    a null n_components would make the pull serve a stale SVD."""
+    for body in (_make_artifact_body(), _make_svdless_body()):
+        assert (
+            _push(client, regular_token1, fresh_tfidf_assessment_id, body).status_code
+            == 200
+        )
+    test_db_session.expire_all()
+    assert (
+        test_db_session.query(TfidfSvd)
+        .filter_by(assessment_id=fresh_tfidf_assessment_id)
+        .count()
+        == 0
+    )
+    data = _pull(client, regular_token1, fresh_tfidf_assessment_id).json()
+    assert (data["svd"], data["n_components"]) == (None, None)
+
+
+def test_a_run_that_declares_an_svd_but_lost_it_still_404s(
+    client, regular_token1, test_db_session, fresh_tfidf_assessment_id
+):
+    """The null n_components is what marks a run as SVD-less. A run that records
+    one but has no tfidf_svd row is broken, and keeps today's 404."""
+    assert (
+        _push(
+            client, regular_token1, fresh_tfidf_assessment_id, _make_artifact_body()
+        ).status_code
+        == 200
+    )
+    test_db_session.query(TfidfSvd).filter_by(
+        assessment_id=fresh_tfidf_assessment_id
+    ).delete()
+    test_db_session.commit()
+
+    resp = _pull(client, regular_token1, fresh_tfidf_assessment_id)
+    assert resp.status_code == 404
+    assert "SVD" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "path, query",
+    [
+        pytest.param("by_vector", {"vector": [0.0] * 300}, id="by_vector"),
+        pytest.param("by_vectors", {"vectors": [[0.0] * 300]}, id="by_vectors"),
+        pytest.param("by_text", {"text": "alpha beta"}, id="by_text"),
+        pytest.param("by_texts", {"texts": ["alpha beta"]}, id="by_texts"),
+    ],
+)
+def test_the_query_endpoints_refuse_an_svdless_run(
+    client, regular_token1, fresh_tfidf_assessment_id, path, query
+):
+    """All four rank in the 300-dim SVD space, which this run does not have. They
+    share one run check, which sees the null n_components and answers 422 before
+    by_text/by_texts reach the encoder's missing-SVD 404. A refusal, not a 500."""
+    assert (
+        _push(
+            client, regular_token1, fresh_tfidf_assessment_id, _make_svdless_body()
+        ).status_code
+        == 200
+    )
+    resp = client.post(
+        f"{prefix}/tfidf_result/{path}",
+        json={"assessment_id": fresh_tfidf_assessment_id, "limit": 3, **query},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "300" in resp.json()["detail"]

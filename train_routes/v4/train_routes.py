@@ -426,6 +426,13 @@ async def get_training_session_results(
     there is none, the source field is `null` rather than an empty list, so "no
     source-side corpus" is distinguishable from "a corpus with nothing for this verse".
 
+    A `tfidf` side covers the verses its revision has text for, and ranks each page
+    verse against that whole corpus by TF-IDF cosine, in `[0, 1]` — the score the
+    similar-verses read gives the same pair. The first page on a server that has not
+    ranked that revision recently can take several seconds while it prepares the
+    corpus; later pages are fast. An assessment from before TF-IDF artifacts were
+    stored still lists its verses, with no neighbours.
+
     `book`, `chapter` and `verse` narrow progressively, each needing the one above it. A
     well-formed book abbreviation naming no book yields an empty page rather than v3's
     `400`: it narrows an already-authorized set instead of naming a parent resource,

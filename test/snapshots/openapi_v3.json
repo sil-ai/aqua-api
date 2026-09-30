@@ -5653,8 +5653,15 @@
             "type": "integer"
           },
           "n_components": {
-            "title": "N Components",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Components"
           },
           "n_corpus_vrefs": {
             "title": "N Corpus Vrefs",
@@ -5673,7 +5680,14 @@
             "type": "integer"
           },
           "svd": {
-            "$ref": "#/components/schemas/TfidfSvdPullPayload"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TfidfSvdPullPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "word_vectorizer": {
             "$ref": "#/components/schemas/TfidfVectorizerPayload"
@@ -5682,14 +5696,12 @@
         "required": [
           "assessment_id",
           "source_version_id",
-          "n_components",
           "n_word_features",
           "n_char_features",
           "n_corpus_vrefs",
           "sklearn_version",
           "word_vectorizer",
-          "char_vectorizer",
-          "svd"
+          "char_vectorizer"
         ],
         "title": "TfidfArtifactsPullResponse",
         "type": "object"
@@ -5700,8 +5712,15 @@
             "$ref": "#/components/schemas/TfidfVectorizerPayload"
           },
           "n_components": {
-            "title": "N Components",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Components"
           },
           "n_corpus_vrefs": {
             "title": "N Corpus Vrefs",
@@ -5723,19 +5742,24 @@
             "title": "Source Version Id"
           },
           "svd": {
-            "$ref": "#/components/schemas/TfidfSvdPayload"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TfidfSvdPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "word_vectorizer": {
             "$ref": "#/components/schemas/TfidfVectorizerPayload"
           }
         },
         "required": [
-          "n_components",
           "n_corpus_vrefs",
           "sklearn_version",
           "word_vectorizer",
-          "char_vectorizer",
-          "svd"
+          "char_vectorizer"
         ],
         "title": "TfidfArtifactsPushRequest",
         "type": "object"
@@ -10654,7 +10678,7 @@
     },
     "/latest/assessment/tfidf/artifacts": {
       "get": {
-        "description": "Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.\n\nExactly one of assessment_id or source_version_id must be provided.",
+        "description": "Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.\n\nExactly one of assessment_id or source_version_id must be provided.\n\nA run pushed without an SVD (#979) comes back with `svd` and\n`n_components` null; `dtype` then has nothing to act on. A run that\nrecords `n_components` but has lost its `tfidf_svd` row still 404s.",
         "operationId": "pull_tfidf_artifacts_latest_assessment_tfidf_artifacts_get",
         "parameters": [
           {
@@ -11733,7 +11757,7 @@
     },
     "/latest/assessment/{assessment_id}/tfidf-artifacts": {
       "post": {
-        "description": "Store TF-IDF encoder artifacts (vectorizers + SVD) for an assessment.\n\nRe-posting replaces all artifacts for this assessment \u2014 safe to retry.",
+        "description": "Store TF-IDF encoder artifacts (vectorizers + SVD) for an assessment.\n\nRe-posting replaces all artifacts for this assessment \u2014 safe to retry.\n\n`svd` and `n_components` are optional as a pair (#979). A run fitted without\na TruncatedSVD (sil-ai/aqua-assessments#471) sends neither: it stores the two\nvectorizers, a null `n_components` and no `tfidf_svd` row, and skips every\nSVD check. A push that sends `svd` is validated exactly as before.",
         "operationId": "push_tfidf_artifacts_latest_assessment__assessment_id__tfidf_artifacts_post",
         "parameters": [
           {
@@ -20078,7 +20102,7 @@
     },
     "/v3/assessment/tfidf/artifacts": {
       "get": {
-        "description": "Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.\n\nExactly one of assessment_id or source_version_id must be provided.",
+        "description": "Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.\n\nExactly one of assessment_id or source_version_id must be provided.\n\nA run pushed without an SVD (#979) comes back with `svd` and\n`n_components` null; `dtype` then has nothing to act on. A run that\nrecords `n_components` but has lost its `tfidf_svd` row still 404s.",
         "operationId": "pull_tfidf_artifacts_v3_assessment_tfidf_artifacts_get",
         "parameters": [
           {
@@ -21157,7 +21181,7 @@
     },
     "/v3/assessment/{assessment_id}/tfidf-artifacts": {
       "post": {
-        "description": "Store TF-IDF encoder artifacts (vectorizers + SVD) for an assessment.\n\nRe-posting replaces all artifacts for this assessment \u2014 safe to retry.",
+        "description": "Store TF-IDF encoder artifacts (vectorizers + SVD) for an assessment.\n\nRe-posting replaces all artifacts for this assessment \u2014 safe to retry.\n\n`svd` and `n_components` are optional as a pair (#979). A run fitted without\na TruncatedSVD (sil-ai/aqua-assessments#471) sends neither: it stores the two\nvectorizers, a null `n_components` and no `tfidf_svd` row, and skips every\nSVD check. A push that sends `svd` is validated exactly as before.",
         "operationId": "push_tfidf_artifacts_v3_assessment__assessment_id__tfidf_artifacts_post",
         "parameters": [
           {

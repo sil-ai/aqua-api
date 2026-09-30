@@ -85,7 +85,7 @@ from datetime import datetime, timezone
 from typing import Any, Sequence
 
 import modal
-from sqlalchemy import Integer, and_, bindparam, func, or_, select, text
+from sqlalchemy import Integer, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -101,6 +101,7 @@ from api_v4.schemas.training import (
     TrainingVerseScore,
     TrainingWordAlignment,
 )
+from assessment_routes.v4 import tfidf_retrieval
 from bible_routes.v4 import revision_service, version_service
 from config import settings
 from database.models import (
@@ -113,7 +114,6 @@ from database.models import (
     BookReference,
     NgramsTable,
     NgramVrefTable,
-    TfidfPcaVector,
     TrainingJob,
     UserDB,
     UserGroup,
@@ -925,9 +925,12 @@ def _scope_columns(query, model, scope):
 def _scope_via_reference(query, scope):
     """Narrow a vref-only subquery through its join to ``verse_reference``.
 
-    ``tfidf_pca_vector`` and ``ngram_vref_table`` store a vref and nothing else, so the
-    location triple has to be derived: the chapter number is the second space-separated
-    field of ``verse_reference.chapter`` (``"GEN 1"`` -> ``1``).
+    The tfidf member reads ``verse_text.verse_reference`` and ``ngram_vref_table``
+    stores a vref and nothing else, so the location triple has to be derived: the chapter
+    number is the second space-separated field of ``verse_reference.chapter``
+    (``"GEN 1"`` -> ``1``). ``verse_text`` does carry its own ``book``/``chapter``/
+    ``verse`` columns, but deriving them here keeps both vref-only members scoped by one
+    rule.
     """
     if scope.book is not None:
         query = query.where(VerseReference.book_reference == scope.book)
@@ -951,12 +954,28 @@ def _derived_location_columns(vref_column):
     )
 
 
-def _tfidf_vref_subquery(assessment_id: int, scope):
-    """One member of the vref union: the verses one TF-IDF corpus has vectors for."""
+def _tfidf_vref_subquery(revision_id: int, scope):
+    """One member of the vref union: the verses one TF-IDF corpus was fit on.
+
+    Read from ``verse_text`` through
+    :func:`~assessment_routes.v4.tfidf_retrieval.corpus_conditions` — the revision's
+    verses minus empty, whitespace-only and ``<range>`` ones, which is the corpus the
+    runner fits on and what its artifact run counts as ``n_corpus_vrefs``. The artifact
+    run records how many, not which, so the text is the only record left once the
+    vector rows are gone (#967).
+
+    It is the same clause the neighbour index is built from, so every tfidf verse on a
+    page is a row of its side's index. That is also a narrowing from the old member,
+    which listed a verse wherever ``tfidf_pca_vector`` had a row — and the runner writes
+    a zero vector for every *empty* verse too, so that meant all ~41,899 canonical
+    verses whether the revision has text there or not.
+
+    Duplicate ``verse_text`` rows for one vref are collapsed by the union's ``distinct``.
+    """
     return _scope_via_reference(
-        select(*_derived_location_columns(TfidfPcaVector.vref))
-        .join(VerseReference, VerseReference.full_verse_id == TfidfPcaVector.vref)
-        .where(TfidfPcaVector.assessment_id == assessment_id),
+        select(*_derived_location_columns(VerseText.verse_reference))
+        .join(VerseReference, VerseReference.full_verse_id == VerseText.verse_reference)
+        .where(*tfidf_retrieval.corpus_conditions(revision_id)),
         scope,
     )
 
@@ -1033,62 +1052,78 @@ async def _page_vrefs(
 async def _verse_text(
     db: AsyncSession, revision_id: int, vrefs: list[str]
 ) -> dict[str, str]:
-    """Bulk-fetch one revision's text for a set of vrefs, skipping rows with no text."""
+    """Bulk-fetch one revision's text for a set of vrefs, skipping rows with no text.
+
+    Lowest id wins where ``(revision_id, verse_reference)`` is duplicated, which is the
+    rule the neighbour index applies (:func:`~assessment_routes.v4.tfidf_retrieval.corpus_rows`)
+    — so a neighbour is displayed with the same text it was scored from. The filter
+    comes after the pick, so a duplicate whose lowest-id row is null stays absent rather
+    than falling through to a later row, as
+    :func:`~assessment_routes.v4.tfidf_retrieval.query_texts` does.
+    """
     if not vrefs:
         return {}
     rows = await db.execute(
-        select(VerseText.verse_reference, VerseText.text).where(
+        select(VerseText.verse_reference, VerseText.text)
+        .where(
             VerseText.revision_id == revision_id,
             VerseText.verse_reference.in_(vrefs),
         )
+        .order_by(VerseText.id)
     )
-    return {row[0]: row[1] for row in rows.all() if row[1] is not None}
-
-
-#: Nearest-neighbour search over one corpus, for every vref on the page at once. Raw SQL
-#: because the ``LATERAL`` join is what keeps this one query rather than one per verse,
-#: and SQLAlchemy's ORM layer cannot express the correlated per-row ``LIMIT``.
-_NEIGHBOURS_SQL = text(
-    """
-    SELECT q.vref AS query_vref,
-           nn.vref AS neighbour_vref,
-           nn.cosine_similarity AS similarity
-    FROM tfidf_pca_vector AS q
-    JOIN LATERAL (
-        SELECT c.vref,
-               inner_product(c.vector, q.vector) AS cosine_similarity
-        FROM tfidf_pca_vector AS c
-        WHERE c.assessment_id = :assessment_id
-          AND c.vref != q.vref
-        ORDER BY cosine_similarity DESC
-        LIMIT :limit
-    ) AS nn ON true
-    WHERE q.assessment_id = :assessment_id
-      AND q.vref IN :page_vrefs
-    ORDER BY q.vref, nn.cosine_similarity DESC
-    """
-).bindparams(bindparam("page_vrefs", expanding=True))
+    first: dict[str, str | None] = {}
+    for vref, text in rows.all():
+        first.setdefault(vref, text)
+    return {vref: text for vref, text in first.items() if text is not None}
 
 
 async def _neighbours(
-    db: AsyncSession, assessment_id: int, page_vrefs: list[str], top_k: int
+    db: AsyncSession,
+    *,
+    revision_id: int,
+    assessment_id: int,
+    page_vrefs: list[str],
+    top_k: int,
 ) -> dict[str, list[tuple[str, float]]]:
-    """Nearest neighbours per page vref within one corpus, most similar first.
+    """Nearest neighbours per page vref within one side's corpus, most similar first.
+
+    Ranked by the in-process
+    :class:`~assessment_routes.v4.tfidf_retrieval.CorpusIndex` for ``revision_id``, the
+    one ``POST /v4/assessments/{id}/similar-verses`` builds and caches — so a page is one
+    batch against the whole corpus, not a ranking per verse, and no stored vector is
+    read. ``similarity`` is the cosine the similar-verses reads report, in ``[0, 1]``.
+    The ranking is exact over the whole corpus, where the similar-verses GET ranks a
+    trigram shortlist, so the tail of a verse's list can differ from the GET's; each
+    pair's score is the same.
+
+    A cold index is built here, off the event loop, once per revision per worker (~7 s
+    for an English Bible); the first page on a cold worker waits for it.
 
     When run against the *source* corpus this is still keyed on the page's vrefs: it
     asks "for each of these verses, what is nearest to it inside the source-side
-    corpus", not for a separate source-side pagination. A verse the source corpus has no
-    vector for simply comes back with no neighbours.
+    corpus", not for a separate source-side pagination. A verse outside the corpus —
+    no text in that revision, or empty, whitespace-only or ``<range>`` — gets no entry.
+
+    **No recipe, no neighbours.** An assessment without an artifact run (every tfidf
+    assessment from before the artifact push) cannot be ranked without stored vectors,
+    and this does not fall back to them. It returns ``{}`` and logs, so the page still
+    renders — its rows come from ``verse_text``, not from this.
     """
-    rows = await db.execute(
-        _NEIGHBOURS_SQL,
-        {"assessment_id": assessment_id, "page_vrefs": page_vrefs, "limit": top_k},
-    )
-    buckets: dict[str, list[tuple[str, float]]] = {}
-    for row in rows.all():
-        similarity = float(row.similarity) if row.similarity is not None else 0.0
-        buckets.setdefault(row.query_vref, []).append((row.neighbour_vref, similarity))
-    return buckets
+    try:
+        index = await tfidf_retrieval.corpus_index(
+            db, revision_id=revision_id, assessment_id=assessment_id
+        )
+    except tfidf_retrieval.TfidfRecipeNotFound as exc:
+        logger.warning(
+            "no TF-IDF recipe for training-session neighbours; returning none",
+            extra={
+                "assessment_id": assessment_id,
+                "revision_id": revision_id,
+                "detail": exc.detail,
+            },
+        )
+        return {}
+    return await asyncio.to_thread(index.neighbours, page_vrefs, limit=top_k)
 
 
 async def _ngram_buckets(
@@ -1165,16 +1200,24 @@ async def session_results(
     same-type assessment on the session's source revision for the source side. The source
     side contributes to the vref universe too, so a verse covered only by source-side
     hits still paginates.
+
+    **No stored TF-IDF vectors are read** (#978). A tfidf side's verses come from its
+    revision's text and its neighbours from the in-process corpus index — see
+    :func:`_tfidf_vref_subquery` and :func:`_neighbours`.
     """
     session_source_revision_id = jobs[0].source_revision_id
     session_target_revision_id = jobs[0].target_revision_id
 
-    finished: dict[str, int] = {
-        job.type: job.assessment_id
+    finished_assessments: dict[str, Assessment] = {
+        job.type: job.assessment
         for job in jobs
         if job.assessment is not None
         and job.assessment.status == ASSESSMENT_FINISHED_VALUE
         and job.assessment_id is not None
+    }
+    finished: dict[str, int] = {
+        training_type: assessment.id
+        for training_type, assessment in finished_assessments.items()
     }
     sem_sim_id = finished.get(TrainingType.semantic_similarity.value)
     word_align_id = finished.get(TrainingType.word_alignment.value)
@@ -1206,9 +1249,22 @@ async def session_results(
         # The verse-level word-alignment score lives in `assessment_result` beside the
         # per-word rows, so a verse scored but not aligned still paginates.
         subqueries.append(_located_subquery(AssessmentResult, word_align_id, scope))
-    for assessment_id in (tfidf_id, source_tfidf_id):
-        if assessment_id is not None:
-            subqueries.append(_tfidf_vref_subquery(assessment_id, scope))
+    # The tfidf members list verses from each side's *text*, not from vector rows — see
+    # `_tfidf_vref_subquery`. Each side's revision is its assessment's `revision_id`,
+    # because that is where `corpus_index` looks for the assessment's artifact run. Both
+    # submit paths set it to the session's target, and the source side's assessment was
+    # found *by* the source revision, so these equal the session's two revisions.
+    tfidf_revision_id = (
+        finished_assessments[TrainingType.tfidf.value].revision_id
+        if tfidf_id is not None
+        else None
+    )
+    source_tfidf_revision_id = (
+        session_source_revision_id if source_tfidf_id is not None else None
+    )
+    for revision_id in (tfidf_revision_id, source_tfidf_revision_id):
+        if revision_id is not None:
+            subqueries.append(_tfidf_vref_subquery(revision_id, scope))
     for assessment_id in (ngrams_id, source_ngrams_id):
         if assessment_id is not None:
             subqueries.append(_ngram_vref_subquery(assessment_id, scope))
@@ -1266,11 +1322,24 @@ async def session_results(
 
     target_neighbours: dict[str, list[tuple[str, float]]] = {}
     source_neighbours: dict[str, list[tuple[str, float]]] = {}
+    # One side after the other, not gathered: both resolve their canonical run on the
+    # request's session, which cannot run two statements at once — and index builds are
+    # serialized per worker anyway, so gathering would not shorten a cold page.
     if tfidf_id is not None:
-        target_neighbours = await _neighbours(db, tfidf_id, page_vrefs, tfidf_top_k)
+        target_neighbours = await _neighbours(
+            db,
+            revision_id=tfidf_revision_id,
+            assessment_id=tfidf_id,
+            page_vrefs=page_vrefs,
+            top_k=tfidf_top_k,
+        )
         if source_tfidf_id is not None:
             source_neighbours = await _neighbours(
-                db, source_tfidf_id, page_vrefs, tfidf_top_k
+                db,
+                revision_id=source_tfidf_revision_id,
+                assessment_id=source_tfidf_id,
+                page_vrefs=page_vrefs,
+                top_k=tfidf_top_k,
             )
 
     target_ngrams: dict[int, dict[str, Any]] = {}

@@ -500,10 +500,12 @@ class TrainingNeighbour(V4BaseModel):
     )
     similarity: float = Field(
         description=(
-            "How close this verse is to the row's verse — the inner product of their "
-            "PCA-reduced TF-IDF vectors, higher being more similar. **A ranking score, "
-            "not a calibrated one**: comparable within one corpus, not across corpora. "
-            "Do not threshold on it."
+            "How close this verse is to the row's verse: the cosine of their TF-IDF "
+            "vectors, between 0 and 1, higher being more similar. The same score "
+            "`GET /v4/assessments/{id}/similar-verses` reports for the same pair of "
+            "verses. Comparable within one corpus, not across corpora. **Not comparable "
+            "with values from before this changed** (#978): those were inner products "
+            "of PCA-reduced vectors, on a different scale."
         ),
     )
     target_text: str | None = Field(
@@ -531,8 +533,10 @@ class TrainingTfidfNeighbours(V4BaseModel):
     target_neighbours: list[TrainingNeighbour] = Field(
         default_factory=list,
         description=(
-            "Neighbours within this session's trained corpus, most similar first. Empty "
-            "where the verse has no neighbours — a one-verse corpus, say."
+            "Neighbours within this session's trained corpus, most similar first, ties "
+            "broken by vref. Empty where there are none to give: the verse has no text "
+            "in the target revision, the corpus has no other verse, or the assessment "
+            "predates stored TF-IDF artifacts and so cannot be ranked."
         ),
     )
     source_neighbours: list[TrainingNeighbour] | None = Field(
