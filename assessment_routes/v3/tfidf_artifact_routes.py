@@ -1205,7 +1205,8 @@ def _encoder_nbytes(encoder: tuple) -> int:
 
 
 # The .npy header is a magic string plus a short dict repr, padded for alignment —
-# comfortably under 4KB for any array we store.
+# ~100-200 bytes for anything np.save writes. A direct push stores the client's bytes
+# verbatim, so a longer header is possible; it falls back rather than failing.
 _NPY_HEADER_PROBE_BYTES = 4096
 
 
@@ -1224,8 +1225,10 @@ def _components_from_npy(components_npy: bytes) -> np.ndarray:
     matmuls against ``components_`` in ``transform``, and numpy is happy to do that
     from a read-only buffer.
 
-    Falls back to ``np.load`` for the shapes this cannot view directly: a Fortran
-    ordered payload, or a .npy version whose header reader we do not have.
+    Falls back to ``np.load``, and logs that it did, for payloads this cannot view
+    directly: Fortran order, a .npy version whose header reader we do not have, or a
+    header longer than the probe. Only the direct single-POST push can store one —
+    the chunked commit always re-saves in C order.
     """
     header = io.BytesIO(components_npy[:_NPY_HEADER_PROBE_BYTES])
     version = np.lib.format.read_magic(header)
@@ -1234,17 +1237,28 @@ def _components_from_npy(components_npy: bytes) -> np.ndarray:
         (2, 0): np.lib.format.read_array_header_2_0,
     }.get(version)
     if read_header is None:
-        return np.load(io.BytesIO(components_npy), allow_pickle=False)
+        reason = f"npy version {version[0]}.{version[1]}"
+    else:
+        try:
+            shape, fortran_order, dtype = read_header(header)
+        except ValueError:
+            reason = f"header longer than {_NPY_HEADER_PROBE_BYTES} bytes"
+        else:
+            if not fortran_order:
+                return np.frombuffer(
+                    components_npy,
+                    dtype=dtype,
+                    count=int(np.prod(shape)),
+                    offset=header.tell(),
+                ).reshape(shape)
+            reason = "Fortran order"
 
-    shape, fortran_order, dtype = read_header(header)
-    if fortran_order:
-        return np.load(io.BytesIO(components_npy), allow_pickle=False)
-    return np.frombuffer(
-        components_npy,
-        dtype=dtype,
-        count=int(np.prod(shape)),
-        offset=header.tell(),
-    ).reshape(shape)
+    logger.warning(
+        "tfidf components payload not viewable in place (%s); copying via np.load",
+        reason,
+        extra={"reason": reason, "payload_bytes": len(components_npy)},
+    )
+    return np.load(io.BytesIO(components_npy), allow_pickle=False)
 
 
 def _rehydrate_encoder(word, char, svd) -> tuple:

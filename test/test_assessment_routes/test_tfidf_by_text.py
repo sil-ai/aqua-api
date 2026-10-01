@@ -729,9 +729,14 @@ def test_components_are_viewed_in_place_not_copied():
 
     assert np.array_equal(viewed, original)
     assert viewed.dtype == original.dtype
-    # The view shares the blob's storage rather than owning a copy of it.
+    # The view shares the blob's storage rather than owning a copy of it: its base
+    # chain ends at the blob itself. A non-None base alone would not prove this —
+    # np.load(...).reshape(...) has one too, over a copy.
     assert not viewed.flags.writeable
-    assert viewed.base is not None
+    base = viewed
+    while isinstance(base, np.ndarray):
+        base = base.base
+    assert base is blob
 
 
 def test_a_fortran_ordered_payload_still_loads():
@@ -741,5 +746,22 @@ def test_a_fortran_ordered_payload_still_loads():
     np.save(buf, original, allow_pickle=False)
 
     loaded = tfidf_routes._components_from_npy(buf.getvalue())
+
+    assert np.array_equal(loaded, original)
+
+
+def test_a_header_longer_than_the_probe_still_loads():
+    """A direct push stores client bytes verbatim, so a .npy header can outrun the
+    probe. It falls back to np.load instead of failing the request."""
+    original = np.arange(12, dtype=np.float32).reshape(3, 4)
+    header = repr(np.lib.format.header_data_from_array_1_0(original)).encode("latin1")
+    # Pad with legal trailing spaces past the probe, keeping the data 16-byte aligned.
+    length = tfidf_routes._NPY_HEADER_PROBE_BYTES + 1000
+    length += (16 - (10 + length + 1) % 16) % 16
+    header = header.ljust(length) + b"\n"
+    blob = b"\x93NUMPY\x01\x00" + len(header).to_bytes(2, "little") + header
+    blob += original.tobytes()
+
+    loaded = tfidf_routes._components_from_npy(blob)
 
     assert np.array_equal(loaded, original)
