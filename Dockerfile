@@ -38,7 +38,7 @@ ADD database/ ./database
 ADD alembic/ ./database
 ADD utils/ ./utils
 
-# Put the uv-managed virtualenv first on PATH so `uvicorn` and the app's imports
+# Put the uv-managed virtualenv first on PATH so `gunicorn` and the app's imports
 # resolve to it.
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app:$PYTHONPATH
@@ -46,9 +46,9 @@ ENV PYTHONPATH=/app:$PYTHONPATH
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Worker count. Left to $WEB_CONCURRENCY (uvicorn reads it only when --workers
+# Worker count. Left to $WEB_CONCURRENCY (gunicorn reads it only when --workers
 # is absent) so it can be sized to the host without a rebuild. Set it
-# explicitly: with the flag gone and the variable unset uvicorn runs a SINGLE
+# explicitly: with the flag gone and the variable unset gunicorn runs a SINGLE
 # worker, and a present-but-empty value (WEB_CONCURRENCY=) crashes the
 # container at startup on int("").
 #
@@ -59,14 +59,38 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # TFIDF_ENCODER_CACHE_MAX_BYTES (768MB default, see config.py) — "at least"
 # because an encoder larger than the whole budget is retained rather than
 # evicted, so the real ceiling is per-worker max(budget, largest encoder).
-#
-# NOTE this lowers the probability of that OOM; it does not make the outage
-# self-healing. uvicorn's multiprocess supervisor forks workers once and never
-# reaps or restarts them, and the parent holds the listening socket — so a
-# killed worker stays dead and the port stays open. Recovery depends on the
-# App Runner HTTP /health check, which only fires once EVERY worker is gone.
 ENV WEB_CONCURRENCY=4
 
-# Keep-alive must exceed the App Runner ingress idle timeout (120s) with margin;
-# uvicorn's 5s default races the ingress's connection reuse and yields sporadic 502s.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "130"]
+# gunicorn supervises the uvicorn workers (#988). uvicorn's own --workers
+# supervisor forks them once and never replaces one that dies, while its parent
+# keeps holding the port, so a worker killed by the OOM killer stayed dead and
+# the container never looked down enough to restart. gunicorn replaces a dead
+# worker within seconds while the others keep serving.
+#
+# --keep-alive 130: carried over from --timeout-keep-alive 130 under plain
+#   uvicorn, set when the App Runner ingress (120s idle) reused connections and
+#   uvicorn's 5s default yielded sporadic 502s. nginx today opens a fresh
+#   connection per request (no upstream keepalive), so it is inert behind
+#   nginx; keep it above nginx's idle time if upstream keepalive is ever added.
+# --timeout 120: gunicorn kills a worker whose heartbeat goes silent this long.
+#   The uvicorn worker sends that heartbeat from its event loop, not per
+#   request, so a slow request does not trip it; only an event loop blocked for
+#   roughly 60-120s does, and nginx has given up on the request by then anyway
+#   (proxy_read_timeout defaults to 60s). Heavy CPU work already runs off the
+#   loop via asyncio.to_thread.
+# --max-requests / --max-requests-jitter: recycle each worker now and then to
+#   shed slow memory growth in the per-worker TF-IDF caches. High enough that a
+#   worker keeps its warm cache for a long time; the jitter stops all workers
+#   recycling at once.
+# --worker-tmp-dir /dev/shm: the heartbeat is a file touched on every notify;
+#   keep it in memory rather than on the container's overlay filesystem.
+# --access-logfile -: keep uvicorn's access log on stdout, as before.
+CMD ["gunicorn", "app:app", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--keep-alive", "130", \
+     "--timeout", "120", \
+     "--max-requests", "5000", \
+     "--max-requests-jitter", "500", \
+     "--worker-tmp-dir", "/dev/shm", \
+     "--access-logfile", "-"]
