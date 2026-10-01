@@ -1242,7 +1242,7 @@ def _components_from_npy(components_npy: bytes) -> np.ndarray:
         try:
             shape, fortran_order, dtype = read_header(header)
         except ValueError:
-            reason = f"header longer than {_NPY_HEADER_PROBE_BYTES} bytes"
+            reason = f"header unreadable from the first {_NPY_HEADER_PROBE_BYTES} bytes"
         else:
             if not fortran_order:
                 return np.frombuffer(
