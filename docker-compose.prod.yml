@@ -2,6 +2,10 @@ services:
   api:
     image: ${DO_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    # gunicorn drains in-flight requests for up to --graceful-timeout (30s
+    # default) on SIGTERM. Compose's 10s default would SIGKILL it first on
+    # every deploy's `down`; give it the full drain plus a little margin.
+    stop_grace_period: 35s
     ports:
       # Loopback only — nginx reaches it over the compose network, so there is
       # no reason to expose it (unencrypted) on the droplet's public IP.

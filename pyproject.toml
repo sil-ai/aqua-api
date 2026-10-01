@@ -21,6 +21,9 @@ dependencies = [
     "fastapi==0.141.1",
     "starlette==1.6.0",                # explicit pin; clears the CVEs tracked in #774/#937
     "uvicorn==0.17.6",
+    # Process manager for the uvicorn workers (#988). uvicorn's own --workers
+    # supervisor never replaces a dead worker; gunicorn does. See the Dockerfile CMD.
+    "gunicorn==26.2.0",
     "uvloop==0.19.0",                 # uvicorn event loop (auto-detected when installed)
     "httptools==0.6.1",               # uvicorn HTTP parser (auto-detected when installed)
     "websockets==12.0",               # uvicorn websockets protocol
