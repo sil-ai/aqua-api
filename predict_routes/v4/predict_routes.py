@@ -170,11 +170,12 @@ async def create_prediction(
 
     # End the read transaction authorization opened, so the request's connection goes
     # back to the pool for the fan-out rather than sitting idle under it. The in-process
-    # ``tfidf`` leg checks out a connection of its own (and a third on a cold index
-    # build), so holding this one would put two or three on every request and let a
-    # burst of them starve each other until ``pool_timeout``. ``commit`` rather than
-    # ``rollback``: the session has ``expire_on_commit=False``, and a rollback would
-    # expire ``current_user``, which the slow-leg spawn reads afterwards.
+    # ``tfidf`` leg checks out a connection of its own, and a cold index build a third,
+    # so this keeps a request to two at most rather than three. It does not remove the
+    # pressure: the leg still holds its connection while it waits on a build, as
+    # ``similar-verses`` does. ``commit`` rather than ``rollback``: the session has
+    # ``expire_on_commit=False``, and a rollback would expire ``current_user``, which
+    # the slow-leg spawn reads afterwards.
     await db.commit()
 
     apps = data.apps if data.apps is not None else list(PredictApp)
@@ -201,8 +202,8 @@ async def create_prediction(
         return PredictOut(pairs=data.pairs, results=await fanout, job=None)
 
     # Overlapped rather than sequential: the spawn is its own round trip to Modal and
-    # there is no reason for it to wait on six inference calls. Running them together is
-    # safe despite the shared session, because only the spawn touches it: the in-process
+    # there is no reason for it to wait on five inference calls and the in-process
+    # ``tfidf`` leg. Running them together is safe despite the shared session, because only the spawn touches it: the in-process
     # ``tfidf`` leg reads the database on a session of its own.
     #
     # Not ``asyncio.gather``, though, and the difference matters. ``spawn_slow_agent``

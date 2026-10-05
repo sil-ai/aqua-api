@@ -1,7 +1,7 @@
 """Tests for the in-process ``tfidf`` leg of ``POST /v4/predictions`` (#992).
 
-Nothing here mocks the ranking: each test stores real verse text and a real fitted
-vectorizer pair. Modal is still patched, to prove ``tfidf`` never reaches it and to stand
+The ranking is real, except in the failure-isolation test, which replaces it: each test
+stores real verse text and a real fitted vectorizer pair. Modal is still patched, to prove ``tfidf`` never reaches it and to stand
 in for the other apps.
 """
 
@@ -365,15 +365,37 @@ class TestTargetSide:
         data = _ok(client, regular_token1, target_version_id=target.version_id)
         assert data["target_revision_id"] == target.revision_id
 
+    def test_the_latest_revision_is_the_highest_id_not_the_newest_date(
+        self, client, regular_token1, db_session
+    ):
+        """A later upload dated in the past still counts as the latest revision.
+
+        Under the Modal app's ``date`` rule this would resolve to the assessed revision
+        and succeed; under the highest-id rule it resolves to the new, unassessed one.
+        """
+        target = _Side(db_session, TARGET)
+        backdated = _revision(db_session, target.version_id)
+        db_session.query(BibleRevision).filter_by(id=backdated).update(
+            {"date": datetime.now() - timedelta(days=60)}
+        )
+        db_session.commit()
+        result = _tfidf(client, regular_token1, target_version_id=target.version_id)
+        assert result["status"] == "not_trained"
+        assert f"revision_id={backdated}" in result["error"]
+
     def test_the_latest_finished_assessment_wins(
         self, client, regular_token1, db_session
     ):
-        target = _Side(db_session, TARGET, end_time=datetime.now() - timedelta(days=2))
-        newer = _assessment(db_session, target.revision_id)
-        _recipe(db_session, newer, target.version_id, TARGET)
+        """Latest by ``end_time``, not by id: the higher id here finished earlier."""
+        target = _Side(db_session, TARGET)
+        older = _assessment(
+            db_session, target.revision_id, end_time=datetime.now() - timedelta(days=2)
+        )
+        _recipe(db_session, older, target.version_id, TARGET)
         _assessment(db_session, target.revision_id, status="failed")
         data = _ok(client, regular_token1, revision_id=target.revision_id)
-        assert data["target_assessment_id"] == newer
+        assert older > target.assessment_id
+        assert data["target_assessment_id"] == target.assessment_id
 
     @pytest.mark.parametrize(
         "case,error",
@@ -507,16 +529,18 @@ class TestLimit:
     def test_default_and_maximum(
         self, client, regular_token1, db_session, sent, ranked_with
     ):
-        target = _Side(db_session, TARGET)
-        fields = {"revision_id": target.revision_id}
-        if sent is not None:
-            fields["limit"] = sent
+        target, source = _Side(db_session, TARGET), _Side(db_session, SOURCE)
+        fields = {} if sent is None else {"limit": sent}
         real = tfidf_predict.assessment_service._rank_texts
         with patch.object(
             tfidf_predict.assessment_service, "_rank_texts", AsyncMock(wraps=real)
         ) as spy:
-            _ok(client, regular_token1, **fields)
-        assert spy.await_args.kwargs["limit"] == ranked_with
+            _both(client, regular_token1, target, source, **fields)
+        # One call per side, both with the same limit.
+        assert [call.kwargs["limit"] for call in spy.await_args_list] == [
+            ranked_with,
+            ranked_with,
+        ]
 
     def test_above_100_is_422_not_a_clamp(self, client, regular_token1):
         """``similar-verses``' rule; the cap moved down from 10,000 on #990."""
@@ -569,7 +593,11 @@ def test_more_than_eight_pairs_use_the_corpus_index(client, regular_token1, db_s
 
 
 def test_runs_beside_the_slow_agent_spawn(client, regular_token1, db_session):
-    """The spawn writes on the request's session while this leg reads on its own."""
+    """Both complete when the slow-leg spawn runs beside the leg.
+
+    This shows the two coexist, not that they use separate sessions: the test database
+    uses NullPool and the timing here rarely overlaps them.
+    """
     target = _Side(db_session, TARGET)
     response = _post(
         client,

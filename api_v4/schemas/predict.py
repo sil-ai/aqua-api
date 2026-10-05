@@ -31,7 +31,9 @@ That choice pays a second dividend, verified against the runner rather than assu
 one of these six strings (checked against
 ``aqua-assessments/assessments/*/app.py``'s ``modal.App("...")`` literals), so v4 needs
 no mapping table at all and cannot drift from one. ``predict_service`` dispatches on
-``app.value``; a test pins the equality in both directions.
+``app.value``; a test pins the equality in both directions. (``tfidf`` is the exception
+since #992: it is answered in process, not dispatched, though its value still names the
+Modal app that trains it.)
 
 :class:`PredictApp` is **not** ``AssessmentType`` itself, and the difference is the one
 value that would break it: ``sentence-length`` is an assessment type with no predict
@@ -70,8 +72,9 @@ Bounds
 ------
 
 ``max_length`` on the text fields and ``max_length`` on ``pairs`` are v3's, unchanged:
-they bound what a single request can hand to a GPU container, and v3's values have held
-in production. They are restated here rather than imported because
+they bound what a single request can hand to a GPU container — and, since #992, how much
+``tfidf`` ranking one request runs on the API worker — and v3's values have held in
+production. They are restated here rather than imported because
 :mod:`schemas.predict` is frozen v3 and v4 owns its own request contract.
 """
 
@@ -188,7 +191,8 @@ class PredictPair(V4BaseModel):
         max_length=MAX_TEXT_CHARS,
         description=(
             "The reference-language text. Optional here because three of the six apps "
-            "do not read it; the ones that do report a per-app error when it is absent."
+            "do not read it. `tfidf` returns no source neighbours for a pair without "
+            "it; the other apps that read it report a per-app error."
         ),
     )
     target_text: str = Field(
@@ -203,7 +207,8 @@ class PredictRequest(V4BaseModel):
     Closed allowlist (``extra="forbid"``), as on every v4 request body.
 
     **The five selector ids are all optional and all authorized.** Each app reads the
-    subset it needs (the runner's per-app ``predict()`` docstrings state which), so
+    subset it needs (the runner's per-app ``predict()`` docstrings state which, and
+    :mod:`predict_routes.v4.tfidf_predict` for ``tfidf``), so
     which ids a caller sends depends on which apps they select — but any id they *do*
     send must name something they can see, or the request is a ``404``. v3 checked only
     three of the five, leaving ``source_version_id`` and ``target_version_id``
@@ -380,12 +385,13 @@ class PredictAppResult(V4BaseModel):
       carrying each verse's text in two revisions, alignment links, missing-word
       tallies.
 
-    All six are the runner's contract, versioned in ``aqua-assessments`` rather than
-    here, so typing them would put this repo's release cycle in front of theirs. A
-    discriminated union keyed by :class:`PredictApp` is the shape that would do it
-    properly, and it is six schema trees of work that belongs with whoever needs one of
-    them typed. The per-app shapes are documented where they are produced, in each app's
-    ``predict()`` docstring.
+    Five are the runner's contract, versioned in ``aqua-assessments`` rather than here,
+    so typing them would put this repo's release cycle in front of theirs. ``tfidf``'s
+    has been this repo's since #992 and is documented on
+    :mod:`predict_routes.v4.tfidf_predict`; it keeps the Modal app's shape, so it is
+    left untyped with the rest rather than made the one typed member. A discriminated
+    union keyed by :class:`PredictApp` is the shape that would do it properly, and it is
+    six schema trees of work that belongs with whoever needs one of them typed.
     """
 
     status: PredictAppStatus = Field(
@@ -394,8 +400,13 @@ class PredictAppResult(V4BaseModel):
     data: Any | None = Field(
         default=None,
         description=(
-            "The app's own result shape, present when `status` is `ok`. See the app's "
-            "`predict()` docstring in aqua-assessments for the per-app shape."
+            "The app's own result shape, present when `status` is `ok`. For `tfidf`: "
+            "`target_assessment_id`, `target_revision_id`, `source_assessment_id`, "
+            "`source_revision_id`, and `pairs`, each with `vref` (when sent), "
+            "`target_neighbours` and `source_neighbours`; a neighbour has `vref`, "
+            "`similarity` (a cosine), `target_revision_text` and "
+            "`source_revision_text`. For the other apps, see the app's `predict()` "
+            "docstring in aqua-assessments."
         ),
     )
     error: str | None = Field(
@@ -407,8 +418,9 @@ class PredictAppResult(V4BaseModel):
     )
     duration_ms: int = Field(
         description=(
-            "Wall-clock time this leg took, including Modal container start. Reported "
-            "for every status, so a timeout can be told from an immediate refusal."
+            "Wall-clock time this leg took, including Modal container start for the "
+            "apps run there. Reported for every status, so a timeout can be told from "
+            "an immediate refusal."
         ),
     )
 

@@ -15,8 +15,9 @@ about it differ from v3, both deliberate.
 **It checks five ids where v3 checked three.** v3's ``POST /predict`` authorized
 ``revision_id``, ``reference_id`` and ``assessment_id`` and left ``source_version_id``
 and ``target_version_id`` unchecked — yet those two are the *primary* selectors for
-four of the six apps (the runner's ``predict()`` docstrings resolve revisions and
-trained artifacts from them), so a caller could name a version outside their groups and
+four of the six apps (the runner's ``predict()`` docstrings, and for ``tfidf``
+:mod:`predict_routes.v4.tfidf_predict`, resolve revisions and trained artifacts from
+them), so a caller could name a version outside their groups and
 have an app read its artifacts. That gap is not what #861 names, but it is the same
 class of hole on the same endpoint, and closing it is the point of porting the check at
 all.
@@ -42,7 +43,8 @@ disagree with ``GET /v4/revisions`` about which revisions exist.
 That is stricter than necessary and it is a decision, not an oversight. Which selectors
 an app consults is the *runner's* rule — its cascades resolve ``revision_id`` before
 ``source_version_id``, and ``text-lengths`` reads none of them — and those rules live in
-another repository and change without this one. Scoping the check to them would mean
+another repository and change without this one (all but ``tfidf``'s, which has lived here
+since #992). Scoping the check to them would mean
 modelling that cascade here, and any drift in the model would skip a check the runner
 then performs: a silent authorization bypass, which is the failure mode this function
 exists to prevent. The cost of being strict is the opposite and much smaller — a caller
@@ -161,8 +163,8 @@ logger = setup_logger(__name__, container_id=socket.gethostname())
 #: The Modal entry point every assessment app exposes for real-time inference.
 #: ``aqua-assessments`` renamed these from ``inference`` to ``predict`` on 2026-04-21
 #: (commit ``6e132af``, "Rename realtime inference entry points to predict() for
-#: train/predict symmetry") — one name across all six apps, which is what lets dispatch
-#: be a single line.
+#: train/predict symmetry") — one name across every app dispatched there, which is what
+#: lets dispatch be a single line. ``tfidf`` is answered in process instead (#992).
 PREDICT_ENTRYPOINT = "predict"
 
 #: Per-app wall-clock ceiling, in seconds, for one leg of the fan-out. The agent's is
@@ -416,8 +418,10 @@ async def run_fanout(
     six calls.
 
     ``tfidf`` is answered in process by :mod:`predict_routes.v4.tfidf_predict`, and every
-    other app is answered on Modal, but all six legs get the same payload, the same timeout and the
-    same status mapping, so a caller cannot tell which is which from the result.
+    other app on Modal. All six legs get the same payload, the same timeout and the same
+    status mapping. One difference a timeout cannot hide: a timed-out ``tfidf`` leg's
+    ranking, which runs on a worker thread, finishes its current step on this worker's
+    CPU after the leg has already been reported.
     """
 
     async def call_one(app: PredictApp) -> tuple[PredictApp, PredictAppResult]:
@@ -490,7 +494,9 @@ def _error_text(exc: Exception) -> str:
     and they are caller-actionable ("agent.predict requires vref and source_text on
     every pair"). Everything else reports only its type name: an arbitrary exception
     string from a container we do not control is the kind of thing that leaks paths and
-    connection strings.
+    connection strings. The in-process ``tfidf`` leg is held to the same rule, so a
+    ``ValueError`` raised by sklearn or numpy inside its ranking would also reach the
+    caller verbatim; those messages describe array shapes, not secrets.
     """
     return str(exc) if isinstance(exc, ValueError) else type(exc).__name__
 
