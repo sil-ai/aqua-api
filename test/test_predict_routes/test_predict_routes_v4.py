@@ -8,7 +8,10 @@ rows to exist and be visible (or not) to the caller.
 **Modal is mocked everywhere and there is no real inference.** Every test that reaches
 dispatch patches ``modal.Function`` (and, for the poll, ``modal.FunctionCall``) so what
 is under test is this repo's orchestration — which apps are called, with what payload,
-what happens when one of them fails — not the runner's analyses.
+what happens when one of them fails — not the runner's analyses. The exception is
+``tfidf``, which runs in process since #992: a test here that leaves ``apps`` unset runs
+it for real, and with no selectors it reports ``not_trained``. Its own tests are in
+``test_predict_tfidf_v4.py``.
 
 What each group pins down:
 
@@ -131,7 +134,7 @@ def _modal_mock(results_by_app=None, spawn_id_by_app=None, spawn_error=None):
     ``results_by_app[name]`` may be a value (returned by ``remote.aio``), an exception
     instance (raised by it), or a callable (called with the payload). An app missing
     from the mapping returns an empty dict, so a test naming one app does not have to
-    describe the other five.
+    describe the other four Modal apps (``tfidf`` never reaches this mock).
     """
     results_by_app = results_by_app or {}
     spawn_id_by_app = spawn_id_by_app or {}
@@ -375,14 +378,16 @@ class TestFanout:
 
     def test_one_failing_app_does_not_suppress_the_others(self, client, regular_token1):
         mock = _modal_mock(
-            {"ngrams": RuntimeError("boom"), "tfidf": {"neighbours": []}}
+            {"ngrams": RuntimeError("boom"), "word-alignment": {"pairs": []}}
         )
-        response = _post(client, regular_token1, _body(apps=["ngrams", "tfidf"]), mock)
+        response = _post(
+            client, regular_token1, _body(apps=["ngrams", "word-alignment"]), mock
+        )
         assert response.status_code == 200, response.text
         results = response.json()["results"]
         assert results["ngrams"]["status"] == "error"
         assert results["ngrams"]["error"] == "RuntimeError"
-        assert results["tfidf"]["status"] == "ok"
+        assert results["word-alignment"]["status"] == "ok"
 
     def test_value_error_text_is_surfaced(self, client, regular_token1):
         """Per-app input validation is caller-actionable, so its message is reported."""
@@ -396,9 +401,9 @@ class TestFanout:
         class TrainingNotAvailableError(ValueError):
             pass
 
-        mock = _modal_mock({"tfidf": TrainingNotAvailableError("train first")})
-        response = _post(client, regular_token1, _body(apps=["tfidf"]), mock)
-        result = response.json()["results"]["tfidf"]
+        mock = _modal_mock({"word-alignment": TrainingNotAvailableError("train first")})
+        response = _post(client, regular_token1, _body(apps=["word-alignment"]), mock)
+        result = response.json()["results"]["word-alignment"]
         assert result["status"] == "not_trained"
         assert result["error"] == "train first"
 
