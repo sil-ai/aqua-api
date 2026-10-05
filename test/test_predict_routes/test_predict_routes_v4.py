@@ -375,14 +375,16 @@ class TestFanout:
 
     def test_one_failing_app_does_not_suppress_the_others(self, client, regular_token1):
         mock = _modal_mock(
-            {"ngrams": RuntimeError("boom"), "tfidf": {"neighbours": []}}
+            {"ngrams": RuntimeError("boom"), "word-alignment": {"pairs": []}}
         )
-        response = _post(client, regular_token1, _body(apps=["ngrams", "tfidf"]), mock)
+        response = _post(
+            client, regular_token1, _body(apps=["ngrams", "word-alignment"]), mock
+        )
         assert response.status_code == 200, response.text
         results = response.json()["results"]
         assert results["ngrams"]["status"] == "error"
         assert results["ngrams"]["error"] == "RuntimeError"
-        assert results["tfidf"]["status"] == "ok"
+        assert results["word-alignment"]["status"] == "ok"
 
     def test_value_error_text_is_surfaced(self, client, regular_token1):
         """Per-app input validation is caller-actionable, so its message is reported."""
@@ -396,9 +398,9 @@ class TestFanout:
         class TrainingNotAvailableError(ValueError):
             pass
 
-        mock = _modal_mock({"tfidf": TrainingNotAvailableError("train first")})
-        response = _post(client, regular_token1, _body(apps=["tfidf"]), mock)
-        result = response.json()["results"]["tfidf"]
+        mock = _modal_mock({"word-alignment": TrainingNotAvailableError("train first")})
+        response = _post(client, regular_token1, _body(apps=["word-alignment"]), mock)
+        result = response.json()["results"]["word-alignment"]
         assert result["status"] == "not_trained"
         assert result["error"] == "train first"
 

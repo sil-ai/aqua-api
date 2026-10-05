@@ -64,6 +64,11 @@ Modal app names (see that enum's module docstring for why, and
 directions). So dispatch is ``modal.Function.from_name(app.value, "predict", ...)``,
 and there is no mapping that can drift from the runner.
 
+**Except** ``tfidf``, which is not dispatched at all since #992: it is answered in
+process by :mod:`predict_routes.v4.tfidf_predict`, with the ranking code
+``similar-verses`` uses, and returns the shape the Modal app returned. That module's
+docstring says why. The enum value still names the Modal app, which still trains.
+
 The ``Function`` cache is this module's own rather than imported from frozen v3. It is
 eight lines, and reaching into a frozen module's privates to save them would tie v4's
 dispatch to a file nobody may edit.
@@ -148,6 +153,7 @@ from bible_routes.v4 import revision_service, version_service
 from config import settings
 from database.models import PredictJob as PredictJobRow
 from database.models import UserDB
+from predict_routes.v4 import tfidf_predict
 from utils.logging_config import setup_logger
 
 logger = setup_logger(__name__, container_id=socket.gethostname())
@@ -408,14 +414,21 @@ async def run_fanout(
     Per-app failure is isolated — a slow or failing app never blocks or suppresses the
     others — which is the whole reason the fan-out exists rather than the client making
     six calls.
+
+    ``tfidf`` is answered in process by :mod:`predict_routes.v4.tfidf_predict`, and every
+    other app is answered on Modal, but all six legs get the same payload, the same timeout and the
+    same status mapping, so a caller cannot tell which is which from the result.
     """
 
     async def call_one(app: PredictApp) -> tuple[PredictApp, PredictAppResult]:
         started = time.perf_counter()
         timeout_s = timeout_for(app)
         try:
-            fn = _predict_fn(app.value, modal_env)
-            data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
+            if app is PredictApp.tfidf:
+                leg = tfidf_predict.predict(payload)
+            else:
+                leg = _predict_fn(app.value, modal_env).remote.aio(payload)
+            data = await asyncio.wait_for(leg, timeout=timeout_s)
         except asyncio.TimeoutError:
             duration_ms = _elapsed_ms(started)
             logger.warning(f"predict app {app.value} timed out after {duration_ms}ms")
