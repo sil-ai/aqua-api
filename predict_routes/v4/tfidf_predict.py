@@ -92,8 +92,8 @@ statements, so this leg must not share it. It opens its own session, as
 build. Inside the leg every statement is sequential.
 
 
-Limit and threshold
--------------------
+Limit, and no threshold
+-----------------------
 
 ``limit`` defaults to 10, the Modal app's default. It is **capped at**
 :data:`~api_v4.schemas.assessment.SIMILAR_VERSES_MAX_LIMIT` (100), although the request
@@ -105,11 +105,15 @@ the same ``limit`` would return different numbers of hits depending only on how 
 were sent. The Modal app could not exceed 500 either: ``by_vectors`` rejects a larger
 ``limit``, so that request already failed.
 
-``threshold`` is not a request field on v3 or v4, so the Modal app's default was the only
-value any caller ever got. :data:`TFIDF_MIN_SIMILARITY` keeps that number. It was tuned
-for the old SVD scores, and #992 leaves recalibrating it on the cosine scale open. Like
-the Modal app's, it is applied after the ``limit`` cut, so a pair can return fewer than
-``limit`` neighbours.
+**No neighbour is dropped for scoring low.** The Modal app dropped anything below 0.18
+(``_TFIDF_MIN_SIMILARITY``), a cutoff matched to the website's ``score * 100 >= 18``
+filter on the old SVD scores. No request field carries a threshold on v3 or v4, so that
+default was the only value any caller got. It does not carry over: these scores are
+cosines on a different scale, and what 0.18 would cut on it was never measured. The
+``similar-verses`` docs already say not to threshold on these cosines. ``limit`` already
+bounds the answer, and a client can always filter further, but it cannot get back a
+neighbour the server dropped. Decided on #992 on 2026-10-05; a cutoff can be added later
+from measured data.
 """
 
 from __future__ import annotations
@@ -133,11 +137,6 @@ TFIDF_DEFAULT_LIMIT = 10
 #: The most neighbours per side per pair this leg returns, whatever ``limit`` asks for.
 #: See the module docstring.
 TFIDF_MAX_LIMIT = SIMILAR_VERSES_MAX_LIMIT
-
-#: Neighbours scoring below this are dropped. The Modal app's ``_TFIDF_MIN_SIMILARITY``,
-#: matched to the website's ``score * 100 >= 18`` filter. Kept at the old value until
-#: it is recalibrated for cosines (#992); see the module docstring.
-TFIDF_MIN_SIMILARITY = 0.18
 
 
 class TrainingNotAvailableError(ValueError):
@@ -339,9 +338,5 @@ async def _neighbours(
         limit=limit,
     )
     for index, hits in zip(wanted, rows):
-        ranked[index] = [
-            (vref, float(similarity))
-            for vref, similarity in hits
-            if similarity >= TFIDF_MIN_SIMILARITY
-        ]
+        ranked[index] = [(vref, float(similarity)) for vref, similarity in hits]
     return ranked

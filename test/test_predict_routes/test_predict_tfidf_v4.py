@@ -15,7 +15,7 @@ What each group pins down:
 * ``TestSourceSide`` — the source cascade's best-effort rules.
 * ``TestTrainingRows`` — training assessments rank through the cascade, and are still a
   404 by id.
-* ``TestLimitAndThreshold`` — the default, the cap, and the cutoff.
+* ``TestLimit`` — the default, the cap, and that nothing is dropped for scoring low.
 * ``TestParallelText`` — one text read per revision over the union of every hit.
 * ``TestBatch`` — the whole-revision index path, and the slow-leg spawn running beside
   the leg.
@@ -768,13 +768,8 @@ class TestTrainingRows:
         assert response.json()["error"]["code"] == "ASSESSMENT_NOT_FOUND"
 
 
-class TestLimitAndThreshold:
-    def test_limit_caps_each_side(
-        self, client, regular_token1, db_session, monkeypatch
-    ):
-        # No threshold, so every verse would come back without the limit and the cap
-        # is what cuts each side to one.
-        monkeypatch.setattr(tfidf_predict, "TFIDF_MIN_SIMILARITY", 0.0)
+class TestLimit:
+    def test_limit_caps_each_side(self, client, regular_token1, db_session):
         target = _side(db_session, TARGET_CORPUS)
         source = _side(db_session, SOURCE_CORPUS)
         selectors = {
@@ -809,25 +804,17 @@ class TestLimitAndThreshold:
             _ok(_tfidf(client, regular_token1, **selectors))
         assert spy.await_args.kwargs["limit"] == ranked_with
 
-    def test_threshold_drops_low_scores(
-        self, client, regular_token1, db_session, monkeypatch
-    ):
-        target = _side(db_session, TARGET_CORPUS)
-        monkeypatch.setattr(tfidf_predict, "TFIDF_MIN_SIMILARITY", 0.0)
-        everything = _ok(_tfidf(client, regular_token1, revision_id=target.revision_id))
-        monkeypatch.setattr(tfidf_predict, "TFIDF_MIN_SIMILARITY", 0.99)
-        exact = _ok(_tfidf(client, regular_token1, revision_id=target.revision_id))
-        assert len(everything["pairs"][0]["target_neighbours"]) > 1
-        assert _vrefs(exact["pairs"][0]["target_neighbours"]) == ["GEN 1:1"]
+    def test_low_scores_are_not_dropped(self, client, regular_token1, db_session):
+        """The Modal app cut everything below 0.18; this leg cuts nothing (#992).
 
-    def test_default_threshold_is_applied(self, client, regular_token1, db_session):
+        GEN 1:4 shares no word with the query, so it scores far below the old cutoff,
+        and it still comes back, last.
+        """
         target = _side(db_session, TARGET_CORPUS)
         data = _ok(_tfidf(client, regular_token1, revision_id=target.revision_id))
         neighbours = data["pairs"][0]["target_neighbours"]
-        assert neighbours
-        assert all(
-            n["similarity"] >= tfidf_predict.TFIDF_MIN_SIMILARITY for n in neighbours
-        )
+        assert _vrefs(neighbours) == ["GEN 1:1", "GEN 1:2", "GEN 1:3", "GEN 1:4"]
+        assert neighbours[-1]["similarity"] < 0.18
 
 
 class TestParallelText:
