@@ -102,15 +102,8 @@ MAX_VREF_CHARS = 50
 MAX_PAIRS = 5000
 
 #: Upper bound on ``limit``, the per-pair neighbour cap the ``tfidf`` app honours.
-#:
-#: ``similar-verses``' own cap, not v3's 10,000, since ``tfidf`` is answered with that
-#: endpoint's ranking (#992). Up to eight pairs are ranked through a shortlist that never
-#: holds more than 250 candidates and larger batches through the whole revision, so above
-#: this the same ``limit`` would return different numbers of hits depending only on how
-#: many pairs were sent. A larger value is a 422 rather than a clamp, the rule
-#: ``similar-verses`` follows. Lowered from 10,000 on 2026-10-05 (#990), while v4 had no
-#: clients; nothing above 500 ever worked anyway, since the Modal app's ``by_vectors``
-#: call rejected it.
+#: ``similar-verses``' cap, since ``tfidf`` uses its ranking; larger is a 422, not a
+#: clamp. Lowered from v3's 10,000 on #990 (2026-10-05), while v4 had no clients.
 MAX_NEIGHBOUR_LIMIT = SIMILAR_VERSES_MAX_LIMIT
 
 
