@@ -95,15 +95,9 @@ build. Inside the leg every statement is sequential.
 Limit, and no threshold
 -----------------------
 
-``limit`` defaults to 10, the Modal app's default. It is **capped at**
-:data:`~api_v4.schemas.assessment.SIMILAR_VERSES_MAX_LIMIT` (100), although the request
-accepts up to 10,000 (#990). The cap is what the ranking can honour consistently.
-``_rank_texts`` answers up to eight texts through the shortlist, which never holds more
-than :data:`~assessment_routes.v4.tfidf_retrieval.SHORTLIST_MAX` (250) candidates, and
-larger batches through the whole-revision index, which has no such ceiling. Without a cap,
-the same ``limit`` would return different numbers of hits depending only on how many pairs
-were sent. The Modal app could not exceed 500 either: ``by_vectors`` rejects a larger
-``limit``, so that request already failed.
+``limit`` defaults to 10, the Modal app's default. Its ceiling is 100, enforced by the
+request model (:data:`~api_v4.schemas.predict.MAX_NEIGHBOUR_LIMIT`, which says why), so
+this module never sees a larger one and clamps nothing.
 
 **No neighbour is dropped for scoring low.** The Modal app dropped anything below 0.18
 (``_TFIDF_MIN_SIMILARITY``), a cutoff matched to the website's ``score * 100 >= 18``
@@ -124,7 +118,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api_v4.schemas.assessment import SIMILAR_VERSES_MAX_LIMIT
 from assessment_routes.v4 import assessment_service, tfidf_retrieval
 from database.dependencies import AsyncSessionLocal
 from database.models import Assessment, BibleRevision
@@ -133,10 +126,6 @@ from schemas.assessment import AssessmentStatus, AssessmentType
 #: Neighbours per side per pair when the request sends no ``limit``. The Modal app's
 #: default.
 TFIDF_DEFAULT_LIMIT = 10
-
-#: The most neighbours per side per pair this leg returns, whatever ``limit`` asks for.
-#: See the module docstring.
-TFIDF_MAX_LIMIT = SIMILAR_VERSES_MAX_LIMIT
 
 
 class TrainingNotAvailableError(ValueError):
@@ -166,7 +155,7 @@ async def predict(payload: dict[str, Any]) -> dict[str, Any]:
 
 async def _predict(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
     pairs = payload["pairs"]
-    limit = min(payload.get("limit") or TFIDF_DEFAULT_LIMIT, TFIDF_MAX_LIMIT)
+    limit = payload.get("limit") or TFIDF_DEFAULT_LIMIT
 
     target = await _target_assessment(db, payload)
     source_revision_id = payload.get("reference_id")

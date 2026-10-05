@@ -83,6 +83,7 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
+from api_v4.schemas.assessment import SIMILAR_VERSES_MAX_LIMIT
 from api_v4.schemas.base import V4BaseModel
 
 #: Longest single text v4 predict accepts, in characters. v3's cap on every one of
@@ -101,8 +102,16 @@ MAX_VREF_CHARS = 50
 MAX_PAIRS = 5000
 
 #: Upper bound on ``limit``, the per-pair neighbour cap the ``tfidf`` app honours.
-#: v3's cap.
-MAX_NEIGHBOUR_LIMIT = 10000
+#:
+#: ``similar-verses``' own cap, not v3's 10,000, since ``tfidf`` is answered with that
+#: endpoint's ranking (#992). Up to eight pairs are ranked through a shortlist that never
+#: holds more than 250 candidates and larger batches through the whole revision, so above
+#: this the same ``limit`` would return different numbers of hits depending only on how
+#: many pairs were sent. A larger value is a 422 rather than a clamp, the rule
+#: ``similar-verses`` follows. Lowered from 10,000 on 2026-10-05 (#990), while v4 had no
+#: clients; nothing above 500 ever worked anyway, since the Modal app's ``by_vectors``
+#: call rejected it.
+MAX_NEIGHBOUR_LIMIT = SIMILAR_VERSES_MAX_LIMIT
 
 
 class PredictApp(str, Enum):
@@ -261,8 +270,8 @@ class PredictRequest(V4BaseModel):
         ge=1,
         le=MAX_NEIGHBOUR_LIMIT,
         description=(
-            "Cap on neighbours returned per side per pair. Honoured by `tfidf` only, "
-            "which defaults to 10 when this is omitted."
+            "Cap on neighbours returned per side per pair, at most 100. Honoured by "
+            "`tfidf` only, which defaults to 10 when this is omitted."
         ),
     )
     include_translation: bool = Field(

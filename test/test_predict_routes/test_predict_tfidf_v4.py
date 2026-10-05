@@ -786,7 +786,7 @@ class TestLimit:
 
     @pytest.mark.parametrize(
         "sent,ranked_with",
-        [(None, tfidf_predict.TFIDF_DEFAULT_LIMIT), (7, 7), (10_000, 100)],
+        [(None, tfidf_predict.TFIDF_DEFAULT_LIMIT), (7, 7), (100, 100)],
     )
     def test_limit_default_and_cap(
         self, client, regular_token1, db_session, sent, ranked_with
@@ -803,6 +803,21 @@ class TestLimit:
         ) as spy:
             _ok(_tfidf(client, regular_token1, **selectors))
         assert spy.await_args.kwargs["limit"] == ranked_with
+
+    def test_a_limit_above_100_is_422_not_a_clamp(self, client, regular_token1):
+        """``similar-verses``' rule: out of range is refused, never quietly narrowed.
+        The cap moved down from 10,000 on #990."""
+        response = _post(
+            client,
+            regular_token1,
+            {
+                "pairs": [_pair()],
+                "apps": ["tfidf"],
+                "limit": 101,
+                "include_translation": False,
+            },
+        )
+        assert response.status_code == 422, response.text
 
     def test_low_scores_are_not_dropped(self, client, regular_token1, db_session):
         """The Modal app cut everything below 0.18; this leg cuts nothing (#992).
