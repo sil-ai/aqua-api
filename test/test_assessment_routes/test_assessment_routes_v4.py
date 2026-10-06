@@ -46,6 +46,8 @@ What each group of tests pins down:
   (decision 3), the #829 page envelope, and the #899 delta contract on a third list.
 * ``TestDelete`` — decision 4's three fixes: the closed existence leak, unowned legacy
   rows, and that an in-flight run is deletable (and resubmittable afterwards).
+* ``TestCancel`` — #995: ``CANCELLED`` on the poll, ``failed`` to v3, the delete's
+  owner-or-admin gate, the 409 on a finished run, and idempotence.
 * ``TestReadSchemaContract`` — that the poll body really is the resource *plus* the
   shared envelope, invariants included, and that the three v3 fields v4 drops stay
   dropped.
@@ -413,6 +415,12 @@ def _list(client, token, **params):
 
 def _delete(client, token, assessment_id):
     return client.delete(f"{PREFIX}/assessments/{assessment_id}", headers=_auth(token))
+
+
+def _cancel(client, token, assessment_id):
+    return client.post(
+        f"{PREFIX}/assessments/{assessment_id}/cancel", headers=_auth(token)
+    )
 
 
 def _ids(resp):
@@ -2942,6 +2950,257 @@ class TestDelete:
 
         # ... and deleting it clears the way.
         assert _delete(client, regular_token1, first).status_code == 204
+        second = _submit(client, regular_token1, body)
+        assert second.status_code == 202, second.text
+        assert _job_id(second) != first
+
+
+class TestCancel:
+    """``POST /v4/assessments/{id}/cancel`` (#995)."""
+
+    @pytest.mark.parametrize(
+        "internal_status",
+        [AssessmentStatus.queued.value, AssessmentStatus.running.value],
+    )
+    def test_the_owner_cancels_an_in_flight_run(
+        self, client, regular_token1, db_session, group1_version, internal_status
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status=internal_status
+        )
+        resp = _cancel(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "CANCELLED"
+        assert body["error"] is None and body["result"] is None
+        assert body["cancelled_by"] == _user_id(db_session, "testuser1")
+        assert body["cancelled_at"] is not None
+        assert body["ended_at"] == body["cancelled_at"]
+
+        # The poll and the list say the same thing, and a terminal poll stops inviting
+        # another one.
+        poll = _get(client, regular_token1, assessment_id)
+        assert poll.status_code == 200
+        assert poll.json()["state"] == "CANCELLED"
+        assert "retry-after" not in poll.headers
+        listed = _list(client, regular_token1, revision_id=revision_id).json()
+        assert [i["state"] for i in listed["items"]] == ["CANCELLED"]
+
+    def test_v3_sees_a_failed_run_stopped_by_the_user(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Stored as ``failed`` so v3 reads nothing new, with the ``Stopped by`` text
+        the website's v3 stop button wrote."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        _cancel(client, regular_token1, assessment_id)
+        row = _stored(db_session, assessment_id)
+        assert row.status == AssessmentStatus.failed.value
+        assert row.status_detail == "Stopped by testuser1"
+
+        v3 = client.get(
+            f"{V3_PREFIX}/assessment",
+            params={"revision_id": revision_id},
+            headers=_auth(regular_token1),
+        )
+        assert v3.status_code == 200, v3.text
+        (item,) = [a for a in v3.json() if a["id"] == assessment_id]
+        assert item["status"] == "failed"
+        assert "cancelled_at" not in item and "cancelled_by" not in item
+
+    def test_the_runners_next_status_patch_is_refused(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """What makes the cancel stick: the row is terminal, so v3's runner callback
+        is a 409 rather than moving it back to running."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        _cancel(client, regular_token1, assessment_id)
+        patch_resp = client.patch(
+            f"{V3_PREFIX}/assessment/{assessment_id}/status",
+            json={"status": "finished"},
+            headers=_auth(regular_token1),
+        )
+        assert patch_resp.status_code == 409, patch_resp.text
+        assert _get(client, regular_token1, assessment_id).json()["state"] == (
+            "CANCELLED"
+        )
+
+    def test_it_is_idempotent_and_keeps_the_first_canceller(
+        self, client, regular_token1, admin_token, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        first = _cancel(client, regular_token1, assessment_id).json()
+        again = _cancel(client, admin_token, assessment_id)
+        assert again.status_code == 200, again.text
+        assert again.json()["cancelled_by"] == first["cancelled_by"]
+        assert again.json()["cancelled_at"] == first["cancelled_at"]
+
+    @pytest.mark.parametrize(
+        ("internal_status", "state"),
+        [("finished", "SUCCEEDED"), ("failed", "FAILED")],
+    )
+    def test_a_finished_or_failed_run_is_409(
+        self,
+        client,
+        regular_token1,
+        db_session,
+        group1_version,
+        internal_status,
+        state,
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status=internal_status
+        )
+        resp = _cancel(client, regular_token1, assessment_id)
+        assert resp.status_code == 409, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_CANCELLABLE"
+        assert resp.json()["error"]["details"] == {
+            "assessment_id": assessment_id,
+            "state": state,
+        }
+        row = _stored(db_session, assessment_id)
+        assert row.status == internal_status
+        assert row.cancelled_at is None
+
+    def test_a_cancel_the_runner_overwrote_reports_the_runners_state(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """v3's status PATCH takes no lock, so it can overwrite a cancel it raced. The
+        row then reports what actually happened, not ``CANCELLED``."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        _cancel(client, regular_token1, assessment_id)
+        row = _stored(db_session, assessment_id)
+        row.status = AssessmentStatus.finished.value
+        db_session.commit()
+
+        body = _get(client, regular_token1, assessment_id).json()
+        assert body["state"] == "SUCCEEDED"
+        assert body["cancelled_at"] is not None
+
+    def test_a_caller_who_can_see_it_but_does_not_own_it_is_403(
+        self, client, regular_token2, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        db_session.add(
+            BibleVersionAccess(
+                bible_version_id=version_id,
+                group_id=_group_id(db_session, "Group2"),
+            )
+        )
+        db_session.commit()
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        resp = _cancel(client, regular_token2, assessment_id)
+        assert resp.status_code == 403, resp.text
+        assert _error_code(resp) == "ASSESSMENT_ACCESS_FORBIDDEN"
+        assert "cancel" in resp.json()["error"]["message"]
+        assert _stored(db_session, assessment_id).cancelled_at is None
+
+    def test_an_admin_can_cancel_a_run_they_do_not_own(
+        self, client, admin_token, db_session, group2_version
+    ):
+        revision_id, reference_id = _pair(db_session, group2_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running", owner=None
+        )
+        resp = _cancel(client, admin_token, assessment_id)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cancelled_by"] == _user_id(db_session, "admin")
+
+    @pytest.mark.parametrize(
+        "row_kwargs",
+        [{"deleted": True}, {"is_training": True}],
+        ids=["soft-deleted", "training"],
+    )
+    def test_rows_the_poll_hides_are_404(
+        self, client, regular_token1, db_session, group1_version, row_kwargs
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running", **row_kwargs
+        )
+        resp = _cancel(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+        assert _stored(db_session, assessment_id).cancelled_at is None
+
+    def test_a_caller_who_cannot_see_it_is_404(
+        self, client, regular_token2, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        assert _cancel(client, regular_token2, assessment_id).status_code == 404
+
+    def test_an_unknown_id_is_404(self, client, regular_token1):
+        resp = _cancel(client, regular_token1, 10_000_001)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_recancelling_a_row_the_runner_overwrote_keeps_the_first_canceller(
+        self, client, regular_token1, admin_token, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        first = _cancel(client, regular_token1, assessment_id).json()
+        row = _stored(db_session, assessment_id)
+        row.status = AssessmentStatus.running.value
+        db_session.commit()
+
+        again = _cancel(client, admin_token, assessment_id)
+        assert again.status_code == 200, again.text
+        assert again.json()["state"] == "CANCELLED"
+        assert again.json()["cancelled_by"] == first["cancelled_by"]
+        assert again.json()["cancelled_at"] == first["cancelled_at"]
+
+    def test_a_cancel_arrives_in_the_delta_window(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, status="running"
+        )
+        cutoff = _stored(db_session, assessment_id).updated_at
+        _cancel(client, regular_token1, assessment_id)
+        delta = _list(
+            client,
+            regular_token1,
+            revision_id=revision_id,
+            updated_since=cutoff.isoformat(),
+        ).json()
+        assert [(i["id"], i["state"]) for i in delta["items"]] == [
+            (assessment_id, "CANCELLED")
+        ]
+
+    def test_cancel_then_resubmit_is_not_a_conflict(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A cancelled run is ``failed`` underneath, so dedup lets the same work be
+        submitted again."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        body = _body(
+            revision_id, {"type": "word-alignment", "reference_id": reference_id}
+        )
+        first = _job_id(_submit(client, regular_token1, body))
+        assert _cancel(client, regular_token1, first).status_code == 200
         second = _submit(client, regular_token1, body)
         assert second.status_code == 202, second.text
         assert _job_id(second) != first
