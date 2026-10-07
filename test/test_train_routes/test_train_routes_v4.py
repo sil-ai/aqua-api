@@ -807,6 +807,24 @@ class TestJobList:
         )
         assert orphan.id not in {j["id"] for j in response.json()["items"]}
 
+    def test_the_cancelled_filter_is_an_empty_page_not_a_500(
+        self, client, regular_token1, db_session, pair
+    ):
+        """``CANCELLED`` has no internal status to translate to (#995), and no training
+        job can be cancelled, so the honest answer is an empty page."""
+        _make_job(db_session, pair, status="failed")
+        response = client.get(
+            JOBS,
+            params={
+                "state": "CANCELLED",
+                "source_version_id": pair["source_version_id"],
+            },
+            headers=_auth(regular_token1),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == []
+        assert response.json()["total"] == 0
+
     def test_another_users_job_is_not_listed(
         self, client, regular_token2, db_session, pair
     ):
