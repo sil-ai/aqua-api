@@ -85,7 +85,7 @@ from datetime import datetime, timezone
 from typing import Any, Sequence
 
 import modal
-from sqlalchemy import Integer, and_, func, or_, select
+from sqlalchemy import Integer, and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -150,6 +150,10 @@ TRAINING_RETRY_AFTER_S = 30
 #: one. Inverted from that map rather than written out, so the two cannot come to
 #: disagree; the inversion is lossless only while the map is injective, which a test
 #: pins by comparing the two lengths.
+#:
+#: ``CANCELLED`` has no entry, because no internal status means it: only
+#: ``POST /v4/assessments/{id}/cancel`` produces it, and that 404s on a training row.
+#: :func:`list_jobs` answers that filter with an empty page.
 INTERNAL_STATUS_FOR_STATE: dict[JobState, AssessmentStatus] = {
     state: status for status, state in ASSESSMENT_STATE_MAP.items()
 }
@@ -303,6 +307,9 @@ def state_for_training_job(job: TrainingJob) -> JobState | None:
     The two callers that *cannot* report it in a body — the single-job read and the
     delete — check for ``None`` and raise :class:`TrainingJobStateUnavailable`
     themselves.
+
+    Reads ``status`` alone, so a training job is never ``CANCELLED``: the cancel
+    endpoint 404s on training rows.
 
     An assessment whose ``status`` is outside the four internal values still raises
     ``ValueError`` from the shared translator, reaching the #828 catch-all as a 500. That
@@ -722,7 +729,10 @@ async def list_jobs(
     cannot tie or move, and ``requested_time`` is nullable.
     """
     stmt = _visible_jobs_query(user)
-    if state is not None:
+    if state is JobState.CANCELLED:
+        # No training job can be cancelled; see INTERNAL_STATUS_FOR_STATE.
+        stmt = stmt.where(false())
+    elif state is not None:
         stmt = stmt.join(Assessment, Assessment.id == TrainingJob.assessment_id).where(
             Assessment.status == INTERNAL_STATUS_FOR_STATE[state].value
         )

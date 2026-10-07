@@ -139,6 +139,14 @@ class Assessment(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
     attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
+    # Set by POST /v4/assessments/{id}/cancel (#995), which also sets status to
+    # 'failed' so v3 sees a cancel exactly as it saw the website's "Stopped by" PATCH.
+    # SET NULL, unlike the other users.id FKs: a new column must not add a blocker to
+    # v3's user delete.
+    cancelled_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    cancelled_by = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     # Delta-sync watermark (#887). onupdate covers ORM/Core writes; the
     # set_updated_at() BEFORE UPDATE trigger (installed by the DDL events
     # below / migration c8d3f5a1b2e4) covers raw SQL so no write path can

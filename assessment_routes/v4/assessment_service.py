@@ -8,7 +8,7 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read, delete, and all eight typed result reads** — the generic
+Scope is **create, read, cancel, delete, and all eight typed result reads** — the generic
 per-verse ``/results``, ``/ngrams``, the ``/similar-verses`` ranking in both its forms,
 the two word-alignment reads ``/alignment-scores`` and ``/missing-words``,
 ``/text-lengths`` and ``/score-comparison``. That completes #893's result sub-resources;
@@ -180,6 +180,34 @@ Verified rather than assumed: **delete-then-resubmit works.** Both
 :func:`_completed_duplicate_query` and :func:`_in_progress_duplicate_query` already
 filter ``Assessment.deleted.is_not(True)``, matching v3, so a soft-deleted assessment
 does not block an identical resubmit with a spurious 409.
+
+
+Cancel (:func:`cancel_assessment`, #995)
+----------------------------------------
+
+**A cancel is stored as ``failed`` plus ``cancelled_at`` / ``cancelled_by``.** It is
+not a new status value. ``status`` is shared with frozen v3, and a new value would show
+up in v3's reads, be accepted by v3's status ``PATCH`` through the shared enum, and
+need adding to v3's terminal-status checks. As ``failed``, v3 sees exactly what it saw
+when ``aqua-django-app`` stopped a run through that ``PATCH``. ``status_detail`` gets
+the same ``"Stopped by <username>"`` text, so a v3 reader still recognises it. v4 reads
+the two columns and reports ``CANCELLED``.
+
+**It stops the bookkeeping, not the Modal run.** Out of scope on #995, as on v3. The
+row is now terminal, so the runner's next status ``PATCH`` is v3's ``409``, and a
+re-dispatch is refused because the row is no longer ``queued``. Results the run pushes
+anyway still land on the row.
+
+**One race is left open, and it is on v3's side.** The cancel locks the row. v3's
+status ``PATCH`` reads without a lock, so a runner ``PATCH`` that read the row before
+the cancel committed can still overwrite ``failed`` afterwards. Closing that means
+changing v3. The state mapping is written for it: ``CANCELLED`` needs ``cancelled_at``
+*and* ``status == 'failed'``. A row the runner went on to finish reports the truth,
+``SUCCEEDED``, and still shows that a cancel was asked for.
+
+**Authorization is the delete's gate, minus soft-deleted rows.** Owner or admin, 404
+before 403. A soft-deleted row is a 404, unlike on delete: the cancel answers with the
+poll body, and the poll 404s on a deleted row.
 
 
 How the generic result read is shaped (:func:`get_results`)
@@ -478,6 +506,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from api_v4.jobs import JobState, state_for_assessment_status
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
     AlignmentScoreType,
@@ -719,9 +748,24 @@ class AssessmentAccessForbidden(AssessmentServiceError):
     404-vs-403 answer leaked whether an id existed.
     """
 
-    def __init__(self, assessment_id: int) -> None:
+    def __init__(self, assessment_id: int, action: str = "delete") -> None:
         self.assessment_id = assessment_id
-        super().__init__(f"Not authorized to delete assessment {assessment_id}.")
+        super().__init__(f"Not authorized to {action} assessment {assessment_id}.")
+
+
+class AssessmentNotCancellable(AssessmentServiceError):
+    """The run already finished or failed, so there is nothing to cancel.
+
+    Not raised for a run that was already cancelled — that cancel is idempotent.
+    """
+
+    def __init__(self, assessment_id: int, state: JobState) -> None:
+        self.assessment_id = assessment_id
+        self.state = state
+        super().__init__(
+            f"Assessment {assessment_id} is already {state.value} and cannot be "
+            "cancelled."
+        )
 
 
 async def _authorized_revisions(
@@ -1419,7 +1463,12 @@ async def get_assessment(
 
 
 async def _get_assessment_for_write(
-    db: AsyncSession, user: UserDB, assessment_id: int
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    action: str = "delete",
+    include_deleted: bool = True,
 ) -> Assessment:
     """Load an assessment for a write, enforcing the owner-or-admin gate.
 
@@ -1438,15 +1487,86 @@ async def _get_assessment_for_write(
     ``owner_id`` is nullable, so on a legacy row with no owner ``is_owner`` is false for
     every caller and only an admin passes — decision 4(b), documented on the endpoint
     because it otherwise reads as an authorization bug.
+
+    The cancel passes ``include_deleted=False``; see "Cancel" in the module docstring.
     """
-    stmt = _visible_assessments_query(user, include_deleted=True).where(
+    stmt = _visible_assessments_query(user, include_deleted=include_deleted).where(
         Assessment.id == assessment_id
     )
     assessment = (await db.execute(stmt)).scalars().first()
     if assessment is None:
         raise AssessmentNotFound(assessment_id)
     if not user.is_admin and assessment.owner_id != user.id:
-        raise AssessmentAccessForbidden(assessment_id)
+        raise AssessmentAccessForbidden(assessment_id, action)
+    return assessment
+
+
+def state_for_assessment(assessment: Assessment) -> JobState:
+    """The public state of one assessment row.
+
+    :func:`~api_v4.jobs.state_for_assessment_status` reads ``status`` alone, and a
+    cancel is stored as ``failed`` plus ``cancelled_at``, so this is the one place
+    that tells the two apart. It needs both: see "Cancel" in the module docstring
+    for the race that can leave ``cancelled_at`` on a row the runner went on to
+    finish.
+    """
+    if (
+        assessment.cancelled_at is not None
+        and assessment.status == AssessmentStatus.failed.value
+    ):
+        return JobState.CANCELLED
+    return state_for_assessment_status(assessment.status)
+
+
+async def cancel_assessment(
+    db: AsyncSession, user: UserDB, assessment_id: int
+) -> Assessment:
+    """Cancel a queued or running assessment (owner or admin only).
+
+    Sets ``status`` to ``failed`` and records who cancelled it and when. Idempotent:
+    cancelling an already-cancelled run returns it unchanged, and the first
+    canceller stays on the row. A run that already finished or failed raises
+    :class:`AssessmentNotCancellable`.
+
+    The row is re-read ``FOR UPDATE`` after the gate, so two cancels, or a cancel
+    and a v4 dispatch, cannot both act on a stale ``status``. The gate's own query
+    cannot take the lock, since Postgres refuses ``FOR UPDATE`` on the nullable
+    side of its outer joins.
+    """
+    assessment = await _get_assessment_for_write(
+        db, user, assessment_id, action="cancel", include_deleted=False
+    )
+    await db.refresh(assessment, with_for_update=True)
+    if assessment.deleted:
+        # Soft-deleted between the gate and the lock.
+        await db.rollback()
+        raise AssessmentNotFound(assessment_id)
+
+    state = state_for_assessment(assessment)
+    if state is JobState.CANCELLED:
+        # Commit, not rollback, to release the lock: a rollback expires the row and the
+        # router still has to read it.
+        await db.commit()
+        return assessment
+    if state.is_terminal:
+        await db.rollback()
+        raise AssessmentNotCancellable(assessment_id, state)
+
+    try:
+        now = datetime.now(timezone.utc)
+        assessment.status = AssessmentStatus.failed.value
+        assessment.end_time = now
+        # A row can be non-terminal with cancelled_at already set, if the runner
+        # overwrote an earlier cancel (module docstring). Keep the first canceller.
+        if assessment.cancelled_at is None:
+            assessment.status_detail = f"Stopped by {user.username}"
+            assessment.cancelled_at = now
+            assessment.cancelled_by = user.id
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    await db.refresh(assessment)
     return assessment
 
 
