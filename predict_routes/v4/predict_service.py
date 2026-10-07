@@ -694,9 +694,11 @@ async def semantic_similarity(request: SimilarityRequest, modal_env: str) -> flo
     actually defines, and the two standalone endpoints dispatch the same way the
     fan-out does.
 
-    Raises :class:`SimilarityModelUnavailable` when the app answers with an ``error``
-    key (its documented way of reporting a request-level config failure) and
-    :class:`InferenceUnavailable` when it cannot be reached at all. A reply that is
+    Raises :class:`SimilarityModelUnavailable` when the pair has no usable model and
+    :class:`InferenceUnavailable` when the app cannot be reached at all. The app says
+    "no model" two ways: it raises ``TrainingNotAvailableError`` for a pair with no
+    fine-tune (what it actually does, despite its docstring), or it answers with an
+    ``error`` key. Both are the 422 (#998). A reply that is
     neither — no ``error`` and no readable score — is left to raise, reaching the #828
     catch-all as a 500: our own inference app breaking its response contract is a
     server fault, and it is not worth retrying, which is what a 503 would advertise.
@@ -733,6 +735,12 @@ async def semantic_similarity(request: SimilarityRequest, modal_env: str) -> flo
             PredictApp.semantic_similarity.value, f"timeout after {timeout_s}s"
         ) from exc
     except Exception as exc:
+        # Decided by the same class-name rule as the fan-out's ``not_trained`` status,
+        # and before the generic case: "train this pair first" is not a retryable 503.
+        if _status_for(exc) is PredictAppStatus.not_trained:
+            raise SimilarityModelUnavailable(
+                str(exc), request.source_version_id, request.target_version_id
+            ) from exc
         logger.error(
             f"semantic similarity inference failed: {type(exc).__name__}: {exc}",
             exc_info=True,

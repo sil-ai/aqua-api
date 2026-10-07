@@ -1057,6 +1057,28 @@ class TestSemanticSimilarity:
             == "No fine-tuned model found for 1_2"
         )
 
+    def test_a_raised_training_not_available_is_422(
+        self, client, regular_token1, db_session
+    ):
+        """The runner raises for an untrained pair rather than returning an ``error``.
+
+        Matched by class name, as the fan-out does, so pickle module-path drift cannot
+        turn it back into a 503 (#998).
+        """
+
+        class TrainingNotAvailableError(ValueError):
+            pass
+
+        mock = _modal_mock(
+            {"semantic-similarity": TrainingNotAvailableError("No model for 1_2")}
+        )
+        response = _post(
+            client, regular_token1, self._request(db_session), mock, path=self.PATH
+        )
+        assert response.status_code == 422, response.text
+        assert _error_code(response) == "SIMILARITY_MODEL_UNAVAILABLE"
+        assert response.json()["error"]["details"]["reason"] == "No model for 1_2"
+
     def test_a_hanging_app_is_bounded_and_becomes_503(
         self, client, regular_token1, db_session
     ):
