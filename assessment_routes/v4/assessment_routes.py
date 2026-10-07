@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Twelve endpoints:
+happens somewhere else. Thirteen endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -9,6 +9,8 @@ happens somewhere else. Twelve endpoints:
   otherwise, and the body is the assessment resource merged with the job envelope.
 * ``GET    /v4/assessments``      — paginated list (``V4Page[AssessmentOut]``), v3's
   filters, and ``updated_since`` delta sync.
+* ``POST   /v4/assessments/{id}/cancel`` — stop a queued or running run (#995);
+  ``200`` with the poll body, ``409`` if it already finished or failed.
 * ``DELETE /v4/assessments/{id}`` — soft-delete (``204``); ``404``/``403`` as
   appropriate.
 * ``GET    /v4/assessments/{id}/results`` — the generic per-verse scores, paginated,
@@ -245,7 +247,6 @@ from api_v4.jobs import (
     JobSubmitAccepted,
     job_accepted_response,
     set_poll_headers,
-    state_for_assessment_status,
 )
 from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
 from api_v4.schemas.assessment import (
@@ -476,7 +477,7 @@ def _to_out(assessment: Assessment) -> AssessmentOut:
     spellings (``requested_time`` -> ``requested_at``, ``start_time`` -> ``started_at``,
     ``end_time`` -> ``ended_at``, #925). The columns keep v3's names; only the wire moved.
 
-    ``state_for_assessment_status`` raises ``ValueError`` on a status outside the four
+    ``state_for_assessment`` raises ``ValueError`` on a status outside the four
     internal values, which reaches the #828 catch-all as a 500. That is
     :mod:`api_v4.jobs`' documented intent and it is left alone deliberately: the honest
     signal for a row whose ``status`` the server cannot read is an error, not a state
@@ -493,13 +494,15 @@ def _to_out(assessment: Assessment) -> AssessmentOut:
         revision_id=assessment.revision_id,
         reference_id=assessment.reference_id,
         type=assessment.type,
-        state=state_for_assessment_status(assessment.status),
+        state=assessment_service.state_for_assessment(assessment),
         status_detail=assessment.status_detail,
         percent_complete=assessment.percent_complete,
         requested_at=assessment.requested_time,
         started_at=assessment.start_time,
         ended_at=assessment.end_time,
         owner_id=assessment.owner_id,
+        cancelled_at=assessment.cancelled_at,
+        cancelled_by=assessment.cancelled_by,
         options=assessment.kwargs,
         deleted=bool(assessment.deleted),
         updated_at=assessment.updated_at,
@@ -1806,6 +1809,61 @@ async def get_assessment_score_comparison(
     )
 
 
+@router.post(
+    "/{assessment_id}/cancel",
+    response_model=AssessmentJob,
+    responses={
+        # 403 is declared per write rather than shared; see delete_assessment.
+        **V4_FORBIDDEN_RESPONSE,
+        **error_responses(status.HTTP_409_CONFLICT),
+    },
+)
+async def cancel_assessment(
+    assessment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user_v4),
+) -> AssessmentJob:
+    """Cancel a queued or running assessment (its owner, or an admin).
+
+    `200` with the same body the poll returns, now in state `CANCELLED`, with
+    `cancelled_at` and `cancelled_by` set. Idempotent: cancelling a run that is already
+    cancelled is another `200`, and the first canceller is the one recorded.
+
+    * **`409 ASSESSMENT_NOT_CANCELLABLE`** if the run already finished or failed.
+      `details.state` says which.
+    * **`403`** if you can see the assessment but did not submit it. Assessments
+      created before `owner_id` existed have no owner, so only an admin can cancel
+      those.
+    * **`404`** for an assessment you cannot see, including a soft-deleted one.
+
+    **This does not stop the Modal container**, as v3's equivalent did not. The run
+    stops being able to report progress, but may still use GPU time until it notices.
+    v3 readers see a cancelled run as `failed`, with `status_detail` set to
+    `Stopped by <username>`.
+    """
+    try:
+        assessment = await assessment_service.cancel_assessment(
+            db, current_user, assessment_id
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+    except assessment_service.AssessmentAccessForbidden as exc:
+        raise V4APIError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="ASSESSMENT_ACCESS_FORBIDDEN",
+            message=str(exc),
+            details={"assessment_id": assessment_id},
+        ) from exc
+    except assessment_service.AssessmentNotCancellable as exc:
+        raise V4APIError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="ASSESSMENT_NOT_CANCELLABLE",
+            message=str(exc),
+            details={"assessment_id": assessment_id, "state": exc.state.value},
+        ) from exc
+    return _to_job(assessment)
+
+
 @router.delete(
     "/{assessment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -1840,7 +1898,9 @@ async def delete_assessment(
       row. Refusing while in flight was considered and rejected: it would block the
       most likely reason to call this — cancelling an expensive run started by mistake —
       without actually stopping anything, because v4 holds no Modal handle to cancel
-      with. Deleting then resubmitting the same work is supported: dedup ignores
+      with. To stop a run and keep a record of it, use
+      ``POST /v4/assessments/{id}/cancel`` instead. Deleting then resubmitting the same
+      work is supported: dedup ignores
       soft-deleted rows, so an identical resubmit is not a spurious ``409``.
     """
     try:

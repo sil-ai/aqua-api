@@ -120,7 +120,7 @@ def openapi(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_job_state_is_the_closed_four_state_vocabulary():
+def test_job_state_is_the_closed_five_state_vocabulary():
     # The set is closed on purpose (module docstring): adding a state is a
     # breaking change for clients that branch exhaustively, so a new member has
     # to be a deliberate edit here too.
@@ -129,6 +129,7 @@ def test_job_state_is_the_closed_four_state_vocabulary():
         "RUNNING",
         "SUCCEEDED",
         "FAILED",
+        "CANCELLED",
     }
     # Uppercase on the wire, deliberately distinct from the internal lowercase
     # vocabularies it is translated from.
@@ -136,9 +137,14 @@ def test_job_state_is_the_closed_four_state_vocabulary():
     assert all(s.value not in {a.value for a in AssessmentStatus} for s in JobState)
 
 
-def test_terminal_states_are_succeeded_and_failed():
-    assert TERMINAL_JOB_STATES == {JobState.SUCCEEDED, JobState.FAILED}
+def test_terminal_states_are_succeeded_failed_and_cancelled():
+    assert TERMINAL_JOB_STATES == {
+        JobState.SUCCEEDED,
+        JobState.FAILED,
+        JobState.CANCELLED,
+    }
     assert JobState.SUCCEEDED.is_terminal and JobState.FAILED.is_terminal
+    assert JobState.CANCELLED.is_terminal
     assert not JobState.PENDING.is_terminal and not JobState.RUNNING.is_terminal
 
 
@@ -235,7 +241,8 @@ def test_failed_state_without_an_error_is_rejected():
 
 
 @pytest.mark.parametrize(
-    "state", [JobState.PENDING, JobState.RUNNING, JobState.SUCCEEDED]
+    "state",
+    [JobState.PENDING, JobState.RUNNING, JobState.SUCCEEDED, JobState.CANCELLED],
 )
 def test_non_failed_state_with_an_error_is_rejected(state):
     with pytest.raises(ValidationError, match="must not carry an error"):
@@ -252,6 +259,17 @@ def test_result_on_a_non_terminal_state_is_rejected(state):
     # is the outcome, not the progress, so a running job cannot publish one.
     with pytest.raises(ValidationError, match="must not carry a result"):
         JobEnvelope(job_id=JOB_ID, state=state, result={"partial": True})
+
+
+def test_result_on_cancelled_is_rejected():
+    # A cancelled job has no outcome, even if the run got partway.
+    with pytest.raises(ValidationError, match="must not carry a result"):
+        JobEnvelope(job_id=JOB_ID, state=JobState.CANCELLED, result={"partial": True})
+
+
+def test_cancelled_needs_neither_a_result_nor_an_error():
+    envelope = JobEnvelope(job_id=JOB_ID, state=JobState.CANCELLED)
+    assert envelope.result is None and envelope.error is None
 
 
 def test_result_on_failed_is_rejected():
@@ -395,6 +413,7 @@ def test_poll_status_code_matches_the_guide_table():
     assert poll_status_code(JobState.RUNNING) == 200
     assert poll_status_code(JobState.SUCCEEDED) == 200
     assert poll_status_code(JobState.FAILED) == 200
+    assert poll_status_code(JobState.CANCELLED) == 200
 
 
 def test_pending_poll_returns_202_with_retry_after(client):
@@ -509,6 +528,7 @@ def test_openapi_documents_the_job_envelope(openapi):
         "RUNNING",
         "SUCCEEDED",
         "FAILED",
+        "CANCELLED",
     ]
     # The failure object is the shared #828 V4ErrorDetail, not a job-local copy.
     assert "V4ErrorDetail" in openapi["components"]["schemas"]

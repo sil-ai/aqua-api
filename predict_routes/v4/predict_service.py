@@ -15,8 +15,9 @@ about it differ from v3, both deliberate.
 **It checks five ids where v3 checked three.** v3's ``POST /predict`` authorized
 ``revision_id``, ``reference_id`` and ``assessment_id`` and left ``source_version_id``
 and ``target_version_id`` unchecked — yet those two are the *primary* selectors for
-four of the six apps (the runner's ``predict()`` docstrings resolve revisions and
-trained artifacts from them), so a caller could name a version outside their groups and
+four of the six apps (the runner's ``predict()`` docstrings, and for ``tfidf``
+:mod:`predict_routes.v4.tfidf_predict`, resolve revisions and trained artifacts from
+them), so a caller could name a version outside their groups and
 have an app read its artifacts. That gap is not what #861 names, but it is the same
 class of hole on the same endpoint, and closing it is the point of porting the check at
 all.
@@ -42,7 +43,8 @@ disagree with ``GET /v4/revisions`` about which revisions exist.
 That is stricter than necessary and it is a decision, not an oversight. Which selectors
 an app consults is the *runner's* rule — its cascades resolve ``revision_id`` before
 ``source_version_id``, and ``text-lengths`` reads none of them — and those rules live in
-another repository and change without this one. Scoping the check to them would mean
+another repository and change without this one (all but ``tfidf``'s, which has lived here
+since #992). Scoping the check to them would mean
 modelling that cascade here, and any drift in the model would skip a check the runner
 then performs: a silent authorization bypass, which is the failure mode this function
 exists to prevent. The cost of being strict is the opposite and much smaller — a caller
@@ -63,6 +65,11 @@ Modal app names (see that enum's module docstring for why, and
 ``test_predict_routes_v4.py`` for the test that pins it against v3's dict in both
 directions). So dispatch is ``modal.Function.from_name(app.value, "predict", ...)``,
 and there is no mapping that can drift from the runner.
+
+**Except** ``tfidf``, which is not dispatched at all since #992: it is answered in
+process by :mod:`predict_routes.v4.tfidf_predict`, with the ranking code
+``similar-verses`` uses, and returns the shape the Modal app returned. That module's
+docstring says why. The enum value still names the Modal app, which still trains.
 
 The ``Function`` cache is this module's own rather than imported from frozen v3. It is
 eight lines, and reaching into a frozen module's privates to save them would tie v4's
@@ -148,6 +155,7 @@ from bible_routes.v4 import revision_service, version_service
 from config import settings
 from database.models import PredictJob as PredictJobRow
 from database.models import UserDB
+from predict_routes.v4 import tfidf_predict
 from utils.logging_config import setup_logger
 
 logger = setup_logger(__name__, container_id=socket.gethostname())
@@ -155,8 +163,8 @@ logger = setup_logger(__name__, container_id=socket.gethostname())
 #: The Modal entry point every assessment app exposes for real-time inference.
 #: ``aqua-assessments`` renamed these from ``inference`` to ``predict`` on 2026-04-21
 #: (commit ``6e132af``, "Rename realtime inference entry points to predict() for
-#: train/predict symmetry") — one name across all six apps, which is what lets dispatch
-#: be a single line.
+#: train/predict symmetry") — one name across every app dispatched there, which is what
+#: lets dispatch be a single line. ``tfidf`` is answered in process instead (#992).
 PREDICT_ENTRYPOINT = "predict"
 
 #: Per-app wall-clock ceiling, in seconds, for one leg of the fan-out. The agent's is
@@ -408,14 +416,23 @@ async def run_fanout(
     Per-app failure is isolated — a slow or failing app never blocks or suppresses the
     others — which is the whole reason the fan-out exists rather than the client making
     six calls.
+
+    ``tfidf`` is answered in process by :mod:`predict_routes.v4.tfidf_predict`, and every
+    other app on Modal. All six legs get the same payload, the same timeout and the same
+    status mapping. One difference a timeout cannot hide: a timed-out ``tfidf`` leg's
+    ranking, which runs on a worker thread, finishes its current step on this worker's
+    CPU after the leg has already been reported.
     """
 
     async def call_one(app: PredictApp) -> tuple[PredictApp, PredictAppResult]:
         started = time.perf_counter()
         timeout_s = timeout_for(app)
         try:
-            fn = _predict_fn(app.value, modal_env)
-            data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
+            if app is PredictApp.tfidf:
+                leg = tfidf_predict.predict(payload)
+            else:
+                leg = _predict_fn(app.value, modal_env).remote.aio(payload)
+            data = await asyncio.wait_for(leg, timeout=timeout_s)
         except asyncio.TimeoutError:
             duration_ms = _elapsed_ms(started)
             logger.warning(f"predict app {app.value} timed out after {duration_ms}ms")
@@ -477,7 +494,9 @@ def _error_text(exc: Exception) -> str:
     and they are caller-actionable ("agent.predict requires vref and source_text on
     every pair"). Everything else reports only its type name: an arbitrary exception
     string from a container we do not control is the kind of thing that leaks paths and
-    connection strings.
+    connection strings. The in-process ``tfidf`` leg is held to the same rule, so a
+    ``ValueError`` raised by sklearn or numpy inside its ranking would also reach the
+    caller verbatim; those messages describe array shapes, not secrets.
     """
     return str(exc) if isinstance(exc, ValueError) else type(exc).__name__
 
@@ -675,9 +694,11 @@ async def semantic_similarity(request: SimilarityRequest, modal_env: str) -> flo
     actually defines, and the two standalone endpoints dispatch the same way the
     fan-out does.
 
-    Raises :class:`SimilarityModelUnavailable` when the app answers with an ``error``
-    key (its documented way of reporting a request-level config failure) and
-    :class:`InferenceUnavailable` when it cannot be reached at all. A reply that is
+    Raises :class:`SimilarityModelUnavailable` when the pair has no usable model and
+    :class:`InferenceUnavailable` when the app cannot be reached at all. The app says
+    "no model" two ways: it raises ``TrainingNotAvailableError`` for a pair with no
+    fine-tune (what it actually does, despite its docstring), or it answers with an
+    ``error`` key. Both are the 422 (#998). A reply that is
     neither — no ``error`` and no readable score — is left to raise, reaching the #828
     catch-all as a 500: our own inference app breaking its response contract is a
     server fault, and it is not worth retrying, which is what a 503 would advertise.
@@ -714,6 +735,12 @@ async def semantic_similarity(request: SimilarityRequest, modal_env: str) -> flo
             PredictApp.semantic_similarity.value, f"timeout after {timeout_s}s"
         ) from exc
     except Exception as exc:
+        # Decided by the same class-name rule as the fan-out's ``not_trained`` status,
+        # and before the generic case: "train this pair first" is not a retryable 503.
+        if _status_for(exc) is PredictAppStatus.not_trained:
+            raise SimilarityModelUnavailable(
+                str(exc), request.source_version_id, request.target_version_id
+            ) from exc
         logger.error(
             f"semantic similarity inference failed: {type(exc).__name__}: {exc}",
             exc_info=True,

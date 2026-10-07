@@ -721,7 +721,8 @@ class AssessmentOut(V4BaseModel):
             "The run's current public state; branch on this. This is the public "
             "spelling of the internal status column — v4 translates the vocabulary at "
             "the edge, so the lowercase queued/running/finished/failed values never "
-            "appear on the wire."
+            "appear on the wire. CANCELLED means a client stopped the run through "
+            "POST /v4/assessments/{id}/cancel."
         ),
     )
     status_detail: str | None = Field(
@@ -763,6 +764,17 @@ class AssessmentOut(V4BaseModel):
             "column existed — which is also why only an admin can delete those."
         ),
     )
+    cancelled_at: datetime | None = Field(
+        default=None,
+        description="When the run was cancelled, or null if it never was.",
+    )
+    cancelled_by: int | None = Field(
+        default=None,
+        description=(
+            "Id of the user who cancelled the run. Null if it was never cancelled, "
+            "or if that user has since been deleted."
+        ),
+    )
     options: dict | None = Field(
         default=None,
         description=(
@@ -795,7 +807,9 @@ class AssessmentOut(V4BaseModel):
         ),
     )
 
-    @field_serializer("requested_at", "started_at", "ended_at", "updated_at")
+    @field_serializer(
+        "requested_at", "started_at", "ended_at", "cancelled_at", "updated_at"
+    )
     def _serialize_aware_utc(self, value: datetime | None) -> datetime | None:
         """Render every timestamp on this body as an explicit UTC instant.
 

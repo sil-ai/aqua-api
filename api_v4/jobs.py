@@ -18,7 +18,7 @@ mirroring AERO's task pattern)::
 This module ships four pieces:
 
 * :class:`JobState` — the closed, public state vocabulary (``PENDING`` /
-  ``RUNNING`` / ``SUCCEEDED`` / ``FAILED``) plus
+  ``RUNNING`` / ``SUCCEEDED`` / ``FAILED`` / ``CANCELLED``) plus
   :data:`ASSESSMENT_STATE_MAP` / :func:`state_for_assessment_status`, the
   translation from the internal ``queued/running/finished/failed`` vocabulary.
 * :class:`JobEnvelope` — the ``{job_id, state, result, error}`` poll body.
@@ -42,13 +42,15 @@ also ships **no idempotency-key handling** (see "Not in this module" below).
 Deliberate contract decisions
 -----------------------------
 
-**The state vocabulary is closed, uppercase, and public.** Four states, and a
-client may branch exhaustively on them. ``CANCELED`` / ``CANCELLING`` are
-deliberately **not** shipped: nothing in the system can cancel a Modal run today,
-so a fifth state would only make every client's exhaustive switch wrong for a
-capability that does not exist. Adding a state later is a breaking change for
-exhaustive clients, which is precisely why the set stays minimal until something
-can actually produce the new value. The internal vocabulary keeps its own
+**The state vocabulary is closed, uppercase, and public.** Five states, and a
+client may branch exhaustively on them. ``CANCELLED`` was held back until something
+could produce it, because a state nothing can reach only makes every client's
+exhaustive switch wrong. ``POST /v4/assessments/{id}/cancel`` (#995) is that thing.
+It was added before ``aqua-django-app`` moved to v4, which is the cheapest a new
+state will ever be. ``CANCELLING`` is still not shipped: v4 holds no Modal handle,
+so a cancel takes effect on the row at once and there is no in-between state to
+report. Only assessments produce ``CANCELLED`` today; training and predict never
+do. The internal vocabulary keeps its own
 lowercase spellings (``schemas.assessment.AssessmentStatus``,
 ``predict_jobs.status``) — v4 does not rename database values, it translates them
 at the edge.
@@ -237,8 +239,7 @@ class JobState(str, Enum):
 
     Uppercase on the wire (``"SUCCEEDED"``), deliberately distinct from the
     lowercase internal vocabularies it is translated from. See the module
-    docstring for why the set is exactly these four and why ``CANCELED`` is not
-    among them.
+    docstring for why the set is exactly these five.
     """
 
     #: Accepted and queued; no work has started yet. Polls as HTTP 202.
@@ -249,6 +250,11 @@ class JobState(str, Enum):
     SUCCEEDED = "SUCCEEDED"
     #: Terminal failure; ``error`` carries the reason.
     FAILED = "FAILED"
+    #: Terminal; a client stopped the job. Neither ``result`` nor ``error`` is set:
+    #: the job did not fail, it was stopped. Not in :data:`ASSESSMENT_STATE_MAP`,
+    #: because no internal status means "cancelled" — the assessments slice reads it
+    #: off ``Assessment.cancelled_at``.
+    CANCELLED = "CANCELLED"
 
     @property
     def is_terminal(self) -> bool:
@@ -262,7 +268,9 @@ class JobState(str, Enum):
 
 #: The states from which nothing further happens. Kept as data (not just the
 #: property) so a slice can use it in a query filter or an ``in`` check.
-TERMINAL_JOB_STATES = frozenset({JobState.SUCCEEDED, JobState.FAILED})
+TERMINAL_JOB_STATES = frozenset(
+    {JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED}
+)
 
 
 #: Internal assessment vocabulary -> public state (migration guide §7). Total
@@ -271,6 +279,9 @@ TERMINAL_JOB_STATES = frozenset({JobState.SUCCEEDED, JobState.FAILED})
 #: through at runtime. Shared by the assessments and training slices (training
 #: reads status off its linked ``Assessment``); see the module docstring for why
 #: this one mapping lives in the shared module and predict's does not.
+#:
+#: Not onto all of :class:`JobState`: a cancelled run is stored as ``failed`` plus
+#: ``cancelled_at``, so ``CANCELLED`` needs the row, not just the status.
 ASSESSMENT_STATE_MAP: dict[AssessmentStatus, JobState] = {
     AssessmentStatus.queued: JobState.PENDING,
     AssessmentStatus.running: JobState.RUNNING,
@@ -319,12 +330,12 @@ class JobEnvelope(V4BaseModel, Generic[ResultT]):
     All four keys are always emitted, including ``"error": null`` — do not add
     ``response_model_exclude_none=True`` to a poll route (module docstring).
 
-    Construction is plain for the three non-failure states::
+    Construction is plain for every state except ``FAILED``::
 
         JobEnvelope(job_id="42", state=JobState.RUNNING)
         JobEnvelope[Summary](job_id="42", state=JobState.SUCCEEDED, result=summary)
 
-    and goes through :meth:`failed` for the fourth, which is the only case that
+    and goes through :meth:`failed` for that one, which is the only case that
     has to build a :class:`~api_v4.errors.V4ErrorDetail`.
     """
 

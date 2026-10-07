@@ -80,6 +80,8 @@ FORBIDDEN_OPERATIONS = frozenset(
         ("patch", "/revisions/{revision_id}"),
         ("delete", "/revisions/{revision_id}"),
         ("delete", "/assessments/{assessment_id}"),
+        # #995: the cancel shares the delete's owner-or-admin gate.
+        ("post", "/assessments/{assessment_id}/cancel"),
         ("get", "/groups"),
         # The #950 auth writes: all admin-only, plus the one non-privilege 403.
         ("post", "/users"),
@@ -267,6 +269,7 @@ class TestPublishedErrorContract:
             ("/revisions/{revision_id}", "patch", "400"),
             ("/assessments", "post", "409"),
             ("/assessments", "post", "503"),
+            ("/assessments/{assessment_id}/cancel", "post", "409"),
             ("/training-sessions", "post", "409"),
             ("/training-jobs/{job_id}", "delete", "409"),
         ],
