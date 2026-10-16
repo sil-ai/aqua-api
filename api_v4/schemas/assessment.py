@@ -180,8 +180,8 @@ capability rather than a port.
 the family** (repo owner, 2026-08-28). ``AssessmentResultOut.vrefs`` means the verses a
 single merged span covers: a range-merge concept, nearly always one entry, whose job is
 joining a score to the text it scored. An n-gram's list is every verse the n-gram was
-found in — an occurrence list, potentially hundreds of entries, with no range-merge
-meaning. Same name, same parent, sibling endpoints, different meanings, and nothing
+found in — an occurrence list with no fixed cap (usually a handful of entries; the most
+measured is 23), and no range-merge meaning. Same name, same parent, sibling endpoints, different meanings, and nothing
 errors when a client confuses them; a client that met ``vrefs`` on ``/results`` first
 would reasonably assume they agree. The rename costs nothing because there are no v4
 clients, and it is a response field name only — the column stays
@@ -1119,8 +1119,9 @@ class NgramResultOut(V4BaseModel):
     this docstring exists. ``AssessmentResultOut.vrefs`` on the sibling ``/results`` read
     means *the verses one merged span covers* — a range-merge concept, almost always a
     single entry, whose purpose is joining a score to the text that was scored. This field
-    means *every verse in which this n-gram occurs*: an occurrence list, potentially
-    hundreds of entries, with no range-merge meaning at all. Two fields with the same name
+    means *every verse in which this n-gram occurs*: an occurrence list with no fixed cap
+    (usually a handful of entries; the most measured is 23), and no range-merge meaning
+    at all. Two fields with the same name
     and different meanings on sibling endpoints of the same parent resource is a collision
     a client discovers only by getting wrong answers, since nothing errors when they are
     confused. v3 called this field ``vrefs``; v4 renames it because there are no clients
@@ -1153,7 +1154,8 @@ class NgramResultOut(V4BaseModel):
         description=(
             "Every verse in which this n-gram occurs, as canonical vrefs. **Not** the "
             "span coverage `/results` calls `vrefs`: these are occurrences, so the list "
-            "may hold hundreds of entries and carries no range-merge meaning. Empty for "
+            "has no fixed length (usually a handful of entries) and carries no "
+            "range-merge meaning. Empty for "
             "an n-gram stored with no verse references, which is returned rather than "
             "omitted — see the endpoint description."
         ),

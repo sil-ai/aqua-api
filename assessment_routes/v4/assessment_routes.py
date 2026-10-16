@@ -1028,7 +1028,8 @@ async def get_assessment_ngrams(
     `/results`, `vrefs` is the verses a single merged span *covers* — a range-merge
     concept, almost always one entry, whose purpose is joining a score to the text it
     scored. Here the list is every verse in which the n-gram *occurs*: an occurrence
-    list, sometimes hundreds of entries, with no range-merge meaning at all. v3 called
+    list with no fixed cap (usually a handful of entries; the most measured is 23), and
+    no range-merge meaning at all. v3 called
     this field `vrefs`; v4 renames it precisely because the two would otherwise collide
     silently — nothing errors when a client treats one as the other.
 
