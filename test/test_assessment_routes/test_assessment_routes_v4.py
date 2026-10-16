@@ -146,8 +146,11 @@ from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
 from api_v4.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    NGRAM_DEFAULT_LIMIT,
+    NGRAM_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
+    NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
     V4Page,
@@ -4550,31 +4553,35 @@ class TestNgramsPage:
         # change the response shape.
         assert body["next_updated_since"] is None
 
-    def test_the_default_limit_is_the_shared_catalog_one(
+    def test_the_default_limit_is_still_20(
         self, client, regular_token1, db_session, group1_version
     ):
-        """Not ``/results``' 100/1000: those numbers are justified by per-verse score
-        volume, and an n-gram row is small. A future consumer that needs more should raise
-        this deliberately rather than find it already raised."""
+        """#1011 raised the ceiling but not the default. A client that omits ``limit``
+        must keep getting the 20 rows it got before, so this pins the literal rather
+        than only the constant."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
         assert (
             _ngrams(client, regular_token1, assessment_id).json()["limit"]
+            == NGRAM_DEFAULT_LIMIT
             == DEFAULT_LIMIT
+            == 20
         )
 
-    def test_limit_at_the_catalog_max_is_accepted(
+    def test_limit_at_the_ngram_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
+        """1000, not the catalog's 100: the web UI walks 10,000 n-grams per side
+        (#1011)."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
-        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == MAX_LIMIT
+        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 1000
 
-    def test_limit_above_the_catalog_max_is_a_422_not_a_clamp(
+    def test_limit_above_the_ngram_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
-        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT + 1)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT + 1)
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
@@ -4696,15 +4703,26 @@ class TestNgramsSchemaContract:
             declared |= {param.name for param in dependency.query_params}
         assert declared == {"limit", "offset"}
 
-    def test_the_route_uses_the_shared_catalog_pagination_dependency(self):
-        """Not ``ResultPaginationParams``. If a measured consumer ever needs bulk pages
-        here, the change is a dedicated dependency in ``api_v4.pagination`` — never
-        raising the shared cap, which would widen the catalog lists too."""
+    def test_the_route_uses_its_own_pagination_dependency(self):
+        """Not the catalog's ``PaginationParams`` (raising that cap would widen the
+        catalog lists too) and not ``ResultPaginationParams`` (whose default of 100
+        would change what a client that omits ``limit`` gets)."""
         route = _route("get_assessment_ngrams")
         assert any(
-            dependency.call is PaginationParams
+            dependency.call is NgramPaginationParams
             for dependency in route.dependant.dependencies
         )
+
+    def test_openapi_publishes_the_ngram_bounds(self, client):
+        """The web UI sizes its page off the published maximum, so the schema is part
+        of the contract, not only the runtime check."""
+        spec = client.get("/v4/openapi.json").json()
+        params = spec["paths"]["/assessments/{assessment_id}/ngrams"]["get"][
+            "parameters"
+        ]
+        limit = next(p for p in params if p["name"] == "limit")
+        assert limit["schema"]["default"] == 20
+        assert limit["schema"]["maximum"] == 1000
 
     def test_the_route_returns_a_page_of_ngram_rows(self):
         route = _route("get_assessment_ngrams")

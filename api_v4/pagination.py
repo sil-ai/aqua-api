@@ -59,9 +59,13 @@ surface, and the one that shows the pattern is about matching consumers rather t
 about growing: a search page is something a person looks at, and each of its rows can
 carry alignment links. :class:`ReferencePaginationParams` (#951) is the fourth, and
 the only one whose default *is* its maximum — see its docstring for why a list bounded
-by an ISO standard rather than by usage is a different kind of list. Five dependencies
-rather than one shared cap is the intended shape, not drift: each names a page size
-sized to what its own consumers actually ask for, and none of them can widen another.
+by an ISO standard rather than by usage is a different kind of list.
+:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/1000 policy for the n-gram
+read: the catalog's default, because a default is the part that binds once clients
+exist, and the result reads' ceiling, because its one client walks the whole corpus.
+Six dependencies rather than one shared cap is the intended shape, not drift: each names
+a page size sized to what its own consumers actually ask for, and none of them can widen
+another.
 """
 
 from datetime import datetime
@@ -369,6 +373,71 @@ class ReferencePaginationParams(PaginationParams):
                 f"list and a client populating a picker needs one request. Must be "
                 f"between 1 and {REFERENCE_MAX_LIMIT} (out-of-range values are "
                 f"rejected with 422, not clamped)."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+
+
+#: Default page size for the n-gram read. The catalog's 20, not the result reads' 100,
+#: and kept there on purpose: ``/ngrams`` shipped with 20, and changing a default once
+#: clients exist silently changes every response they get. A client that wants more
+#: asks for it with ``limit``.
+NGRAM_DEFAULT_LIMIT = DEFAULT_LIMIT
+#: Hard maximum page size for the n-gram read; above this is a 422, not a clamp.
+#:
+#: 1000 because the one client walks the whole corpus. The web UI's Repeated Phrases
+#: card loads the first 10,000 n-grams per side and filters, sorts and counts across
+#: all of them. A page costs about 0.19 s whatever its size, and client-side
+#: concurrency does not help (the server saturates at about 44 pages/s), so load time
+#: scales with the number of requests. At a ceiling of 100 that is 200 requests and
+#: 4.2 s; at 1000 it is 20, about v3's 1.4 s. Measured on staging, 16 October 2026.
+#:
+#: The row's weight is the ``occurrences`` list, which has no cap. It is long in
+#: principle, not in practice: across every row of two full staging corpora (58,024
+#: and 55,689 n-grams) the mean row was ~137 bytes, the largest 531 bytes, the longest
+#: list 23 entries and the 99th percentile 5. The largest 1000-row page was 220 KB,
+#: smaller than an ``/alignment-scores`` page at that read's own ceiling. Not higher
+#: than 1000 for the reason :data:`RESULT_MAX_LIMIT` gives: raising a ceiling later
+#: is non-breaking and lowering it is not.
+NGRAM_MAX_LIMIT = 1000
+
+
+class NgramPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the n-gram read: 20 by default, 1000 max.
+
+    Consumed as ``page: NgramPaginationParams = Depends()`` and interchangeable with the
+    others at :meth:`V4Page.create`, for the reason :class:`ResultPaginationParams`
+    documents.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    the override.
+
+    See :data:`NGRAM_DEFAULT_LIMIT` and :data:`NGRAM_MAX_LIMIT` for where each number
+    comes from.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            NGRAM_DEFAULT_LIMIT,
+            ge=1,
+            le=NGRAM_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{NGRAM_DEFAULT_LIMIT}; must be between 1 and {NGRAM_MAX_LIMIT} "
+                f"(out-of-range values are rejected with 422, not clamped). A client "
+                f"that reads the whole assessment should send the maximum."
             ),
         ),
         offset: int = Query(
