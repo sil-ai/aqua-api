@@ -21,11 +21,21 @@ existing ``assessment_id`` index (4 GB, ~7 bytes/row), because each
 ``(assessment_id, book, chapter)`` key still repeats hundreds of times.
 
 Built with ``CREATE INDEX CONCURRENTLY`` so reads and writes carry on during the
-build, which can take an hour or more on this table. A concurrent build also waits
-for every transaction already open when it starts, so run it in a quiet window with no
-assessment runs writing. Same retry handling as ``c9e7b1f2d3a4``: an interrupted
-concurrent build leaves an ``INVALID`` index that ``IF NOT EXISTS`` would skip, so any
-invalid copy is dropped first.
+build, which can take an hour or more on this table. Before running it:
+
+* Pick a quiet window with no assessment runs writing. The build waits for every
+  transaction already open when it starts, so check ``pg_stat_activity`` for
+  long-open transactions and for an autovacuum running on this table.
+* Expect vacuum to stall database-wide while it runs. The build holds back the xmin
+  horizon, so dead rows anywhere in this shared prod/staging database cannot be
+  cleaned up until it finishes.
+* Run it **once, from one terminal**. Prod and staging share this database, so one
+  run covers both. A second run started while the first is building would see the
+  in-progress index as ``INVALID``, wait, and then drop the finished index.
+
+Same retry handling as ``c9e7b1f2d3a4``: an interrupted concurrent build leaves an
+``INVALID`` index that ``IF NOT EXISTS`` would skip, so any invalid copy is dropped
+first.
 """
 
 from typing import Sequence, Union
@@ -48,8 +58,11 @@ _INDEX = "ix_alignment_threshold_scores_assessment_book_chapter"
 def upgrade() -> None:
     bind = op.get_bind()
     with op.get_context().autocommit_block():
-        # The build legitimately runs far past any per-role statement_timeout.
+        # The build legitimately runs far past any per-role statement_timeout, and
+        # its waits on older transactions are lock waits, so a role-level
+        # lock_timeout would abort it and leave an INVALID index.
         op.execute(sa.text("SET statement_timeout = 0"))
+        op.execute(sa.text("SET lock_timeout = 0"))
         is_invalid = bind.exec_driver_sql(
             "SELECT 1 FROM pg_class c "
             "JOIN pg_index i ON i.indexrelid = c.oid "
