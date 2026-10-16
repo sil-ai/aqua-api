@@ -75,6 +75,14 @@ class AlignmentTopSourceScores(Base):
     __table_args__ = (
         Index("ix_alignment_scores_assessment_score", "assessment_id", "score"),
         Index("ix_alignment_scores_grouping", "book", "chapter", "verse", "source"),
+        # Book/chapter-scoped reads (the drill-down's fallback when an assessment has
+        # no threshold rows) otherwise scan every row of the assessment (#1007).
+        Index(
+            "ix_alignment_top_source_scores_assessment_book_chapter",
+            "assessment_id",
+            "book",
+            "chapter",
+        ),
     )
 
 
