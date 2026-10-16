@@ -214,7 +214,9 @@ re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than
 shared catalog params (20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
 the shared cap. The same bounds apply to both alignment reads: the bound follows the
-row's weight, and these are small fixed-width rows.
+row's weight, and these are small fixed-width rows. ``/ngrams`` is the exception: it
+takes ``NgramPaginationParams`` (20/1000), the result reads' ceiling with the catalog's
+default, because it shipped with a default of 20. Its route docstring says why.
 :class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
 :class:`~api_v4.schemas.assessment.VerseScope` and its ``aggregate``-carrying subclass,
 whose ``model_validator`` methods hold the parameters' invariants, so an inconsistent
@@ -248,7 +250,12 @@ from api_v4.jobs import (
     job_accepted_response,
     set_poll_headers,
 )
-from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
+from api_v4.pagination import (
+    NgramPaginationParams,
+    PaginationParams,
+    ResultPaginationParams,
+    V4Page,
+)
 from api_v4.schemas.assessment import (
     BOOK_ABBREVIATION_LENGTH,
     SIMILAR_VERSES_DEFAULT_LIMIT,
@@ -997,7 +1004,7 @@ async def get_assessment_results(
 )
 async def get_assessment_ngrams(
     assessment_id: int,
-    page: PaginationParams = Depends(),
+    page: NgramPaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[NgramResultOut]:
@@ -1021,7 +1028,8 @@ async def get_assessment_ngrams(
     `/results`, `vrefs` is the verses a single merged span *covers* — a range-merge
     concept, almost always one entry, whose purpose is joining a score to the text it
     scored. Here the list is every verse in which the n-gram *occurs*: an occurrence
-    list, sometimes hundreds of entries, with no range-merge meaning at all. v3 called
+    list with no fixed cap (usually a handful of entries; the most measured is 23), and
+    no range-merge meaning at all. v3 called
     this field `vrefs`; v4 renames it precisely because the two would otherwise collide
     silently — nothing errors when a client treats one as the other.
 
@@ -1038,6 +1046,14 @@ async def get_assessment_ngrams(
 
     `total` counts every n-gram in the assessment, including vrefless ones, and ignores
     `limit`/`offset`.
+
+    **The default page is 20 rows, smaller than the 100 on the other result reads here.
+    The maximum is the same 1000.** 20 is what this read has always defaulted to, and
+    changing a default silently changes the size of every response a client gets. A
+    client that reads the whole assessment should send `limit=1000`: a page costs about
+    the same to serve at any size, so fewer, larger pages are much faster than many
+    small ones. An n-gram row is usually small (around 140 bytes), and a 1000-row page
+    is typically around 200 KB.
     """
     try:
         rows, total = await assessment_service.get_ngrams(
