@@ -79,6 +79,7 @@ from api_v4.errors import (
     register_nul_byte_guard,
 )
 from api_v4.meta_routes import router as meta_router
+from api_v4.query_params import reject_unknown_query_params
 from assessment_routes.v4.assessment_routes import router as assessment_router
 from bible_routes.v4.language_routes import router as language_router
 from bible_routes.v4.revision_routes import router as revision_router
@@ -142,6 +143,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # these responses= arguments.
     v4_app.include_router(
         meta_router,
+        dependencies=[fastapi.Depends(reject_unknown_query_params)],
         responses=error_responses(
             fastapi.status.HTTP_422_UNPROCESSABLE_ENTITY,
             fastapi.status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -154,7 +156,11 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # token). This is why it is a separate router from /v4/users — router-level
     # dependencies apply to every route on the router, so a single auth-protected
     # router could not carry an exempt path. See security_routes/v4/token_routes.py.
-    v4_app.include_router(token_router, responses=V4_PUBLIC_ERROR_RESPONSES)
+    v4_app.include_router(
+        token_router,
+        dependencies=[fastapi.Depends(reject_unknown_query_params)],
+        responses=V4_PUBLIC_ERROR_RESPONSES,
+    )
 
     # Domain routers are auth-protected at the router level (#831): a
     # ``dependencies=[Depends(get_current_user_v4)]`` here makes "protected by
@@ -163,7 +169,13 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # re-declare ``current_user: UserModel = Depends(get_current_user_v4)`` — FastAPI
     # dedupes the dependency, so it runs once per request.
     #
-    # ``responses=`` rides along for the same reason the dependency does: one
+    # The unknown-query-parameter check (#1003) comes AFTER auth, and the order is
+    # load-bearing: dependencies run in the order listed, so a request with no token
+    # still gets its 401 rather than a 422 about its query string. Every router above
+    # carries the same check, so no v4 route silently drops a parameter it does not
+    # declare.
+    #
+    # ``responses=`` rides along for the same reason the dependencies do: one
     # declaration covering every domain route beats 44 that drift. See
     # V4_ERROR_RESPONSES for what it declares and why the union is deliberate.
     for domain_router in (
@@ -205,7 +217,10 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     ):
         v4_app.include_router(
             domain_router,
-            dependencies=[fastapi.Depends(get_current_user_v4)],
+            dependencies=[
+                fastapi.Depends(get_current_user_v4),
+                fastapi.Depends(reject_unknown_query_params),
+            ],
             responses=V4_ERROR_RESPONSES,
         )
 

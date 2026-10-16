@@ -541,11 +541,9 @@ class TestScope:
         """The rename is itself the contract (#925), so it is asserted on the spec and
         not only through the calls above.
 
-        ``vrefs`` must not be a parameter of this operation, and the reason is that an
-        unrecognized query parameter is *ignored* everywhere on v4 rather than refused —
-        so a request still sending the old name would silently be answered with the
-        whole revision instead of the scattered selection it asked for. Nothing but this
-        assertion would notice the old name coming back.
+        ``vrefs`` must not be a parameter of this operation. Since #1003 a request still
+        sending the old name is a 422 rather than the whole revision, so the old name
+        coming back as a parameter is the regression to catch.
         """
         spec = client.get(f"{PREFIX}/openapi.json").json()
         params = {
@@ -1206,16 +1204,15 @@ class TestTextExport:
         resp = _text(client, regular_token1, sparse_revision)
         assert resp.headers["content-type"].startswith("text/plain")
 
-    def test_limit_and_offset_are_ignored(
-        self, client, regular_token1, sparse_revision
-    ):
-        """They are not parameters of this operation, so they are ignored exactly as any
-        other unrecognized query parameter is anywhere on this API — rather than made a
-        special case that rejects. Pinned because "whichever you choose, pin it"."""
-        full = _text(client, regular_token1, sparse_revision)
+    def test_limit_and_offset_are_a_422(self, client, regular_token1, sparse_revision):
+        """They are not parameters of this operation, so they are refused exactly as any
+        other undeclared query parameter is anywhere on this API (#1003)."""
         paged = _text(client, regular_token1, sparse_revision, limit=50, offset=10)
-        assert paged.status_code == 200
-        assert paged.text == full.text
+        assert paged.status_code == 422, paged.text
+        assert [e["loc"] for e in paged.json()["error"]["details"]["errors"]] == [
+            ["query", "limit"],
+            ["query", "offset"],
+        ]
 
     def test_a_revision_with_no_verses_is_still_the_full_skeleton(
         self, client, regular_token1, db_session, group1_version

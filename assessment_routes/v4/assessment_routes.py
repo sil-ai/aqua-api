@@ -1014,8 +1014,8 @@ async def get_assessment_ngrams(
     and each row's `occurrences` lists the verses that n-gram was found in. There is
     therefore **no `book`, `chapter`, `verse` or `aggregate`** — there is no per-verse
     axis to narrow and no per-verse set to roll up. Those parameters are not merely
-    unsupported, they are absent: v4 ignores unrecognised query parameters, so sending
-    `?book=MAT` here returns the unfiltered page rather than an error.
+    unsupported, they are absent, so sending `?book=MAT` here is a `422` naming it, as
+    any undeclared query parameter is on v4.
 
     **`occurrences` is not `/results`' `vrefs`, despite the family resemblance.** On
     `/results`, `vrefs` is the verses a single merged span *covers* — a range-merge
@@ -1122,8 +1122,8 @@ async def get_assessment_similar_verses(
     reference — the normal case for this type, and not an error. v3's `reference_id`
     parameter is **gone**: letting a caller name any revision made the response depend on
     a display preference rather than on the assessment, and a caller who wants arbitrary
-    verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is
-    ignored, not honoured.
+    verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is a
+    `422`, not honoured.
 
     **`similarity` ranks, it does not calibrate.** It is the cosine between the two
     verses' TF-IDF representations, in `[0, 1]`: higher is closer and the ordering is
@@ -1414,7 +1414,7 @@ async def get_assessment_alignment_scores(
 
     **There is no `aggregate`.** Rolling word rows up to a chapter mean would produce a
     number that looks like the one `/results` gives for the same assessment and is not
-    it. Sending `aggregate` here is ignored, not an error.
+    it. Sending `aggregate` here is a `422`.
     """
     try:
         rows, total = await assessment_service.get_alignment_scores(
