@@ -343,6 +343,7 @@ async def get_assessment_critique_issues(
             agent_translation_id=agent_translation_id,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -416,6 +417,7 @@ async def get_assessment_translations(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc

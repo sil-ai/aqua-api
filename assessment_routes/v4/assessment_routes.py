@@ -984,6 +984,7 @@ async def get_assessment_results(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -1057,7 +1058,12 @@ async def get_assessment_ngrams(
     """
     try:
         rows, total = await assessment_service.get_ngrams(
-            db, current_user, assessment_id, limit=page.limit, offset=page.offset
+            db,
+            current_user,
+            assessment_id,
+            limit=page.limit,
+            offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -1443,6 +1449,7 @@ async def get_assessment_alignment_scores(
             min_score=min_score,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, exc.assessment_id) from exc
@@ -1539,6 +1546,7 @@ async def get_assessment_missing_words(
             against=against or [],
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         # exc.assessment_id, not the path id: an `against` peer the caller cannot read
@@ -1670,6 +1678,7 @@ async def get_assessment_text_lengths(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -1799,6 +1808,7 @@ async def get_assessment_score_comparison(
             against=against,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         # exc.assessment_id, not the path id: an `against` peer the caller cannot read is

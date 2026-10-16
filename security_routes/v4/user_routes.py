@@ -203,7 +203,11 @@ async def list_current_user_groups(
     automatically members of anything.
     """
     groups, total = await user_service.list_user_groups(
-        db, current_user, limit=page.limit, offset=page.offset
+        db,
+        current_user,
+        limit=page.limit,
+        offset=page.offset,
+        include_total=page.include_total,
     )
     items = [GroupOut.model_validate(group) for group in groups]
     return V4Page[GroupOut].create(items=items, total=total, pagination=page)

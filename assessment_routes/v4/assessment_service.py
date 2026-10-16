@@ -507,6 +507,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from api_v4.jobs import JobState, state_for_assessment_status
+from api_v4.pagination import page_total
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
     AlignmentScoreType,
@@ -1750,8 +1751,14 @@ def _deduplicated_results(
 
 
 async def _verse_level_results(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of verse-level rows in canonical order, plus the total row count.
 
     **Canonical vref order, not v3's ``id`` order.** v3 orders these by ``min(id)``, i.e.
@@ -1772,7 +1779,6 @@ async def _verse_level_results(
         .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
         .subquery()
     )
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -1781,12 +1787,26 @@ async def _verse_level_results(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def _aggregated_results(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of rolled-up rows in canonical order, plus the number of groups.
 
     v3's rollup, preserved: ``avg(score)``, ``bool_or(flag)``, ``bool_or(hide)``, grouped
@@ -1846,9 +1866,16 @@ async def _aggregated_results(
         # abbreviation is determined by its number — so the group columns can just follow.
         .order_by(*canonical_columns, *group_columns)
     )
-    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
     rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(grouped.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_results(
@@ -1859,7 +1886,8 @@ async def get_results(
     scope: ResultScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's generic results: rows, total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=RESULT_ASSESSMENT_TYPES``, so the
@@ -1893,12 +1921,22 @@ async def get_results(
     )
     if scope.aggregate is not None:
         rows, total = await _aggregated_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
         return rows, total, {}
 
     rows, total = await _verse_level_results(
-        db, assessment_id, scope, limit=limit, offset=offset
+        db,
+        assessment_id,
+        scope,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -1999,8 +2037,14 @@ async def _ngrams_page(
 
 
 async def get_ngrams(
-    db: AsyncSession, user: UserDB, assessment_id: int, *, limit: int, offset: int
-) -> tuple[list[dict], int]:
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of an assessment's n-grams, plus the total ignoring ``limit``/``offset``.
 
     Authorized by :func:`get_assessment` with ``types=NGRAMS_ASSESSMENT_TYPES``, so this
@@ -2021,13 +2065,20 @@ async def get_ngrams(
     modification timestamp, so this list has no delta feed.
     """
     await get_assessment(db, user, assessment_id, types=NGRAMS_ASSESSMENT_TYPES)
-    total = await db.scalar(
+    # One row per ``ngrams_table`` row, vrefless ones included, so ``len(rows)`` is the
+    # page statement's own row count.
+    rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
+    total = await page_total(
+        db,
         select(func.count())
         .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
+        .where(NgramsTable.assessment_id == assessment_id),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
-    rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
-    return rows, total or 0
+    return rows, total
 
 
 # ---------------------------------------------------------------------------
@@ -2527,8 +2578,14 @@ def _alignment_scope_clauses(model, assessment_id: int, scope: VerseScope) -> li
 
 
 async def _alignment_page(
-    db: AsyncSession, model, clauses: list, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    model,
+    clauses: list,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of alignment rows in canonical order, plus the total ignoring the page.
 
     **Canonical vref order, then ``source``, then ``id``** — Bible order rather than
@@ -2573,7 +2630,6 @@ async def _alignment_page(
         .where(*clauses)
         .subquery()
     )
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -2588,7 +2644,15 @@ async def _alignment_page(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_alignment_scores(
@@ -2602,7 +2666,8 @@ async def get_alignment_scores(
     min_score: float | None,
     limit: int,
     offset: int,
-) -> tuple[list[dict], int]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of a word-alignment assessment's word pairings, plus the total.
 
     Authorized by :func:`get_assessment` with ``types=ALIGNMENT_ASSESSMENT_TYPES``, the
@@ -2654,7 +2719,14 @@ async def get_alignment_scores(
     if min_score is not None:
         clauses.append(model.score >= _score_bound(min_score))
 
-    rows, total = await _alignment_page(db, model, clauses, limit=limit, offset=offset)
+    rows, total = await _alignment_page(
+        db,
+        model,
+        clauses,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
     vrefs = [f"{row.book} {row.chapter}:{row.verse}" for row in rows]
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -2928,7 +3000,8 @@ async def get_missing_words(
     against: list[int],
     limit: int,
     offset: int,
-) -> tuple[list[dict], int]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of words a word-alignment assessment aligned poorly, plus the total.
 
     Serves a **word-alignment** assessment id — see :data:`ALIGNMENT_ASSESSMENT_TYPES`
@@ -2943,8 +3016,9 @@ async def get_missing_words(
     and is preserved: one endpoint is looking for good alignments and the other for the
     absence of them.
 
-    Five statements, in this order: authorize the subject; authorize and check the peers
-    (:func:`_baseline_peers`); count and fetch one page; fetch that page's peer rows
+    Up to five statements, in this order: authorize the subject; authorize and check the
+    peers (:func:`_baseline_peers`); fetch one page, and count only if the page cannot
+    answer ``total`` (:func:`api_v4.pagination.page_total`); fetch that page's peer rows
     (:func:`_peer_alignments`); load the span map. The peer work is bounded by the page,
     never by the assessment.
 
@@ -2970,7 +3044,12 @@ async def get_missing_words(
         AlignmentTopSourceScores, assessment_id, scope
     ) + [AlignmentTopSourceScores.score < _score_bound(max_score)]
     rows, total = await _alignment_page(
-        db, AlignmentTopSourceScores, clauses, limit=limit, offset=offset
+        db,
+        AlignmentTopSourceScores,
+        clauses,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
 
     keys = [(row.book, row.chapter, row.verse, row.source) for row in rows]
@@ -3125,8 +3204,14 @@ def _placed_text_lengths(assessment_id: int, scope: ResultScope):
 
 
 async def _verse_level_text_lengths(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of verse-level rows in canonical order, plus the total row count.
 
     Canonical Bible order — ``book_reference.number``, then the chapter number, then the
@@ -3141,7 +3226,6 @@ async def _verse_level_text_lengths(
     offset-pagination drift between two statements still applies.
     """
     placed = _placed_text_lengths(assessment_id, scope)
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -3150,12 +3234,26 @@ async def _verse_level_text_lengths(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def _aggregated_text_lengths(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of rolled-up rows in canonical order, plus the number of groups.
 
     **All four measures roll up as ``avg``**, which makes this rollup simpler than
@@ -3217,9 +3315,16 @@ async def _aggregated_text_lengths(
         # abbreviation is determined by its number — so the group columns can just follow.
         .order_by(*canonical_columns, *group_columns)
     )
-    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
     rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(grouped.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_text_lengths(
@@ -3230,7 +3335,8 @@ async def get_text_lengths(
     scope: ResultScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's text-length measurements: rows, total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=TEXT_LENGTHS_ASSESSMENT_TYPES``, so
@@ -3269,12 +3375,22 @@ async def get_text_lengths(
     )
     if scope.aggregate is not None:
         rows, total = await _aggregated_text_lengths(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
         return rows, total, {}
 
     rows, total = await _verse_level_text_lengths(
-        db, assessment_id, scope, limit=limit, offset=offset
+        db,
+        assessment_id,
+        scope,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -3434,7 +3550,8 @@ async def get_score_comparison(
     against: list[int],
     limit: int,
     offset: int,
-) -> tuple[list[dict], int, list[int]]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None, list[int]]:
     """One page of an assessment's scores against a peer distribution, plus the total.
 
     Serves all three of :data:`RESULT_ASSESSMENT_TYPES`, authorized by the same
@@ -3461,8 +3578,9 @@ async def get_score_comparison(
     the design rather than an argument about scheduling — the v3 exposure lasts until v3
     is retired regardless of when this ships.
 
-    Five statements plus the span maps: authorize the subject; authorize and check the
-    peers; count and fetch one page; fetch that page's peer scores; and, at the verse
+    Up to five statements plus the span maps: authorize the subject; authorize and check
+    the peers; fetch one page, and count only if the page cannot answer ``total``
+    (:func:`api_v4.pagination.page_total`); fetch that page's peer scores; and, at the verse
     level, the subject's span map plus one for each peer that actually reached the page.
     Those are memoised per revision, so a peer costs a lookup rather than a scan. **Every
     part of the peer work is bounded by the page rather than by ``against``** — which is
@@ -3515,11 +3633,21 @@ async def get_score_comparison(
 
     if scope.aggregate is not None:
         rows, total = await _aggregated_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
     else:
         rows, total = await _verse_level_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
 
     names = _comparison_group_names(scope.aggregate)

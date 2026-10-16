@@ -2502,6 +2502,30 @@ class TestList:
         assert _ids(second) == created[2:]
         assert second.json()["total"] == 3
 
+    def test_include_total_false_nulls_total_but_keeps_the_watermark(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """This list counts in the same statement that finds the delta watermark, so the
+        envelope is what nulls ``total`` here. The watermark still comes back."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        created = sorted(
+            _make_assessment(db_session, revision_id, reference_id, type_=t)
+            for t in ("ngrams", "tfidf", "text-lengths")
+        )
+        resp = _list(
+            client,
+            regular_token1,
+            revision_id=revision_id,
+            limit=2,
+            offset=2,
+            include_total="false",
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] is None
+        assert _ids(resp) == created[2:]
+        assert body["next_updated_since"] is not None
+
     def test_out_of_range_limit_is_a_422_not_a_clamp(self, client, regular_token1):
         resp = _list(client, regular_token1, limit=MAX_LIMIT + 1)
         assert resp.status_code == 422, resp.text
@@ -3514,6 +3538,60 @@ class TestResultsPage:
         resp = _results(client, regular_token1, assessment_id, offset=5)
         assert _rows(resp) == []
         assert resp.json()["total"] == 1
+
+    def test_total_is_the_same_on_every_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A short page reports ``total`` from its own length and a full one counts
+        (#1004). Both have to give the same number."""
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        for limit in (2, 3, 4, 5):
+            for offset in (0, 2, 3, 4, 6):
+                resp = _results(
+                    client, regular_token1, assessment_id, limit=limit, offset=offset
+                )
+                assert resp.status_code == 200, resp.text
+                assert resp.json()["total"] == 4, (limit, offset)
+
+    def test_an_aggregated_total_is_the_number_of_groups_on_every_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The rollup is the read whose count costs the most, because counting it runs
+        the whole aggregation again."""
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        for limit, offset in ((1, 0), (2, 0), (2, 2), (3, 0), (10, 0), (1, 5)):
+            resp = _results(
+                client,
+                regular_token1,
+                assessment_id,
+                aggregate="book",
+                limit=limit,
+                offset=offset,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["total"] == 3, (limit, offset)
+
+    @pytest.mark.parametrize("aggregate", [None, "book"])
+    def test_include_total_false_nulls_total_and_keeps_the_page(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        params = {"limit": 2, "offset": 1}
+        if aggregate:
+            params["aggregate"] = aggregate
+        counted = _results(client, regular_token1, assessment_id, **params)
+        uncounted = _results(
+            client, regular_token1, assessment_id, include_total="false", **params
+        )
+        assert uncounted.status_code == 200, uncounted.text
+        assert uncounted.json()["total"] is None
+        assert _rows(uncounted) == _rows(counted)
 
     def test_an_assessment_with_no_results_is_an_empty_page_not_a_404(
         self, client, regular_token1, db_session, group1_version
@@ -4637,6 +4715,38 @@ class TestNgramsPage:
         assert body["items"] == []
         assert body["total"] == 2
 
+    @pytest.mark.parametrize(
+        "params, counted, total",
+        [
+            # The only page is short, so it is its own total: no COUNT.
+            ({"limit": 20}, False, 3),
+            # A short last page past offset 0: no COUNT either.
+            ({"limit": 2, "offset": 2}, False, 3),
+            # A full page may have more behind it, so it counts.
+            ({"limit": 2}, True, 3),
+            # Empty past offset 0: the offset may be past the end, so it counts.
+            ({"offset": 10}, True, 3),
+            # Declined: no COUNT, and a null total.
+            ({"limit": 2, "include_total": "false"}, False, None),
+        ],
+    )
+    def test_the_count_runs_only_when_the_page_cannot_answer_it(
+        self, client, regular_token1, db_session, group1_version, params, counted, total
+    ):
+        """Pinned on the statements, because a skipped COUNT and a run one return the
+        same body (#1001, #1004)."""
+        assessment_id = self._with_ngrams(db_session, group1_version, 3)
+        with _captured_sql() as captured:
+            resp = _ngrams(client, regular_token1, assessment_id, **params)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["total"] == total
+        counts = [
+            statement
+            for statement, _ in _touching(captured, "ngrams_table")
+            if "count(" in statement.lower()
+        ]
+        assert len(counts) == (1 if counted else 0), counts
+
     def test_an_empty_page_skips_the_occurrence_query_entirely(
         self, client, regular_token1, db_session, group1_version
     ):
@@ -4694,14 +4804,14 @@ class TestNgramsSchemaContract:
         resp = _ngrams(client, regular_token1, assessment_id, **params)
         assert _refused_query_params(resp) == list(params)
 
-    def test_the_declared_query_parameters_are_limit_and_offset_only(self):
+    def test_the_declared_query_parameters_are_the_pagination_ones_only(self):
         """Pinned at the route so OpenAPI cannot gain a verse-keyed parameter by accident.
         ``assessment_id`` is a path parameter, not a query one."""
         route = _route("get_assessment_ngrams")
         declared = {param.name for param in route.dependant.query_params}
         for dependency in route.dependant.dependencies:
             declared |= {param.name for param in dependency.query_params}
-        assert declared == {"limit", "offset"}
+        assert declared == {"limit", "offset", "include_total"}
 
     def test_the_route_uses_its_own_pagination_dependency(self):
         """Not the catalog's ``PaginationParams`` (raising that cap would widen the
@@ -8609,6 +8719,7 @@ class TestAlignmentScoresContract:
             "score_type",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_the_route_uses_the_result_pagination_dependency(self):
@@ -9348,8 +9459,9 @@ class TestMissingWordsPeers:
             for statement, _p in _touching(captured, "alignment_top_source_scores")
             if "SELECT" in statement
         ]
-        # The subject's count, the subject's page, and one lookup for both peers.
-        assert len(selects) == 3
+        # The subject's page and one lookup for both peers. The page is shorter than
+        # ``limit``, so it answers ``total`` itself and no count runs.
+        assert len(selects) == 2
 
     def test_an_empty_page_skips_the_peer_query_entirely(
         self, client, regular_token1, db_session, subject
@@ -9365,7 +9477,8 @@ class TestMissingWordsPeers:
             for statement, _p in _touching(captured, "alignment_top_source_scores")
             if "SELECT" in statement
         ]
-        assert len(selects) == 2
+        # The subject's page alone: empty at offset 0 is an empty list, so no count.
+        assert len(selects) == 1
 
     def test_a_peers_rows_for_another_verse_do_not_bleed_across(
         self, client, regular_token1, db_session, subject
@@ -9530,6 +9643,7 @@ class TestMissingWordsContract:
             "against",
             "limit",
             "offset",
+            "include_total",
         }
 
     @pytest.mark.parametrize(
@@ -10725,6 +10839,7 @@ class TestTextLengthsContract:
             "aggregate",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_the_route_uses_the_result_pagination_dependency(self):
@@ -11252,8 +11367,9 @@ class TestScoreComparisonPeers:
             for statement, _p in _touching(captured, "assessment_result")
             if "SELECT" in statement
         ]
-        # The subject's count, the subject's page, and one lookup for both peers.
-        assert len(selects) == 3
+        # The subject's page and one lookup for both peers. The page is shorter than
+        # ``limit``, so it answers ``total`` itself and no count runs.
+        assert len(selects) == 2
 
     def test_the_peer_query_carries_this_pages_groups_and_no_others(
         self, client, regular_token1, db_session, compared
@@ -11307,7 +11423,8 @@ class TestScoreComparisonPeers:
             for statement, _p in _touching(captured, "assessment_result")
             if "SELECT" in statement
         ]
-        assert len(selects) == 2
+        # The subject's page alone: empty at offset 0 is an empty list, so no count.
+        assert len(selects) == 1
 
 
 class TestScoreComparisonRows:
@@ -12038,6 +12155,25 @@ class TestScoreComparisonPage:
         assert body["items"] == []
         assert body["against_assessment_ids"] == compared["peer_ids"]
 
+    def test_total_is_the_same_on_every_page(self, client, regular_token1, compared):
+        for limit, offset in ((2, 0), (2, 2), (2, 4), (5, 0), (6, 0), (2, 9)):
+            body = self._page(
+                client, regular_token1, compared, limit=limit, offset=offset
+            )
+            assert body["total"] == 5, (limit, offset)
+
+    def test_include_total_false_nulls_total_and_still_names_the_peers(
+        self, client, regular_token1, compared
+    ):
+        """``ScoreComparisonPage`` overrides ``create``, so it has to apply the rule
+        too (#1010)."""
+        body = self._page(
+            client, regular_token1, compared, limit=2, offset=2, include_total="false"
+        )
+        assert body["total"] is None
+        assert len(body["items"]) == 2
+        assert body["against_assessment_ids"] == compared["peer_ids"]
+
     def test_the_default_and_maximum_limits_are_the_result_reads(
         self, client, regular_token1, compared
     ):
@@ -12131,6 +12267,7 @@ class TestScoreComparisonContract:
             "aggregate",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_against_is_a_required_parameter(self):

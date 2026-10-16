@@ -90,6 +90,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobState, state_for_assessment_status
+from api_v4.pagination import page_total
 from api_v4.schemas.training import (
     InferenceReadinessOut,
     TrainingNeighbour,
@@ -701,11 +702,12 @@ async def list_jobs(
     *,
     limit: int,
     offset: int,
+    include_total: bool = True,
     state: JobState | None = None,
     training_type: TrainingType | None = None,
     source_version_id: int | None = None,
     target_version_id: int | None = None,
-) -> tuple[list[TrainingJob], int]:
+) -> tuple[list[TrainingJob], int | None]:
     """Return one page of training jobs the user may see, and the total match count.
 
     The four filters are v3's. ``state`` is the one that changed shape: v3 filters on the
@@ -720,9 +722,10 @@ async def list_jobs(
     the visibility predicate, so they can only narrow what the caller could already see:
     a version id outside their groups yields an empty page rather than a 404.
 
-    ``total`` counts all matching rows ignoring ``limit``/``offset``. It is a second
-    statement, so a concurrent write between the two can cause the usual rare
-    offset-pagination drift between ``total`` and ``len(items)``.
+    ``total`` counts all matching rows ignoring ``limit``/``offset``. When the page cannot
+    answer it (:func:`api_v4.pagination.page_total`) it is a second statement, so a
+    concurrent write between the two can cause the usual rare offset-pagination drift
+    between ``total`` and ``len(items)``.
 
     Ordered by ``id`` ascending, like every other v4 list and unlike v3's unordered
     (and unbounded) result: offset pagination needs a total order on a column that
@@ -743,16 +746,22 @@ async def list_jobs(
     if target_version_id is not None:
         stmt = stmt.where(TrainingJob.target_version_id == target_version_id)
 
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar_one()
     rows = await db.execute(
         stmt.options(selectinload(TrainingJob.assessment))
         .order_by(TrainingJob.id)
         .limit(limit)
         .offset(offset)
     )
-    return list(rows.scalars().unique().all()), total
+    jobs = list(rows.scalars().unique().all())
+    total = await page_total(
+        db,
+        select(func.count()).select_from(stmt.subquery()),
+        returned=len(jobs),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return jobs, total
 
 
 async def get_job(db: AsyncSession, user: UserDB, job_id: int) -> TrainingJob:
@@ -1017,8 +1026,13 @@ def _located_subquery(model, assessment_id: int, scope):
 
 
 async def _page_vrefs(
-    db: AsyncSession, subqueries: list, *, limit: int, offset: int
-) -> tuple[list[str], int]:
+    db: AsyncSession,
+    subqueries: list,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list[str], int | None]:
     """The page's vrefs in canonical order, and how many there are in total.
 
     ``union`` (not ``union_all``) is load-bearing: semantic-similarity and
@@ -1047,16 +1061,22 @@ async def _page_vrefs(
         .distinct()
         .subquery()
     )
-    total = (
-        await db.execute(select(func.count()).select_from(joined))
-    ).scalar_one() or 0
     rows = await db.execute(
         select(joined.c.vref)
         .order_by(joined.c.book_number, joined.c.chapter, joined.c.verse)
         .limit(limit)
         .offset(offset)
     )
-    return [row[0] for row in rows.all()], total
+    vrefs = [row[0] for row in rows.all()]
+    total = await page_total(
+        db,
+        select(func.count()).select_from(joined),
+        returned=len(vrefs),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return vrefs, total
 
 
 async def _verse_text(
@@ -1193,7 +1213,8 @@ async def session_results(
     limit: int,
     offset: int,
     tfidf_top_k: int,
-) -> tuple[list[TrainingResultRow], int]:
+    include_total: bool = True,
+) -> tuple[list[TrainingResultRow], int | None]:
     """One page of interleaved per-verse results for a session's finished jobs.
 
     ``jobs`` are the session's jobs as :func:`get_session_jobs` returned them — already
@@ -1279,7 +1300,9 @@ async def session_results(
         if assessment_id is not None:
             subqueries.append(_ngram_vref_subquery(assessment_id, scope))
 
-    page_vrefs, total = await _page_vrefs(db, subqueries, limit=limit, offset=offset)
+    page_vrefs, total = await _page_vrefs(
+        db, subqueries, limit=limit, offset=offset, include_total=include_total
+    )
     if not page_vrefs:
         return [], total
 
