@@ -42,6 +42,17 @@ class AlignmentThresholdScores(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
+    # Book/chapter-scoped reads (the drill-down) otherwise scan every row of the
+    # assessment through the assessment_id index (#1004).
+    __table_args__ = (
+        Index(
+            "ix_alignment_threshold_scores_assessment_book_chapter",
+            "assessment_id",
+            "book",
+            "chapter",
+        ),
+    )
+
 
 class AlignmentTopSourceScores(Base):
     __tablename__ = "alignment_top_source_scores"
