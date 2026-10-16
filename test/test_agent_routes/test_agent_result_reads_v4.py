@@ -1370,19 +1370,19 @@ class TestTranslationsFilters:
         assert _error_code(resp) == "VALIDATION_ERROR"
 
     @pytest.mark.parametrize("dropped", ["version", "all_versions", "first_vref"])
-    def test_a_dropped_v3_parameter_is_ignored_rather_than_honoured(
+    def test_a_dropped_v3_parameter_is_a_422_naming_it(
         self, client, regular_token1, db_session, group1_version, dropped
     ):
-        """These are undeclared on v4, so FastAPI discards them — the same thing v3 does
-        to the ``chapter`` and ``verse`` the one known client sends it. Pinned so that
-        "not carried" cannot quietly become "carried" without a contract test changing:
-        the request answers 200 and the parameter changes nothing."""
+        """These are undeclared on v4, so sending one is a 422 naming it (#1003) rather
+        than a 200 the parameter silently changed nothing about. Pinned so that "not
+        carried" cannot quietly become "carried" without a contract test changing."""
         run = _agent_run(db_session, group1_version)
-        for attempt in (1, 2):
-            _make_translation(db_session, run, "MAT 1:1", attempt=attempt)
         params = {dropped: 1 if dropped != "first_vref" else "MAT 1:1"}
-        rows = _rows(_translations(client, regular_token1, run.assessment_id, **params))
-        assert [row["attempt"] for row in rows] == [1, 2]
+        resp = _translations(client, regular_token1, run.assessment_id, **params)
+        assert resp.status_code == 422, resp.text
+        assert [e["loc"] for e in resp.json()["error"]["details"]["errors"]] == [
+            ["query", dropped]
+        ]
 
 
 @pytest.mark.parametrize("read", ["critique-issues", "translations"])

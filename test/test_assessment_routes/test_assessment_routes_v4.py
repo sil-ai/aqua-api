@@ -352,6 +352,16 @@ def _error_code(resp):
     return resp.json()["error"]["code"]
 
 
+def _refused_query_params(resp):
+    """The query parameters a 422 refused as undeclared (#1003), in order."""
+    assert resp.status_code == 422, resp.text
+    return [
+        entry["loc"][1]
+        for entry in resp.json()["error"]["details"]["errors"]
+        if entry["type"] == "extra_forbidden" and entry["loc"][0] == "query"
+    ]
+
+
 def _make_assessment(
     db_session,
     revision_id,
@@ -4667,19 +4677,15 @@ class TestNgramsSchemaContract:
     def test_the_verse_keyed_parameters_are_not_accepted(
         self, client, regular_token1, db_session, group1_version, params
     ):
-        """Not accepted *and* not an error: v4 ignores unrecognised query parameters, so
-        each of these returns the unfiltered page. The assertion is that the filter had no
-        effect — an endpoint that silently honoured ``book`` would fail the second half,
-        and one that 422'd would fail the first."""
+        """Not accepted: each is an undeclared query parameter, so a 422 naming every one
+        sent (#1003). Before #1003 they were silently ignored, which returned the
+        unfiltered page to a caller who believed it had filtered."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(
             db_session, revision_id, reference_id, type_="ngrams"
         )
-        _make_ngram(db_session, assessment_id, "in the", vrefs=["GEN 1:1"])
-        _make_ngram(db_session, assessment_id, "of the", vrefs=["MAT 1:1"])
         resp = _ngrams(client, regular_token1, assessment_id, **params)
-        assert resp.status_code == 200, resp.text
-        assert _ngram_strings(resp) == ["in the", "of the"]
+        assert _refused_query_params(resp) == list(params)
 
     def test_the_declared_query_parameters_are_limit_and_offset_only(self):
         """Pinned at the route so OpenAPI cannot gain a verse-keyed parameter by accident.
@@ -5664,25 +5670,21 @@ class TestSimilarVersesText:
             assert hits[0]["text"] == SHORTLIST_CORPUS["GEN 1:2"]
             assert hits[0]["similarity"] == pytest.approx(1.0)
 
-    def test_reference_id_passed_as_a_query_parameter_is_ignored_not_honoured(
+    def test_reference_id_passed_as_a_query_parameter_is_a_422(
         self, client, regular_token1, db_session, group1_version
     ):
-        """v3's ``reference_id`` is gone, and v4's convention for an unrecognised parameter
-        is to ignore it — the same rule the plaintext export applies to ``limit``. Pinned
-        because "ignored" and "honoured" are indistinguishable unless the named revision
-        holds text the assessment's own reference does not."""
+        """v3's ``reference_id`` is gone, so sending it is a 422 naming it, as any
+        undeclared query parameter is on v4 (#1003) — the same rule the plaintext export
+        applies to ``limit``."""
         assessment_id = self._texted(db_session, group1_version, reference=False)
-        other_revision = _make_revision(db_session, group1_version)
-        _make_verse_texts(db_session, other_revision, {"GEN 1:2": "should not appear"})
         resp = _similar(
             client,
             regular_token1,
             assessment_id,
             vref=SHORTLIST_QUERY_VREF,
-            reference_id=other_revision,
+            reference_id=1,
         )
-        assert resp.status_code == 200, resp.text
-        assert all(hit["reference_text"] is None for hit in _hits(resp))
+        assert _refused_query_params(resp) == ["reference_id"]
 
 
 class TestSimilarVersesContract:
@@ -5781,23 +5783,18 @@ class TestSimilarVersesContract:
         self, client, regular_token1, db_session, group1_version
     ):
         """v3's client sends ``page`` on every call and ``/tfidf_result`` has never
-        declared it, so nobody has ever paged this. Passing one here is ignored, which is
-        the v4 convention for an unrecognised parameter."""
+        declared it, so nobody has ever paged this. Passing either here is a 422 naming
+        it, as any undeclared query parameter is on v4 (#1003)."""
         assessment_id = self._vectorized(db_session, group1_version)
-        plain = _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        resp = _similar(
+            client,
+            regular_token1,
+            assessment_id,
+            vref=SHORTLIST_QUERY_VREF,
+            offset=1,
+            page=2,
         )
-        with_offset = _hit_vrefs(
-            _similar(
-                client,
-                regular_token1,
-                assessment_id,
-                vref=SHORTLIST_QUERY_VREF,
-                offset=1,
-                page=2,
-            )
-        )
-        assert plain == with_offset == SHORTLIST_ORDER
+        assert _refused_query_params(resp) == ["offset", "page"]
 
     def test_the_declared_query_parameters_are_vref_and_limit_only(self):
         """Pinned at the route so OpenAPI cannot gain ``offset``, ``page`` or
@@ -7313,9 +7310,7 @@ class TestSimilarVersesPostContract:
         caller name any revision whose text to attach, making the response depend on a
         display preference rather than on the assessment.
 
-        Note this differs from the GET, which *ignores* an unrecognised query parameter:
-        an unknown key in a JSON body is a client that believes it is sending something,
-        while an unknown query parameter is the web's normal noise.
+        The GET refuses an undeclared query parameter the same way (#1003).
         """
         assessment_id = self._vectorized(db_session, group1_version)
         # Built as a dict rather than passed as keywords: one of these keys is
@@ -8345,15 +8340,10 @@ class TestAlignmentScoresFilters:
     def test_aggregate_is_ignored_rather_than_honoured_or_rejected(
         self, client, regular_token1, aligned
     ):
-        """A row here is a word, so there is nothing to roll up. Not accepted *and* not
-        an error: v4 ignores unrecognised query parameters, so this returns the
-        unfiltered page. An endpoint that had silently gained ``aggregate`` would fail
-        the second assertion."""
+        """A row here is a word, so there is nothing to roll up. ``aggregate`` is not a
+        parameter of this read, so sending it is a 422 naming it (#1003)."""
         resp = _alignment_scores(client, regular_token1, aligned, aggregate="chapter")
-        assert resp.status_code == 200, resp.text
-        assert _pairs(resp) == _pairs(
-            _alignment_scores(client, regular_token1, aligned)
-        )
+        assert _refused_query_params(resp) == ["aggregate"]
 
     def test_an_over_long_source_is_a_422_rather_than_a_scan(
         self, client, regular_token1, aligned
@@ -9531,14 +9521,12 @@ class TestMissingWordsContract:
         self, client, regular_token1, db_session, group1_version, dead
     ):
         """Each becomes unreachable once the subject is an explicit assessment id. Not
-        carried, not deprecated — and ignored rather than rejected, since v4 ignores
-        unrecognised query parameters."""
+        carried, not deprecated — and refused with a 422 naming it, as any undeclared
+        query parameter is on v4 (#1003)."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(db_session, revision_id, reference_id)
-        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
         resp = _missing_words(client, regular_token1, assessment_id, **{dead: 1})
-        assert resp.status_code == 200, resp.text
-        assert _sources(resp) == ["word"]
+        assert _refused_query_params(resp) == [dead]
 
     def test_too_many_peers_is_a_422_naming_the_limit(
         self, client, regular_token1, db_session, group1_version

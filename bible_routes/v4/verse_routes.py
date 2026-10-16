@@ -346,7 +346,7 @@ async def export_text(
     And there is nothing for a cap to bound — pagination exists to stop a *caller* making a
     response arbitrarily large, and no parameter here changes the size: one revision is at
     most 41,899 lines, full stop. `limit` and `offset` are simply not parameters of this
-    operation, so sending them is ignored, exactly as any other unrecognized query
+    operation, so sending them is a `422`, exactly as any other undeclared query
     parameter is anywhere on this API.
 
     **`<range>` markers are preserved verbatim,** unlike on the verses read. Here the

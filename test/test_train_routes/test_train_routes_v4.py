@@ -733,15 +733,17 @@ class TestJobList:
     def test_no_updated_since_filter_is_published(self, client, regular_token1):
         """``training_job`` has no ``updated_at``, so the delta feed does not exist.
 
-        Sent anyway it is an unknown query parameter, which FastAPI ignores — the check
-        that matters is that the page is unfiltered, not that it errors.
+        Sent anyway it is an undeclared query parameter, so a 422 naming it (#1003).
         """
         response = client.get(
             JOBS,
             params={"updated_since": "2020-01-01T00:00:00"},
             headers=_auth(regular_token1),
         )
-        assert response.status_code == 200
+        assert response.status_code == 422, response.text
+        assert [e["loc"] for e in response.json()["error"]["details"]["errors"]] == [
+            ["query", "updated_since"]
+        ]
 
     def test_filters_narrow_the_page(self, client, regular_token1, db_session, pair):
         _make_job(db_session, pair, training_type="tfidf")
