@@ -300,6 +300,7 @@ async def list_verses(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except revision_service.RevisionNotFound as exc:
         raise _revision_not_found_error(exc, revision_id) from exc
@@ -594,6 +595,7 @@ async def text_search(
             query=query.query,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except revision_service.RevisionNotFound as exc:
         # `exc.revision_id`, not `revision_id`: this read authorizes two revisions and the

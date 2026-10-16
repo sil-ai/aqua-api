@@ -66,6 +66,21 @@ exist, and the result reads' ceiling, because its one client walks the whole cor
 Six dependencies rather than one shared cap is the intended shape, not drift: each names
 a page size sized to what its own consumers actually ask for, and none of them can widen
 another.
+
+**``total`` costs a second query, and a client can decline it.** ``total`` is a ``COUNT``
+over everything the page is drawn from. On a rollup (``/results?aggregate=``,
+``/score-comparison``, ``/text-lengths``) that is the whole aggregation run a second time,
+so the count can cost as much as the page. A client that walks a list reads ``total`` once,
+from the first page, and has no use for it on the rest. Every params class above therefore
+takes ``include_total`` (default true). Sent as false, ``total`` is ``null`` and the count is
+not run. The rule is strict, "always null", not "null unless it happened to be cheap", so a
+client never has to work out which it got. :meth:`V4Page.create` (and the two subclasses'
+overrides) apply it, so it holds on every list whether or not its service skips the count.
+
+When ``total`` is asked for, :func:`page_total` still skips the ``COUNT`` wherever the page
+already answers it: a page shorter than ``limit`` is the last one, so ``total`` is
+``offset`` plus its length. That is also exact rather than estimated, since it comes from
+the same statement as the rows.
 """
 
 from datetime import datetime
@@ -73,6 +88,8 @@ from typing import Generic, TypeVar
 
 from fastapi import Query
 from pydantic import Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -81,6 +98,22 @@ DEFAULT_LIMIT = 20
 #: Hard maximum page size; ``limit`` above this is a 422, not a clamp. See the
 #: module docstring for why 100 (and not v3's result-endpoint ``le=1000``).
 MAX_LIMIT = 100
+
+
+def _include_total_query():
+    """The ``include_total`` query parameter, shared by every params class below.
+
+    A function rather than one module-level ``Query`` so each ``__init__`` gets its own
+    instance, like the ``limit`` and ``offset`` each class declares for itself.
+    """
+    return Query(
+        True,
+        description=(
+            "Whether to count `total`. Defaults to true. Send false on every page after "
+            "the first when you already have the total: `total` is then null, and the "
+            "server skips a count that can cost as much as the page itself."
+        ),
+    )
 
 
 class PaginationParams:
@@ -116,12 +149,14 @@ class PaginationParams:
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         # Annotate the instance attributes explicitly so consumers
         # (``page.limit`` / ``page.offset``) get static types and editor support;
         # the values are already range-validated by the Query bounds above.
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the verse-level result reads. 100 rather than the catalog's
@@ -181,9 +216,11 @@ class ResultPaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the verses read. 200 rather than the results read's 100 because
@@ -247,9 +284,11 @@ class VersePaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the text search. 10 rather than the verses read's 200, and it is
@@ -307,9 +346,11 @@ class TextSearchPaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0. Cannot be combined with `random=true`."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Page size for the two reference lists — both the default *and* the maximum, which
@@ -383,9 +424,11 @@ class ReferencePaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the n-gram read. The catalog's 20, not the result reads' 100,
@@ -448,9 +491,11 @@ class NgramPaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 DataT = TypeVar("DataT")
@@ -468,11 +513,12 @@ class V4Page(V4BaseModel, Generic[DataT]):
     items: list[DataT] = Field(
         description="The page of results (at most ``limit`` items)."
     )
-    total: int = Field(
+    total: int | None = Field(
         ge=0,
         description=(
             "Total rows matching the query, ignoring limit/offset — the "
-            "full-result count for computing how many pages exist, not len(items)."
+            "full-result count for computing how many pages exist, not len(items). "
+            "Null only when the request sent `include_total=false`."
         ),
     )
     # ge=1 mirrors the PaginationParams floor and makes the response schema
@@ -512,7 +558,7 @@ class V4Page(V4BaseModel, Generic[DataT]):
         cls,
         *,
         items: list[DataT],
-        total: int,
+        total: int | None,
         pagination: PaginationParams,
         next_updated_since: datetime | None = None,
     ) -> "V4Page[DataT]":
@@ -542,11 +588,53 @@ class V4Page(V4BaseModel, Generic[DataT]):
         A list without a modification timestamp leaves it at its ``None`` default,
         which serializes as ``null`` — the field is always *present*, so adding delta
         support to a list later is not a response-shape change.
+
+        ``total`` is replaced by ``None`` when the request sent ``include_total=false``,
+        whatever the caller passed. See :func:`envelope_total`.
         """
         return cls(
             items=items,
-            total=total,
+            total=envelope_total(total, pagination),
             limit=pagination.limit,
             offset=pagination.offset,
             next_updated_since=next_updated_since,
         )
+
+
+def envelope_total(total: int | None, pagination: PaginationParams) -> int | None:
+    """The ``total`` a page reports: ``None`` if the request declined it, else ``total``.
+
+    Applied when the envelope is built, not left to each service, so ``include_total=false``
+    means null on every list even where the service ran the count anyway (the three lists
+    with a delta watermark count in the same statement that finds it). The two
+    :class:`V4Page` subclasses that override ``create`` call this too.
+    """
+    return total if pagination.include_total else None
+
+
+async def page_total(
+    db: AsyncSession,
+    count_statement: Select,
+    *,
+    returned: int,
+    limit: int,
+    offset: int,
+    include_total: bool,
+) -> int | None:
+    """``total`` for a page that has already been fetched, counting only when needed.
+
+    ``returned`` is the number of rows the page's SQL statement returned, before any
+    reshaping in Python. Call this *after* fetching the page, with the ``COUNT`` statement
+    built but not run:
+
+    * ``include_total`` false: ``None``, and nothing is run.
+    * A page shorter than ``limit`` is the last one, so ``total`` is ``offset + returned``.
+      An empty page at offset 0 is the same case: the list is empty. An empty page past
+      offset 0 says nothing (the offset may be past the end), so that one is counted.
+    * A full page: run ``count_statement``.
+    """
+    if not include_total:
+        return None
+    if 0 < returned < limit or (returned == 0 and offset == 0):
+        return offset + returned
+    return await db.scalar(count_statement) or 0

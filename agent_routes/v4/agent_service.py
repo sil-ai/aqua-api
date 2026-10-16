@@ -86,6 +86,7 @@ __version__ = "v4"
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.pagination import page_total
 from api_v4.schemas.assessment import VerseScope
 from assessment_routes.v4.assessment_service import get_assessment
 from bible_routes.v4 import verse_range_service
@@ -207,7 +208,8 @@ async def get_critique_issues(
     agent_translation_id: int | None = None,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's critique issues, the total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=AGENT_CRITIQUE_ASSESSMENT_TYPES``,
@@ -245,7 +247,6 @@ async def get_critique_issues(
         resolved=resolved,
         agent_translation_id=agent_translation_id,
     )
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -260,10 +261,18 @@ async def get_critique_issues(
             .offset(offset)
         )
     ).all()
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
     )
-    return list(rows), total or 0, continuations
+    return list(rows), total, continuations
 
 
 def _placed_translations(assessment_id: int, scope: VerseScope):
@@ -343,7 +352,8 @@ async def get_translations(
     scope: VerseScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's agent translations, the total, and the span map.
 
     Authorized exactly as :func:`get_critique_issues` is, by the same call with the same
@@ -371,7 +381,6 @@ async def get_translations(
         db, user, assessment_id, types=AGENT_CRITIQUE_ASSESSMENT_TYPES
     )
     placed = _placed_translations(assessment_id, scope)
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -386,10 +395,18 @@ async def get_translations(
             .offset(offset)
         )
     ).all()
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
     )
-    return list(rows), total or 0, continuations
+    return list(rows), total, continuations
 
 
 class CritiqueIssueNotFound(Exception):

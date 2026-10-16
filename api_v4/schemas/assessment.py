@@ -344,7 +344,7 @@ from typing import Annotated, Literal, Union
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
-from api_v4.pagination import V4Page
+from api_v4.pagination import V4Page, envelope_total
 from api_v4.schemas.base import V4BaseModel
 
 # A book abbreviation being three characters is a fact about the *Bible* domain, not
@@ -2235,7 +2235,7 @@ class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
         cls,
         *,
         items: list,
-        total: int,
+        total: int | None,
         pagination,
         against_assessment_ids: list[int],
         next_updated_since=None,
@@ -2250,7 +2250,7 @@ class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
         """
         return cls(
             items=items,
-            total=total,
+            total=envelope_total(total, pagination),
             limit=pagination.limit,
             offset=pagination.offset,
             next_updated_since=next_updated_since,

@@ -130,6 +130,7 @@ from sqlalchemy import Text, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import literal_column
 
+from api_v4.pagination import page_total
 from api_v4.schemas.bible import IncludeVerses, TextSearchQuery, VerseScope
 from bible_routes.v4 import revision_service
 from bible_routes.v4.verse_range_service import (
@@ -297,7 +298,8 @@ async def list_verses(
     scope: VerseScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of a revision's verses: rows, the total, and the revision's span map.
 
     Authorized by :func:`revision_service.get_revision`, so a revision the caller cannot
@@ -322,14 +324,21 @@ async def list_verses(
     await revision_service.get_revision(db, user, revision_id)
 
     stmt = _scoped_verses_query(revision_id, scope)
-    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = (await db.execute(stmt.limit(limit).offset(offset))).all()
+    total = await page_total(
+        db,
+        select(func.count()).select_from(stmt.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
 
     if scope.include_verses is IncludeVerses.all:
-        return list(rows), total or 0, {}
+        return list(rows), total, {}
 
     continuations = await continuations_for_revision(db, revision_id)
-    return list(rows), total or 0, continuations
+    return list(rows), total, continuations
 
 
 async def export_text(db: AsyncSession, user: UserDB, revision_id: int) -> str:
@@ -979,7 +988,8 @@ async def search_text(
     query: TextSearchQuery,
     limit: int,
     offset: int,
-) -> tuple[list[dict], int, int | None]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None, int | None]:
     """One page of a revision's verses matching ``term``: hits, the total, and the run used.
 
     Replaces v3's ``GET /textsearch``. Returns fully shaped dicts rather than rows, because
@@ -1022,12 +1032,19 @@ async def search_text(
         await revision_service.get_revision(db, user, query.comparison_revision_id)
 
     stmt = _text_search_stmt(revision_id, pattern)
-    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
 
     ordering = (func.random(),) if query.random else _CANONICAL_ORDER
     rows = (
         await db.execute(stmt.order_by(*ordering).limit(limit).offset(offset))
     ).all()
+    total = await page_total(
+        db,
+        select(func.count()).select_from(stmt.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
 
     continuations = await continuations_for_revision(db, revision_id)
     vrefs = [vref for _, vref, _ in rows]
@@ -1074,4 +1091,4 @@ async def search_text(
             hit["alignments"] = alignments_by_vref.get(vref, [])
         hits.append(hit)
 
-    return hits, total or 0, alignment_assessment_id
+    return hits, total, alignment_assessment_id

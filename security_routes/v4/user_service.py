@@ -42,6 +42,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.pagination import page_total
 from api_v4.schemas.security import GroupCreate, UserCreate
 from database.models import (
     AgentCritiqueIssue,
@@ -129,8 +130,14 @@ def _user_groups_query(user: UserDB):
 
 
 async def _page(
-    db: AsyncSession, stmt, *, limit: int, offset: int, order_by
-) -> tuple[list, int]:
+    db: AsyncSession,
+    stmt,
+    *,
+    limit: int,
+    offset: int,
+    order_by,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """Run ``stmt`` as one page plus its unpaginated total.
 
     ``total`` counts *all* matching rows ignoring ``limit``/``offset`` (what the
@@ -156,16 +163,27 @@ async def _page(
     order per query, so a client walking ``offset`` could see one row twice and
     miss another.
     """
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar_one()
     result = await db.execute(stmt.order_by(order_by).limit(limit).offset(offset))
-    return list(result.scalars().all()), total
+    rows = list(result.scalars().all())
+    total = await page_total(
+        db,
+        select(func.count()).select_from(stmt.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return rows, total
 
 
 async def list_user_groups(
-    db: AsyncSession, user: UserDB, *, limit: int, offset: int
-) -> tuple[list[GroupDB], int]:
+    db: AsyncSession,
+    user: UserDB,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list[GroupDB], int | None]:
     """Return one page of the groups ``user`` belongs to, plus the total count.
 
     Self-scoped — the caller can only ever see their own memberships, so there is
@@ -178,12 +196,13 @@ async def list_user_groups(
         limit=limit,
         offset=offset,
         order_by=GroupDB.id,
+        include_total=include_total,
     )
 
 
 async def list_groups(
-    db: AsyncSession, *, limit: int, offset: int
-) -> tuple[list[GroupDB], int]:
+    db: AsyncSession, *, limit: int, offset: int, include_total: bool = True
+) -> tuple[list[GroupDB], int | None]:
     """Return one page of *all* groups, plus the total count.
 
     Unscoped by design: this is the admin catalog. The caller is responsible for
@@ -191,7 +210,12 @@ async def list_groups(
     re-check, exactly as v3's ``GET /groups`` body did not.
     """
     return await _page(
-        db, select(GroupDB), limit=limit, offset=offset, order_by=GroupDB.id
+        db,
+        select(GroupDB),
+        limit=limit,
+        offset=offset,
+        order_by=GroupDB.id,
+        include_total=include_total,
     )
 
 

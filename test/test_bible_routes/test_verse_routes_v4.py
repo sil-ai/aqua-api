@@ -1151,6 +1151,45 @@ class TestPagination:
         page = _page(_verses(client, regular_token1, revision_id))
         assert page["total"] == 1 and len(page["items"]) == 1
 
+    def test_total_is_the_same_on_every_page(
+        self, client, regular_token1, genesis_revision
+    ):
+        """A short page reports ``total`` from its own length and a full one counts
+        (#1001). Both have to give the same number, including a page that ends exactly
+        at the last row and an empty one past it."""
+        for limit in (3, 8, 9):
+            for offset in (0, 3, 6, 7, 8, 12):
+                page = _page(
+                    _verses(
+                        client,
+                        regular_token1,
+                        genesis_revision,
+                        limit=limit,
+                        offset=offset,
+                    )
+                )
+                assert page["total"] == 8, (limit, offset)
+
+    def test_include_total_false_nulls_total_and_keeps_the_page(
+        self, client, regular_token1, genesis_revision
+    ):
+        counted = _page(
+            _verses(client, regular_token1, genesis_revision, limit=3, offset=3)
+        )
+        uncounted = _page(
+            _verses(
+                client,
+                regular_token1,
+                genesis_revision,
+                limit=3,
+                offset=3,
+                include_total="false",
+            )
+        )
+        assert uncounted["total"] is None
+        assert uncounted["items"] == counted["items"]
+        assert (uncounted["limit"], uncounted["offset"]) == (3, 3)
+
 
 class TestTextExport:
     """The one v4 read with no ``limit`` or ``offset``."""
@@ -1642,6 +1681,7 @@ class TestTextSearchContract:
         "random",
         "limit",
         "offset",
+        "include_total",
     }
 
     #: Dropped in T6, and each for the same stated reason: no caller anywhere. Named
@@ -2106,6 +2146,42 @@ class TestTextSearchPaging:
         )
         assert page["items"] == []
         assert page["total"] == 12
+
+    def test_total_is_the_same_on_every_page(
+        self, client, regular_token1, grace_revision
+    ):
+        """Full pages count and the short last page answers from its own length."""
+        for offset in (0, 5, 10, 12):
+            page = _page(
+                _search(
+                    client,
+                    regular_token1,
+                    grace_revision,
+                    term="grace",
+                    limit=5,
+                    offset=offset,
+                )
+            )
+            assert page["total"] == 12, offset
+
+    def test_include_total_false_nulls_total(
+        self, client, regular_token1, grace_revision
+    ):
+        """``TextSearchPage`` overrides ``create``, so it has to apply the rule too."""
+        page = _page(
+            _search(
+                client,
+                regular_token1,
+                grace_revision,
+                term="grace",
+                limit=5,
+                offset=5,
+                include_total="false",
+            )
+        )
+        assert page["total"] is None
+        assert len(page["items"]) == 5
+        assert "alignment_assessment_id" in page
 
     def test_the_envelope_is_the_shared_one(
         self, client, regular_token1, grace_revision
