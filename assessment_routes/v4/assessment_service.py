@@ -2560,7 +2560,7 @@ def _alignment_scope_clauses(model, assessment_id: int, scope: VerseScope) -> li
     ``book`` is compared to the already-upper-cased scope value directly rather than
     through ``func.upper(column)``, so the comparison can use an index:
     ``ix_alignment_threshold_scores_assessment_book_chapter`` on the threshold table,
-    ``ix_alignment_scores_grouping`` on the top-source one.
+    ``ix_alignment_top_source_scores_assessment_book_chapter`` on the top-source one.
     """
     clauses = [
         model.assessment_id == assessment_id,
