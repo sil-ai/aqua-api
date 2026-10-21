@@ -502,7 +502,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, and_, bindparam, cast, func, or_, select, tuple_
+from sqlalchemy import JSON, Text, and_, bindparam, cast, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2796,6 +2796,114 @@ async def get_alignment_scores(
         }
         for row, vref in zip(rows, vrefs)
     ], total
+
+
+async def get_alignment_summary(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    targets: list[str],
+    score_type: AlignmentScoreType,
+    min_score: float | None,
+    limit_per_target: int,
+) -> list[dict]:
+    """For each target word, the source words it aligned to across the assessment (#1017).
+
+    Authorized exactly as :func:`get_alignment_scores` is, so the same ids 404.
+
+    One grouped query over the assessment's rows, ranked per target with
+    ``row_number()`` and cut at ``limit_per_target`` in the database, so at most
+    ``len(targets) * limit_per_target`` rows come back. ``count`` is
+    ``count(DISTINCT vref)`` on both tables: on ``top`` that equals the row count,
+    because ``(vref, source)`` is unique there, and on ``threshold`` it stops a verse
+    that holds several rows for one pair from counting twice.
+
+    ``target`` is matched by lowering **both** sides, and both in Postgres. ``source`` is
+    documented as stored lower-cased, and :func:`get_alignment_scores` relies on that to
+    keep its index; there is no such guarantee for ``target``, and no index on it to
+    lose. The requested words are lowered by the database too, not by Python, because
+    the two can disagree (Greek final sigma, dotted ``İ``, or any non-ASCII letter under
+    a C locale), and a disagreement would silently answer ``matches: []`` for a word
+    that has alignments. The read is bounded by the ``assessment_id`` index either way.
+
+    ``hide`` rows are excluded, as on the text search's alignments, and so are rows with
+    no ``source``, ``vref`` or ``score``, which have nothing to count or average.
+    ``min_score`` applies before grouping, so it changes ``count`` as well as which
+    sources appear.
+
+    Returns one dict per distinct lowered target, in request order, each with its
+    ``matches`` (possibly empty).
+    """
+    await get_assessment(db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES)
+    requested = (
+        func.unnest(cast(targets, ARRAY(Text)))
+        .table_valued("value", with_ordinality="position")
+        .render_derived()
+    )
+    lowered_targets = (
+        await db.execute(
+            select(func.lower(requested.c.value)).order_by(requested.c.position)
+        )
+    ).scalars()
+    wanted = list(dict.fromkeys(lowered_targets))
+    model = _ALIGNMENT_SCORE_MODELS[score_type]
+    lowered = func.lower(model.target)
+    clauses = [
+        model.assessment_id == assessment_id,
+        lowered.in_(wanted),
+        model.hide.is_not(True),
+        model.source.is_not(None),
+        model.vref.is_not(None),
+        model.score.is_not(None),
+    ]
+    if min_score is not None:
+        clauses.append(model.score >= _score_bound(min_score))
+
+    grouped = (
+        select(
+            lowered.label("target"),
+            model.source,
+            # Not labelled "count": on a Row that name is the tuple method.
+            func.count(model.vref.distinct()).label("n_verses"),
+            func.avg(model.score).label("avg_score"),
+        )
+        .where(*clauses)
+        .group_by(lowered, model.source)
+        .subquery()
+    )
+    ranked = select(
+        grouped,
+        func.row_number()
+        .over(
+            partition_by=grouped.c.target,
+            order_by=(
+                grouped.c.n_verses.desc(),
+                grouped.c.avg_score.desc(),
+                grouped.c.source,
+            ),
+        )
+        .label("rank"),
+    ).subquery()
+    rows = (
+        await db.execute(
+            select(ranked)
+            .where(ranked.c.rank <= limit_per_target)
+            .order_by(ranked.c.target, ranked.c.rank)
+        )
+    ).all()
+
+    # Every returned row's key is one of `wanted`, because the IN clause matched it.
+    matches: dict[str, list[dict]] = {target: [] for target in wanted}
+    for row in rows:
+        matches[row.target].append(
+            {
+                "source": row.source,
+                "count": row.n_verses,
+                "avg_score": float(row.avg_score),
+            }
+        )
+    return [{"target": target, "matches": matches[target]} for target in wanted]
 
 
 async def _baseline_peers(

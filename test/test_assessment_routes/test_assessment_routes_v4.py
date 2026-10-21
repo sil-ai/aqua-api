@@ -163,11 +163,14 @@ from api_v4.pagination import (
     V4Page,
 )
 from api_v4.schemas.assessment import (
+    ALIGNMENT_SUMMARY_MAX_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_TARGETS,
     TFIDF_MAX_BATCH_RESULTS,
     TFIDF_MAX_BATCH_VECTORS,
     TFIDF_MAX_TEXT_CHARS,
     AlignmentScoreOut,
     AlignmentScoreType,
+    AlignmentSummaryOut,
     AssessmentJob,
     AssessmentOptions,
     AssessmentOptionsBase,
@@ -8820,6 +8823,339 @@ class TestAlignmentScoresContract:
         v4_paths = {route.path for route in v4_assessment_router.routes}
         assert "/assessments/{assessment_id}/alignment-scores" in v4_paths
         assert not any("match" in path for path in v4_paths)
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/alignment-summary (#1017)
+# ---------------------------------------------------------------------------
+
+
+def _alignment_summary(client, token, assessment_id, targets, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+        params={"target": targets, **params},
+        headers=_auth(token),
+    )
+
+
+def _summary(resp):
+    """``{target: [(source, count, avg_score), ...]}``, asserting a 200 first."""
+    assert resp.status_code == 200, resp.text
+    return {
+        item["target"]: [
+            (m["source"], m["count"], round(m["avg_score"], 6)) for m in item["matches"]
+        ]
+        for item in resp.json()["items"]
+    }
+
+
+class TestAlignmentSummary:
+    """``GET …/alignment-summary``: per-target counts over the whole assessment."""
+
+    def _assessment(self, db_session, version_id, **kwargs):
+        revision_id, reference_id = _pair(db_session, version_id)
+        return _make_assessment(db_session, revision_id, reference_id, **kwargs)
+
+    def _align(self, db_session, assessment_id, rows, **kwargs):
+        for vref, source, target, score in rows:
+            _make_alignment(
+                db_session, assessment_id, vref, source, target, score=score, **kwargs
+            )
+
+    def test_counts_verses_and_averages_scores_per_source(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "names", "аттары", 0.8),
+                ("MAT 1:2", "names", "аттары", 0.6),
+                ("MAT 1:3", "name", "аттары", 0.9),
+                ("MAT 1:3", "other", "мында", 0.9),
+            ],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["аттары"])
+        assert resp.json()["assessment_id"] == assessment_id
+        assert resp.json()["score_type"] == "top"
+        assert _summary(resp) == {"аттары": [("names", 2, 0.7), ("name", 1, 0.9)]}
+
+    def test_ties_on_count_break_on_avg_score_then_source(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "b", "t", 0.5),
+                ("MAT 1:2", "a", "t", 0.5),
+                ("MAT 1:3", "c", "t", 0.7),
+            ],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert [m[0] for m in _summary(resp)["t"]] == ["c", "a", "b"]
+
+    def test_limit_per_target_cuts_each_target_separately(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", f"s{i}", "x", 0.5) for i in range(4)]
+            + [("MAT 1:2", f"s{i}", "y", 0.5) for i in range(4)],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["x", "y"], limit_per_target=2
+        )
+        assert {k: len(v) for k, v in _summary(resp).items()} == {"x": 2, "y": 2}
+
+    def test_an_unmatched_target_is_returned_with_no_matches(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "found", 0.5)])
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["missing", "found"]
+        )
+        assert resp.json()["items"] == [
+            {"target": "missing", "matches": []},
+            {
+                "target": "found",
+                "matches": [{"source": "s", "count": 1, "avg_score": 0.5}],
+            },
+        ]
+
+    def test_targets_are_case_insensitive_and_deduplicated_in_request_order(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Stored targets are not guaranteed lower-cased, so both sides are lowered."""
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "s", "Аттары", 0.5), ("MAT 1:2", "s", "аттары", 0.5)],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["Zed", "АТТАРЫ", "аттары", "zed"]
+        )
+        assert [item["target"] for item in resp.json()["items"]] == ["zed", "аттары"]
+        assert _summary(resp)["аттары"] == [("s", 2, 0.5)]
+
+    def test_min_score_applies_before_counting(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "s", "t", 0.9),
+                ("MAT 1:2", "s", "t", 0.2),
+                ("MAT 1:3", "low", "t", 0.1),
+            ],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], min_score=0.5
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.9)]}
+
+    def test_min_score_is_inclusive_at_a_decimal_boundary(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.8)])
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], min_score=0.8
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.8)]}
+
+    def test_hidden_rows_are_excluded(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        self._align(db_session, assessment_id, [("MAT 1:2", "s", "t", 0.5)], hide=True)
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    def test_threshold_counts_a_verse_once_however_many_rows_it_holds(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "s", "t", 0.4),
+                ("MAT 1:1", "s", "t", 0.6),
+                ("MAT 1:2", "s", "t", 0.8),
+            ],
+            model=AlignmentThresholdScores,
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], score_type="threshold"
+        )
+        assert resp.json()["score_type"] == "threshold"
+        assert _summary(resp) == {"t": [("s", 2, 0.6)]}
+
+    def test_threshold_applies_min_score_and_hide_too(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        rows = [("MAT 1:1", "s", "t", 0.8), ("MAT 1:2", "s", "t", 0.2)]
+        self._align(db_session, assessment_id, rows, model=AlignmentThresholdScores)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:3", "s", "t", 0.9)],
+            model=AlignmentThresholdScores,
+            hide=True,
+        )
+        resp = _alignment_summary(
+            client,
+            regular_token1,
+            assessment_id,
+            ["t"],
+            score_type="threshold",
+            min_score=0.8,
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.8)]}
+
+    def test_rows_with_no_score_are_not_counted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "s", "t", 0.5), ("MAT 1:2", "s", "t", None)],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    def test_a_bad_target_is_reported_by_position(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["ok", ""])
+        assert resp.status_code == 422, resp.text
+        assert ["query", "target", 1] in [
+            error["loc"] for error in resp.json()["error"]["details"]["errors"]
+        ]
+
+    def test_score_types_do_not_fall_back_to_each_other(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "top", "t", 0.5)])
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "thr", "t", 0.5)],
+            model=AlignmentThresholdScores,
+        )
+        top = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        threshold = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], score_type="threshold"
+        )
+        assert _summary(top) == {"t": [("top", 1, 0.5)]}
+        assert _summary(threshold) == {"t": [("thr", 1, 0.5)]}
+
+    def test_other_assessments_rows_are_not_counted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        other_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        self._align(db_session, other_id, [("MAT 1:2", "s", "t", 0.5)])
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        assessment_id = self._assessment(db_session, group1_version, type_=type_)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_unknown_and_unreadable_assessments_are_the_same_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        theirs = self._assessment(db_session, group2_version)
+        self._align(db_session, theirs, [("MAT 1:1", "s", "t", 0.5)])
+        for assessment_id in (10**9, theirs):
+            resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+            assert resp.status_code == 404, resp.text
+            assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_needs_a_token(self, client, db_session, group1_version):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = client.get(
+            f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+            params={"target": "t"},
+        )
+        assert resp.status_code == 401, resp.text
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {},
+            {"target": [f"w{i}" for i in range(ALIGNMENT_SUMMARY_MAX_TARGETS + 1)]},
+            {"target": [""]},
+            {"target": ["x" * 201]},
+            {"target": ["t"], "min_score": 1.5},
+            {"target": ["t"], "min_score": -0.1},
+            {"target": ["t"], "limit_per_target": 0},
+            {"target": ["t"], "limit_per_target": ALIGNMENT_SUMMARY_MAX_LIMIT + 1},
+            {"target": ["t"], "score_type": "best"},
+        ],
+        ids=[
+            "no-target",
+            "too-many-targets",
+            "empty-target",
+            "long-target",
+            "min-score-above-1",
+            "min-score-below-0",
+            "limit-0",
+            "limit-above-max",
+            "unknown-score-type",
+        ],
+    )
+    def test_invalid_parameters_are_a_422(
+        self, client, regular_token1, db_session, group1_version, params
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = client.get(
+            f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+            params=params,
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_full_target_cap_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        targets = [f"w{i}" for i in range(ALIGNMENT_SUMMARY_MAX_TARGETS)]
+        resp = _alignment_summary(client, regular_token1, assessment_id, targets)
+        assert len(_summary(resp)) == ALIGNMENT_SUMMARY_MAX_TARGETS
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        route = _route("get_assessment_alignment_summary")
+        assert {param.name for param in route.dependant.query_params} == {
+            "target",
+            "score_type",
+            "min_score",
+            "limit_per_target",
+        }
+        assert route.response_model is AlignmentSummaryOut
 
 
 class TestMissingWordsAuthorization:

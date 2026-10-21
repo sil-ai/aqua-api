@@ -1817,6 +1817,83 @@ class MissingWordOut(V4BaseModel):
     )
 
 
+#: Most target words one ``GET …/alignment-summary`` request may name (#1017). Set by the
+#: URL, not by the query: v4 answers 414 above roughly 8KB of request line, and a
+#: Cyrillic letter is six characters once percent-encoded, so 100 ordinary words is
+#: about what fits.
+ALIGNMENT_SUMMARY_MAX_TARGETS = 100
+
+#: Default and ceiling for ``limit_per_target`` on the same read.
+ALIGNMENT_SUMMARY_DEFAULT_LIMIT = 10
+ALIGNMENT_SUMMARY_MAX_LIMIT = 50
+
+
+class AlignmentSummaryMatchOut(V4BaseModel):
+    """One source word a target word aligned to, counted across the whole assessment."""
+
+    source: str = Field(
+        description="The source-side word, as the runner stored it — lower-cased.",
+    )
+    count: int = Field(
+        ge=1,
+        description=(
+            "The number of verses (distinct `vref`) in which the target aligned to this "
+            "source word. On `score_type=top` that is one row per verse; on `threshold`, "
+            "where one verse can hold several rows for the pair, each verse still "
+            "counts once."
+        ),
+    )
+    avg_score: float = Field(
+        description=(
+            "The mean score over the rows counted, after `min_score` is applied. Rows "
+            "with no stored score are not counted at all."
+        ),
+    )
+
+
+class AlignmentSummaryItemOut(V4BaseModel):
+    """What one requested target word aligned to."""
+
+    target: str = Field(
+        description=(
+            "The requested word, lower-cased. Matched against stored targets "
+            "case-insensitively."
+        ),
+    )
+    matches: list[AlignmentSummaryMatchOut] = Field(
+        description=(
+            "Up to `limit_per_target` source words, most verses first, then highest "
+            "`avg_score`, then `source`. Empty when the word has no alignments that "
+            'passed the filters, which is how a caller tells "no alignments" from '
+            '"not asked".'
+        ),
+    )
+
+
+class AlignmentSummaryOut(V4BaseModel):
+    """The body of ``GET /v4/assessments/{id}/alignment-summary`` (#1017).
+
+    Not a :class:`~api_v4.pagination.V4Page`, for the reason
+    :class:`SimilarVersesOut` is not: the items are not stored rows but one entry per
+    requested word, so the request already fixes how many there are and there is
+    nothing to page through. The size is bounded by
+    :data:`ALIGNMENT_SUMMARY_MAX_TARGETS` × :data:`ALIGNMENT_SUMMARY_MAX_LIMIT`.
+    """
+
+    assessment_id: int = Field(
+        description="The assessment summarized (echoed from the path).",
+    )
+    score_type: AlignmentScoreType = Field(
+        description="Which stored score set was read (echoed from the request).",
+    )
+    items: list[AlignmentSummaryItemOut] = Field(
+        description=(
+            "One entry per requested target, in request order, with duplicates removed "
+            "after lower-casing. Every requested word appears, even with no matches."
+        ),
+    )
+
+
 class TextLengthsOut(V4BaseModel):
     """One verse-level row of ``GET /v4/assessments/{id}/text-lengths``.
 
