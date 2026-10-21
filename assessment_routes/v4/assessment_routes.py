@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Thirteen endpoints:
+happens somewhere else. Fourteen endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -26,6 +26,8 @@ happens somewhere else. Thirteen endpoints:
   word-level pairings, paginated. Absorbs v3's ``GET /alignmentmatches``.
 * ``GET    /v4/assessments/{id}/missing-words`` — the same type's poorly-aligned words,
   weighed against peer assessments named by ``against``.
+* ``GET    /v4/assessments/{id}/alignment-summary`` — the same type's alignments grouped
+  per requested target word (#1017). Not paginated.
 * ``GET    /v4/assessments/{id}/text-lengths`` — the ``text-lengths`` type's per-verse
   word and character counts and their z-scores, paginated, with the same scoping and
   ``aggregate`` rollups as ``/results``.
@@ -149,7 +151,8 @@ table across ``GET /alignmentscores``, ``GET /alignmentmatches`` and
 ``/alignment-scores`` as ``source`` + ``min_score``, because it returns the same rows
 narrowed — the Q2/Q3 test for "filter, not resource". ``/missing-words`` keeps its own
 endpoint by the same test, since it adds fields derived from *other* assessments, which
-is what also kept ``/score-comparison`` off ``/results``.
+is what also kept ``/score-comparison`` off ``/results``. ``/alignment-summary`` (#1017)
+passes the same test: its items are counts grouped per word, not the table's rows.
 
 The fold is what closes **#858** (``/alignmentmatches`` is unauthenticated) — not by
 adding a check, but by leaving no separate endpoint on which one could be forgotten.
@@ -261,12 +264,16 @@ from api_v4.pagination import (
     V4Page,
 )
 from api_v4.schemas.assessment import (
+    ALIGNMENT_SUMMARY_DEFAULT_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_TARGETS,
     BOOK_ABBREVIATION_LENGTH,
     SIMILAR_VERSES_DEFAULT_LIMIT,
     SIMILAR_VERSES_MAX_LIMIT,
     VREF_MAX_LENGTH,
     AlignmentScoreOut,
     AlignmentScoreType,
+    AlignmentSummaryOut,
     AssessmentCreate,
     AssessmentJob,
     AssessmentOut,
@@ -1463,6 +1470,107 @@ async def get_assessment_alignment_scores(
         items=[AlignmentScoreOut(**row) for row in rows],
         total=total,
         pagination=page,
+    )
+
+
+@router.get(
+    "/{assessment_id}/alignment-summary",
+    response_model=AlignmentSummaryOut,
+)
+async def get_assessment_alignment_summary(
+    assessment_id: int,
+    # `max_length` on a list-typed query parameter bounds the number of items, which is
+    # the cap wanted here; each item's length is checked in the body.
+    target: List[str] = Query(
+        ...,
+        min_length=1,
+        max_length=ALIGNMENT_SUMMARY_MAX_TARGETS,
+        description=(
+            "Target-side words to summarize (repeated parameter, e.g. "
+            "`?target=a&target=b`). **Case-insensitive.** Between 1 and "
+            f"{ALIGNMENT_SUMMARY_MAX_TARGETS} per request, each at most "
+            f"{ALIGNMENT_WORD_MAX_LENGTH} characters; the cap comes from the URL length "
+            "limit, not from the query."
+        ),
+    ),
+    score_type: AlignmentScoreType = Query(
+        AlignmentScoreType.top,
+        description=(
+            "Which stored score set to read, as on `/alignment-scores`. `top` (the "
+            "default) is what the text search's `include_alignments` reads. **No "
+            "fallback between them**: an assessment with only one set answers empty "
+            "`matches` for the other."
+        ),
+    ),
+    min_score: Optional[float] = Query(
+        None,
+        ge=0,
+        le=1,
+        description=(
+            "Drop alignments scoring below this (`score >= min_score` is kept) **before** "
+            "counting, so it changes `count` and `avg_score`, not just which sources "
+            "appear. No default."
+        ),
+    ),
+    limit_per_target: int = Query(
+        ALIGNMENT_SUMMARY_DEFAULT_LIMIT,
+        ge=1,
+        le=ALIGNMENT_SUMMARY_MAX_LIMIT,
+        description="Most source words returned for each target.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user_v4),
+) -> AlignmentSummaryOut:
+    """Summarize what each named target word aligned to, across the whole assessment.
+
+    Serves `type = word-alignment` only. Anything else, including an assessment that
+    does not exist or that you cannot read, is `404 ASSESSMENT_NOT_FOUND`, as on
+    `/alignment-scores`.
+
+    For each `target`, `matches` lists the source words it aligned to: in how many
+    verses (`count`) and with what mean score (`avg_score`). They are ordered by `count`,
+    then `avg_score`, then `source`. Any other ranking, such as count × score, is the
+    caller's to apply. Rows marked `hide` are left out.
+
+    **Every requested target appears**, in request order, de-duplicated after
+    lower-casing, with `matches: []` when it has none.
+
+    **Not paginated.** The request fixes the size: at most 100 targets × 50 matches.
+
+    This exists so a word list can be summarized in one request. Building the same
+    answer from `/alignment-scores` takes a request per word, because that read filters
+    on `source`, not `target`, and returns raw rows.
+    """
+    errors = [
+        {
+            "type": "string_too_short" if not value else "string_too_long",
+            "loc": ("query", "target", index),
+            "msg": (
+                "String should have at least 1 character"
+                if not value
+                else f"String should have at most {ALIGNMENT_WORD_MAX_LENGTH} characters"
+            ),
+            "input": value,
+        }
+        for index, value in enumerate(target)
+        if not value or len(value) > ALIGNMENT_WORD_MAX_LENGTH
+    ]
+    if errors:
+        raise RequestValidationError(errors)
+    try:
+        items = await assessment_service.get_alignment_summary(
+            db,
+            current_user,
+            assessment_id,
+            targets=target,
+            score_type=score_type,
+            min_score=min_score,
+            limit_per_target=limit_per_target,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, exc.assessment_id) from exc
+    return AlignmentSummaryOut(
+        assessment_id=assessment_id, score_type=score_type, items=items
     )
 
 
