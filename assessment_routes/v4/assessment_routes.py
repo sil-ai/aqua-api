@@ -214,12 +214,10 @@ re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than
 shared catalog params (20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
 the shared cap. The same bounds apply to both alignment reads: the bound follows the
-row's weight, and these are small fixed-width rows. The three reads that roll up
-(``/results``, ``/text-lengths``, ``/score-comparison``) take
-``RollupResultPaginationParams`` through :func:`result_page` instead: the same 1000 at
-the verse level, but 2000 when ``aggregate`` is set, so a rollup over the whole canon is
-one request (#1010). That level check is the one bound that needs the scope, so it lives
-in a dependency that holds both, not in the handlers. ``/ngrams`` is the exception: it
+row's weight, and these are small fixed-width rows. The three reads a client reads
+*whole* (``/results``, ``/text-lengths``, ``/score-comparison``) take
+``BulkResultPaginationParams`` instead, 100/3000, so any one book or any rollup over
+the whole text is a single request (#1010). ``/ngrams`` is the exception: it
 takes ``NgramPaginationParams`` (20/1000), the result reads' ceiling with the catalog's
 default, because it shipped with a default of 20. Its route docstring says why.
 :class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
@@ -256,11 +254,10 @@ from api_v4.jobs import (
     set_poll_headers,
 )
 from api_v4.pagination import (
-    RESULT_MAX_LIMIT,
+    BulkResultPaginationParams,
     NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
-    RollupResultPaginationParams,
     V4Page,
 )
 from api_v4.schemas.assessment import (
@@ -878,48 +875,6 @@ class ResultScopeParams:
         )
 
 
-def result_page(
-    page: RollupResultPaginationParams = Depends(),
-    scope: ResultScopeParams = Depends(),
-) -> RollupResultPaginationParams:
-    """The page of a read that rolls up, with the ceiling that fits its level.
-
-    :class:`~api_v4.pagination.RollupResultPaginationParams` admits up to the rollup
-    ceiling because its ``Query`` bound cannot see ``aggregate``; this is where the
-    verse level is held to :data:`~api_v4.pagination.RESULT_MAX_LIMIT`. It depends on
-    the scope rather than being handed it, and FastAPI resolves a dependency once per
-    request, so the route's own ``scope: ResultScopeParams = Depends()`` is the same
-    instance and the scope is still validated exactly once.
-
-    The rejection is a ``RequestValidationError`` built the way Pydantic reports a
-    ``le`` bound, so ``limit=1001`` at the verse level is the same ``422
-    VALIDATION_ERROR`` envelope, with the same ``type`` and ``loc``, as it was when the
-    bound was the ``Query``'s own. Only ``msg`` differs: it adds "when aggregate is not
-    set", since 1001 is legal on the same route with a rollup.
-
-    Raising here pre-empts whatever FastAPI would resolve after this dependency, so a
-    request that is wrong in two ways reports only this one. Authentication is not among
-    them: it is a router-level dependency and resolves first, so an unauthenticated
-    oversized ``limit`` is still a 401.
-    """
-    if scope.scope.aggregate is None and page.limit > RESULT_MAX_LIMIT:
-        raise RequestValidationError(
-            [
-                {
-                    "type": "less_than_equal",
-                    "loc": ("query", "limit"),
-                    "msg": (
-                        f"Input should be less than or equal to {RESULT_MAX_LIMIT} "
-                        f"when aggregate is not set"
-                    ),
-                    "input": page.limit,
-                    "ctx": {"le": RESULT_MAX_LIMIT},
-                }
-            ]
-        )
-    return page
-
-
 def _to_result_out(row, continuations: dict) -> AssessmentResultOut:
     """Build one verse-level result row, deriving its ``vrefs`` from the span map.
 
@@ -974,7 +929,7 @@ def _to_result_aggregate(row) -> AssessmentResultAggregateOut:
 )
 async def get_assessment_results(
     assessment_id: int,
-    page: RollupResultPaginationParams = Depends(result_page),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
@@ -1662,7 +1617,7 @@ def _to_text_lengths_aggregate(row) -> TextLengthsAggregateOut:
 )
 async def get_assessment_text_lengths(
     assessment_id: int,
-    page: RollupResultPaginationParams = Depends(result_page),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
@@ -1749,7 +1704,7 @@ async def get_assessment_text_lengths(
 )
 async def get_assessment_score_comparison(
     assessment_id: int,
-    page: RollupResultPaginationParams = Depends(result_page),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     against: List[int] = Query(
         ...,

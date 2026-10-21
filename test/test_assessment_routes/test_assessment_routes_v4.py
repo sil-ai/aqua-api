@@ -129,6 +129,8 @@ What each group of tests pins down:
 import asyncio
 import itertools
 import os
+import random
+import statistics
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -151,13 +153,13 @@ from api_v4.pagination import (
     MAX_LIMIT,
     NGRAM_DEFAULT_LIMIT,
     NGRAM_MAX_LIMIT,
+    RESULT_BULK_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
-    RESULT_ROLLUP_MAX_LIMIT,
+    BulkResultPaginationParams,
     NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
-    RollupResultPaginationParams,
     V4Page,
 )
 from api_v4.schemas.assessment import (
@@ -210,7 +212,6 @@ from assessment_routes.v4.assessment_routes import (
     SIMILAR_VERSES_MAX_LIMIT,
     ResultScopeParams,
     VerseScopeParams,
-    result_page,
 )
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
@@ -450,16 +451,6 @@ def _ids(resp):
 def _route(name):
     """The declared APIRoute for a v4 assessments handler, by function name."""
     return next(r for r in v4_assessment_router.routes if r.name == name)
-
-
-def _all_dependencies(route):
-    """Every dependency under a route, nested ones included. The rollup reads take their
-    page through ``result_page``, so ``limit``/``offset`` sit one level down (#1010)."""
-    stack = list(route.dependant.dependencies)
-    while stack:
-        dependency = stack.pop()
-        yield dependency
-        stack.extend(dependency.dependencies)
 
 
 def _vref_parts(vref):
@@ -3490,26 +3481,26 @@ class TestResultsPage:
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
-        resp = _results(client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT)
+        resp = _results(
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT
+        )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
 
     def test_limit_above_the_result_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
         resp = _results(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT + 1
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
-        # Enforced by ``result_page`` now rather than the ``Query`` bound, so pin that
-        # it still names the parameter the way a ``Query`` violation does.
         [error] = resp.json()["error"]["details"]["errors"]
         assert error["loc"] == ["query", "limit"]
 
     @pytest.mark.parametrize("aggregate", ["chapter", "book", "text"])
-    def test_a_rollup_accepts_the_rollup_max(
+    def test_a_rollup_accepts_the_bulk_max(
         self, client, regular_token1, db_session, group1_version, aggregate
     ):
         """#1010: any rollup over the whole canon fits in one page (1,511 chapters)."""
@@ -3519,12 +3510,12 @@ class TestResultsPage:
             regular_token1,
             assessment_id,
             aggregate=aggregate,
-            limit=RESULT_ROLLUP_MAX_LIMIT,
+            limit=RESULT_BULK_MAX_LIMIT,
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_ROLLUP_MAX_LIMIT
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
 
-    def test_a_rollup_above_the_rollup_max_is_a_422(
+    def test_a_rollup_above_the_bulk_max_is_a_422(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
@@ -3533,7 +3524,7 @@ class TestResultsPage:
             regular_token1,
             assessment_id,
             aggregate="chapter",
-            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
@@ -4247,15 +4238,9 @@ class TestResultsSchemaContract:
         """Not the shared catalog params — the whole point of #893 decision 3, and the
         thing a well-meaning cleanup would "simplify" back."""
         route = _route("get_assessment_results")
-        # Through ``result_page``, which holds the scope too: the verse level keeps
-        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is result_page
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
-        )
-        assert any(
-            dependency.call is RollupResultPaginationParams
-            for dependency in _all_dependencies(route)
         )
 
     @pytest.mark.parametrize(
@@ -10336,22 +10321,22 @@ class TestTextLengthsPage:
     ):
         assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
         resp = _text_lengths(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
 
     def test_limit_above_the_result_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
         resp = _text_lengths(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT + 1
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
-    def test_a_rollup_accepts_the_rollup_max_and_no_more(
+    def test_a_rollup_accepts_the_bulk_max_and_no_more(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
@@ -10360,16 +10345,16 @@ class TestTextLengthsPage:
             regular_token1,
             assessment_id,
             aggregate="chapter",
-            limit=RESULT_ROLLUP_MAX_LIMIT,
+            limit=RESULT_BULK_MAX_LIMIT,
         )
         assert accepted.status_code == 200, accepted.text
-        assert accepted.json()["limit"] == RESULT_ROLLUP_MAX_LIMIT
+        assert accepted.json()["limit"] == RESULT_BULK_MAX_LIMIT
         rejected = _text_lengths(
             client,
             regular_token1,
             assessment_id,
             aggregate="chapter",
-            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert rejected.status_code == 422, rejected.text
 
@@ -10908,7 +10893,7 @@ class TestTextLengthsContract:
         ``reference_id`` by accident."""
         route = _route("get_assessment_text_lengths")
         declared = {param.name for param in route.dependant.query_params}
-        for dependency in _all_dependencies(route):
+        for dependency in route.dependant.dependencies:
             declared |= {param.name for param in dependency.query_params}
         assert declared == {
             "book",
@@ -10923,15 +10908,9 @@ class TestTextLengthsContract:
     def test_the_route_uses_the_result_pagination_dependency(self):
         """Not the shared catalog params — 100/1000, the bounds ``/results`` uses."""
         route = _route("get_assessment_text_lengths")
-        # Through ``result_page``, which holds the scope too: the verse level keeps
-        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is result_page
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
-        )
-        assert any(
-            dependency.call is RollupResultPaginationParams
-            for dependency in _all_dependencies(route)
         )
 
     def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
@@ -11514,6 +11493,38 @@ class TestScoreComparisonPeers:
         ]
         # The subject's page alone: empty at offset 0 is an empty list, so no count.
         assert len(selects) == 1
+
+
+class TestSampleStdev:
+    """``_sample_stdev`` replaced :func:`statistics.stdev` for speed (#1010). These pin
+    the three properties it was chosen to keep."""
+
+    @pytest.mark.parametrize(
+        "values", [[0.1] * 3, [0.7] * 6, [1 / 3] * 5, [0.29, 0.29]]
+    )
+    def test_identical_scores_are_exactly_zero(self, values):
+        """Not ~1e-17: a zero spread means "no z-score", and a rounding residue would
+        report an enormous one instead. A plain float mean of three 0.1s is off by one
+        ulp, which is the case the shift by the minimum exists for."""
+        assert assessment_service._sample_stdev(values) == 0.0
+
+    def test_it_matches_statistics_stdev_to_within_rounding(self):
+        rng = random.Random(1010)
+        for _ in range(2000):
+            values = [rng.random() for _ in range(rng.randint(2, 12))]
+            assert assessment_service._sample_stdev(values) == pytest.approx(
+                statistics.stdev(values), rel=1e-14
+            )
+
+    def test_the_peers_order_cannot_move_it(self):
+        rng = random.Random(42)
+        for _ in range(500):
+            values = [round(rng.random(), rng.randint(1, 6)) for _ in range(7)]
+            shuffled = values[:]
+            rng.shuffle(shuffled)
+            assert assessment_service._sample_stdev(
+                shuffled
+            ) == assessment_service._sample_stdev(values)
 
 
 class TestScoreComparisonRows:
@@ -12270,10 +12281,10 @@ class TestScoreComparisonPage:
             RESULT_DEFAULT_LIMIT
         )
         assert (
-            self._page(client, regular_token1, compared, limit=RESULT_MAX_LIMIT)[
+            self._page(client, regular_token1, compared, limit=RESULT_BULK_MAX_LIMIT)[
                 "limit"
             ]
-            == RESULT_MAX_LIMIT
+            == RESULT_BULK_MAX_LIMIT
         )
 
     def test_a_limit_above_the_maximum_is_rejected_not_clamped(
@@ -12284,11 +12295,11 @@ class TestScoreComparisonPage:
             regular_token1,
             compared["assessment_id"],
             against=compared["peer_ids"],
-            limit=RESULT_MAX_LIMIT + 1,
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert resp.status_code == 422, resp.text
 
-    def test_a_rollup_takes_the_rollup_max(self, client, regular_token1, compared):
+    def test_a_rollup_takes_the_bulk_max(self, client, regular_token1, compared):
         """#1010: the whole-Bible chapter view is one request, as v3's was."""
         assert (
             self._page(
@@ -12296,9 +12307,9 @@ class TestScoreComparisonPage:
                 regular_token1,
                 compared,
                 aggregate="chapter",
-                limit=RESULT_ROLLUP_MAX_LIMIT,
+                limit=RESULT_BULK_MAX_LIMIT,
             )["limit"]
-            == RESULT_ROLLUP_MAX_LIMIT
+            == RESULT_BULK_MAX_LIMIT
         )
         resp = _score_comparison(
             client,
@@ -12306,7 +12317,7 @@ class TestScoreComparisonPage:
             compared["assessment_id"],
             against=compared["peer_ids"],
             aggregate="chapter",
-            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert resp.status_code == 422, resp.text
 
@@ -12370,17 +12381,6 @@ class TestScoreComparisonPage:
             ("EXO", 1): {peer: pytest.approx(0.3)},
         }
 
-    def test_an_unauthenticated_oversized_limit_is_still_a_401(self, client, compared):
-        """``result_page`` rejects ``limit`` above the verse-level ceiling by raising,
-        which would pre-empt any check resolved after it. Authentication is resolved
-        before it (the router-level dependency), so a caller with no token still gets
-        the 401 rather than a 422 that confirms the route's parameters."""
-        resp = client.get(
-            f"{PREFIX}/assessments/{compared['assessment_id']}/score-comparison",
-            params={"against": compared["peer_ids"], "limit": RESULT_MAX_LIMIT + 1},
-        )
-        assert resp.status_code == 401, resp.text
-
     def test_there_is_no_delta_watermark(self, client, regular_token1, compared):
         """``assessment_result`` carries no modification timestamp, so the key is present
         and null rather than absent — adding delta support later is then not a
@@ -12439,7 +12439,7 @@ class TestScoreComparisonContract:
         unreachable *by construction* once the subject is an explicit assessment id."""
         route = _route("get_assessment_score_comparison")
         declared = {param.name for param in route.dependant.query_params}
-        for dependency in _all_dependencies(route):
+        for dependency in route.dependant.dependencies:
             declared |= {param.name for param in dependency.query_params}
         assert declared == {
             "against",
@@ -12466,15 +12466,9 @@ class TestScoreComparisonContract:
 
     def test_the_route_uses_the_result_pagination_dependency(self):
         route = _route("get_assessment_score_comparison")
-        # Through ``result_page``, which holds the scope too: the verse level keeps
-        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is result_page
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
-        )
-        assert any(
-            dependency.call is RollupResultPaginationParams
-            for dependency in _all_dependencies(route)
         )
 
     def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
