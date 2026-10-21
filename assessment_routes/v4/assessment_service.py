@@ -3517,16 +3517,33 @@ async def _peer_scores(
     the lookups can use the index. ``aggregate=book`` keeps a plain ``book IN (...)``
     (at most 66 keys, which plans cheaply). At ``aggregate=text`` there are no key columns
     and so no filter: the one group is the whole scope.
+
+    **``aggregate=chapter`` filters by the page's books instead, then drops the chapters
+    outside the page here** (#1010, again checked against the live database). A chapter
+    page holds whole books almost entirely, so its rollup reads nearly every verse of
+    every peer in those books either way. The per-key join did that as one index descent
+    per ``(book, chapter)`` per peer, about 29,000 buffer reads for a 1,000-chapter page;
+    a plain ``book IN`` reads each book's rows as one range, about 1,300 buffer reads,
+    and took ~320–390 ms against ~420–590 ms. What it rolls up beyond the page is at most
+    the rest of the two books the page starts and ends in, and the ``page_keys`` check
+    below discards those, so the result is exactly the per-key query's.
     """
     if not peers or not keys:
         return {}
 
     names = _comparison_group_names(scope.aggregate)
+    if scope.aggregate is ResultAggregate.chapter:
+        # Filter by the page's books and drop the chapters outside it after the rollup.
+        # See the docstring for why the per-chapter join was slower.
+        page_books = list(dict.fromkeys(key[0] for key in keys))
+        groups = (("book",), [(book,) for book in page_books])
+    else:
+        groups = (names, keys)
     deduplicated = _deduplicated_results(
         [peer.id for peer in peers],
         scope,
         per_assessment=True,
-        groups=(names, keys),
+        groups=groups,
     )
     group_columns = tuple(deduplicated.c[name] for name in names)
     statement = (
@@ -3540,13 +3557,13 @@ async def _peer_scores(
         .group_by(deduplicated.c.assessment_id, *group_columns)
     )
 
+    page_keys = set(keys)
     by_key: dict[tuple, dict[int, float]] = {}
     for row in (await db.execute(statement)).all():
-        if row.score is None:
+        key = tuple(getattr(row, name) for name in names)
+        if row.score is None or key not in page_keys:
             continue
-        by_key.setdefault(tuple(getattr(row, name) for name in names), {})[
-            row.assessment_id
-        ] = float(row.score)
+        by_key.setdefault(key, {})[row.assessment_id] = float(row.score)
     return by_key
 
 

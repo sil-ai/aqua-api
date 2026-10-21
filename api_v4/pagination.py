@@ -223,6 +223,57 @@ class ResultPaginationParams(PaginationParams):
         self.include_total: bool = include_total
 
 
+#: Hard maximum page size for the result reads **when they roll up** (``aggregate`` set).
+#: Large enough that any rollup over the whole canon is one page: ``aggregate=chapter``
+#: over all of ``vref.txt`` is 1,511 rows (1,189 without the deuterocanon), and the
+#: coarser levels are fewer. Two pages there cost a whole serial round trip, which on
+#: ``/score-comparison`` was most of what kept the whole-Bible chapter view at ~2× v3's
+#: single response (#1010). A rollup row is one location and a handful of numbers, so the
+#: weight argument behind :data:`RESULT_MAX_LIMIT` does not apply; the verse level keeps
+#: that ceiling.
+RESULT_ROLLUP_MAX_LIMIT = 2000
+
+
+class RollupResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the result reads that roll up: 100 by default, 2000 max.
+
+    The ``Query`` bound is the *rollup* ceiling, :data:`RESULT_ROLLUP_MAX_LIMIT`, because
+    a bound declared here cannot see ``aggregate``. The verse-level ceiling,
+    :data:`RESULT_MAX_LIMIT`, is enforced per request by the route's dependency that
+    holds both this and the scope — see
+    :func:`assessment_routes.v4.assessment_routes.result_page`. Everything else is
+    :class:`ResultPaginationParams`, including not calling ``super().__init__``.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            RESULT_DEFAULT_LIMIT,
+            ge=1,
+            le=RESULT_ROLLUP_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and {RESULT_MAX_LIMIT} at "
+                f"the verse level, or between 1 and {RESULT_ROLLUP_MAX_LIMIT} when "
+                f"`aggregate` is set, so that any rollup over the whole text fits in "
+                f"one page. Out-of-range values are rejected with 422, not clamped."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
+
+
 #: Default page size for the verses read. 200 rather than the results read's 100 because
 #: the request this endpoint most often serves is *one chapter* — v3's ``GET /chapter``
 #: is the second-busiest verse endpoint in the one known client — and the longest chapter
