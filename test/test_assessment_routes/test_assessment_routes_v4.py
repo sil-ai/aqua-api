@@ -11404,7 +11404,12 @@ class TestScoreComparisonPeers:
         # The peer lookup is the only grouped statement: the subject's two ride
         # ``DISTINCT ON`` instead.
         assert len(grouped) == 1
-        assert list(grouped[0][1]) == [peer, "GEN", 3, 17]
+        # One array per key column, joined through ``unnest`` rather than a row ``IN``
+        # list, which Postgres was slow to plan at 1,000 keys (#1010).
+        statement, parameters = grouped[0]
+        assert "unnest(" in statement
+        assert ") IN (" not in statement
+        assert list(parameters) == [["GEN"], [3], [17], peer]
 
     def test_an_empty_page_skips_the_peer_query_entirely(
         self, client, regular_token1, db_session, group1_version

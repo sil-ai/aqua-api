@@ -501,7 +501,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, and_, func, or_, select, tuple_
+from sqlalchemy import JSON, and_, bindparam, cast, func, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -1666,7 +1667,11 @@ def _placeable_results(assessment_ids: Sequence[int], scope: ResultScope) -> lis
 
 
 def _deduplicated_results(
-    assessment_ids: Sequence[int], scope: ResultScope, *, per_assessment: bool = False
+    assessment_ids: Sequence[int],
+    scope: ResultScope,
+    *,
+    per_assessment: bool = False,
+    groups: tuple[tuple[str, ...], list[tuple]] | None = None,
 ):
     """Those assessments' placeable rows as a subquery, one row per verse, first-write-wins.
 
@@ -1725,25 +1730,61 @@ def _deduplicated_results(
     quietly of size one, reported as whatever ``baseline_count`` counted. Nothing else
     moves: the ``ORDER BY`` still ends in ``id``, so first-write-wins still decides which
     of a verse's duplicate rows survives, now per assessment rather than outright.
+
+    ``groups`` is ``(names, keys)``: keep only rows whose ``names`` columns match one of
+    ``keys``, for :func:`_peer_scores`, which needs one page's groups and nothing else.
+    The filter is applied *before* the ``DISTINCT ON``, and that cannot change which row
+    survives: ``names`` is always a prefix of ``(book, chapter, verse)``, so a verse's
+    duplicate rows match or miss together. See :func:`_peer_scores` for why multi-column
+    keys are joined from arrays rather than listed in a row ``IN``.
     """
     distinct_on = ((AssessmentResult.assessment_id,) if per_assessment else ()) + (
         AssessmentResult.book,
         AssessmentResult.chapter,
         AssessmentResult.verse,
     )
-    return (
-        select(
-            AssessmentResult.id,
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            AssessmentResult.verse,
-            AssessmentResult.score,
-            AssessmentResult.flag,
-            AssessmentResult.hide,
-            AssessmentResult.note,
+    statement = select(
+        AssessmentResult.id,
+        AssessmentResult.assessment_id,
+        AssessmentResult.book,
+        AssessmentResult.chapter,
+        AssessmentResult.verse,
+        AssessmentResult.score,
+        AssessmentResult.flag,
+        AssessmentResult.hide,
+        AssessmentResult.note,
+    )
+    names, keys = groups if groups is not None else ((), [])
+    columns = [getattr(AssessmentResult, name) for name in names]
+    if len(columns) == 1:
+        # ``aggregate=book``: at most 66 keys, so a plain ``IN`` plans cheaply, and it
+        # measured ~120 ms faster than the join over the whole Bible.
+        statement = statement.where(columns[0].in_([key[0] for key in keys]))
+    elif columns:
+        page = (
+            func.unnest(
+                *(
+                    cast(
+                        bindparam(
+                            f"page_{name}",
+                            [key[i] for key in keys],
+                            type_=ARRAY(column.type),
+                            unique=True,
+                        ),
+                        ARRAY(column.type),
+                    )
+                    for i, (name, column) in enumerate(zip(names, columns))
+                )
+            )
+            .table_valued(*names)
+            .render_derived(name="page")
         )
-        .where(*_placeable_results(assessment_ids, scope))
+        statement = statement.join(
+            page,
+            and_(*(page.c[name] == column for name, column in zip(names, columns))),
+        )
+    return (
+        statement.where(*_placeable_results(assessment_ids, scope))
         .distinct(*distinct_on)
         .order_by(*distinct_on, AssessmentResult.id)
         .subquery()
@@ -3464,14 +3505,29 @@ async def _peer_scores(
     filter already implies it. It is the same "the join is also a filter" argument
     :func:`_aggregated_results` makes: a peer's population is then defined by exactly the
     predicate the subject's is, at whichever level is being read.
+
+    **The page's keys are joined from ``unnest`` of one array per column, not listed in a
+    row ``IN (...)``** (#1010). A 1,000-key row ``IN`` expands into a 1,000-branch
+    ``BitmapOr``, and Postgres took ~470 ms just to *plan* it, against ~40 ms to run it;
+    that planning cost was most of what made this read ~2× v3's. Joined from arrays, the
+    plan is a nested loop doing one ``idx_assessment_result_main`` lookup per key, planned
+    in under a millisecond, and the cost follows the page rather than the scope (checked
+    against the live database: 6 peers over the whole Bible, 0.3 ms to plan, 71 ms to run).
+    The join goes inside :func:`_deduplicated_results`, before its ``DISTINCT ON``, so
+    the lookups can use the index. ``aggregate=book`` keeps a plain ``book IN (...)``
+    (at most 66 keys, which plans cheaply). At ``aggregate=text`` there are no key columns
+    and so no filter: the one group is the whole scope.
     """
     if not peers or not keys:
         return {}
 
-    deduplicated = _deduplicated_results(
-        [peer.id for peer in peers], scope, per_assessment=True
-    )
     names = _comparison_group_names(scope.aggregate)
+    deduplicated = _deduplicated_results(
+        [peer.id for peer in peers],
+        scope,
+        per_assessment=True,
+        groups=(names, keys),
+    )
     group_columns = tuple(deduplicated.c[name] for name in names)
     statement = (
         select(
@@ -3483,12 +3539,6 @@ async def _peer_scores(
         .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
         .group_by(deduplicated.c.assessment_id, *group_columns)
     )
-    if len(group_columns) == 1:
-        # A one-column ``tuple_(...).in_(...)`` is legal but renders as ``(book) IN
-        # (('GEN'))``; the plain column form is what the index expects to see.
-        statement = statement.where(group_columns[0].in_([key[0] for key in keys]))
-    elif group_columns:
-        statement = statement.where(tuple_(*group_columns).in_(keys))
 
     by_key: dict[tuple, dict[int, float]] = {}
     for row in (await db.execute(statement)).all():
@@ -3654,7 +3704,7 @@ async def get_score_comparison(
     keys = [tuple(getattr(row, name) for name in names) for row in rows]
     # dict.fromkeys: the page's *distinct* groups, keeping their order. At the verse level
     # the keys are already distinct; under a rollup they are too. It costs nothing and
-    # means a duplicate could never widen the ``IN`` list.
+    # means a duplicate could never widen the key list or fan out the ``unnest`` join.
     peer_scores = await _peer_scores(db, peers, scope, list(dict.fromkeys(keys)))
 
     continuations: dict[tuple[str, int, int], list[str]] = {}
