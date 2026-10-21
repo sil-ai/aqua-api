@@ -132,6 +132,7 @@ import os
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import get_args
 from unittest.mock import AsyncMock, patch
 
@@ -140,6 +141,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
@@ -150,9 +153,11 @@ from api_v4.pagination import (
     NGRAM_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
+    RESULT_ROLLUP_MAX_LIMIT,
     NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
+    RollupResultPaginationParams,
     V4Page,
 )
 from api_v4.schemas.assessment import (
@@ -205,6 +210,7 @@ from assessment_routes.v4.assessment_routes import (
     SIMILAR_VERSES_MAX_LIMIT,
     ResultScopeParams,
     VerseScopeParams,
+    result_page,
 )
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
 from bible_routes.v4 import verse_range_service
@@ -444,6 +450,16 @@ def _ids(resp):
 def _route(name):
     """The declared APIRoute for a v4 assessments handler, by function name."""
     return next(r for r in v4_assessment_router.routes if r.name == name)
+
+
+def _all_dependencies(route):
+    """Every dependency under a route, nested ones included. The rollup reads take their
+    page through ``result_page``, so ``limit``/``offset`` sit one level down (#1010)."""
+    stack = list(route.dependant.dependencies)
+    while stack:
+        dependency = stack.pop()
+        yield dependency
+        stack.extend(dependency.dependencies)
 
 
 def _vref_parts(vref):
@@ -3487,6 +3503,40 @@ class TestResultsPage:
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
+        # Enforced by ``result_page`` now rather than the ``Query`` bound, so pin that
+        # it still names the parameter the way a ``Query`` violation does.
+        [error] = resp.json()["error"]["details"]["errors"]
+        assert error["loc"] == ["query", "limit"]
+
+    @pytest.mark.parametrize("aggregate", ["chapter", "book", "text"])
+    def test_a_rollup_accepts_the_rollup_max(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        """#1010: any rollup over the whole canon fits in one page (1,511 chapters)."""
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate=aggregate,
+            limit=RESULT_ROLLUP_MAX_LIMIT,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == RESULT_ROLLUP_MAX_LIMIT
+
+    def test_a_rollup_above_the_rollup_max_is_a_422(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
 
     def test_raising_this_cap_did_not_raise_the_catalog_cap(
         self, client, regular_token1, db_session, group1_version
@@ -4197,9 +4247,15 @@ class TestResultsSchemaContract:
         """Not the shared catalog params — the whole point of #893 decision 3, and the
         thing a well-meaning cleanup would "simplify" back."""
         route = _route("get_assessment_results")
+        # Through ``result_page``, which holds the scope too: the verse level keeps
+        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is result_page
             for dependency in route.dependant.dependencies
+        )
+        assert any(
+            dependency.call is RollupResultPaginationParams
+            for dependency in _all_dependencies(route)
         )
 
     @pytest.mark.parametrize(
@@ -10295,6 +10351,28 @@ class TestTextLengthsPage:
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
+    def test_a_rollup_accepts_the_rollup_max_and_no_more(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        accepted = _text_lengths(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_ROLLUP_MAX_LIMIT,
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["limit"] == RESULT_ROLLUP_MAX_LIMIT
+        rejected = _text_lengths(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+        )
+        assert rejected.status_code == 422, rejected.text
+
     def test_offset_past_the_end_is_an_empty_page(
         self, client, regular_token1, db_session, group1_version
     ):
@@ -10830,7 +10908,7 @@ class TestTextLengthsContract:
         ``reference_id`` by accident."""
         route = _route("get_assessment_text_lengths")
         declared = {param.name for param in route.dependant.query_params}
-        for dependency in route.dependant.dependencies:
+        for dependency in _all_dependencies(route):
             declared |= {param.name for param in dependency.query_params}
         assert declared == {
             "book",
@@ -10845,9 +10923,15 @@ class TestTextLengthsContract:
     def test_the_route_uses_the_result_pagination_dependency(self):
         """Not the shared catalog params — 100/1000, the bounds ``/results`` uses."""
         route = _route("get_assessment_text_lengths")
+        # Through ``result_page``, which holds the scope too: the verse level keeps
+        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is result_page
             for dependency in route.dependant.dependencies
+        )
+        assert any(
+            dependency.call is RollupResultPaginationParams
+            for dependency in _all_dependencies(route)
         )
 
     def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
@@ -12204,6 +12288,99 @@ class TestScoreComparisonPage:
         )
         assert resp.status_code == 422, resp.text
 
+    def test_a_rollup_takes_the_rollup_max(self, client, regular_token1, compared):
+        """#1010: the whole-Bible chapter view is one request, as v3's was."""
+        assert (
+            self._page(
+                client,
+                regular_token1,
+                compared,
+                aggregate="chapter",
+                limit=RESULT_ROLLUP_MAX_LIMIT,
+            )["limit"]
+            == RESULT_ROLLUP_MAX_LIMIT
+        )
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=compared["peer_ids"],
+            aggregate="chapter",
+            limit=RESULT_ROLLUP_MAX_LIMIT + 1,
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_a_chapter_page_rolls_up_only_its_own_chapter(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The chapter peer query reads the page's whole books (#1010). A peer scored in
+        GEN 1 and GEN 2, on a one-chapter page holding GEN 1, must contribute GEN 1's mean
+        alone: GEN 2's verses are read, but rolled up into their own chapter."""
+        # The fixture already scores the subject's GEN 1:1-5; give it a GEN 2 as well.
+        _make_results(db_session, compared["assessment_id"], ["GEN 2:1"])
+        peer = compared["peer_ids"][0]
+        _make_result(db_session, peer, "GEN 1:1", score=0.25)
+        _make_result(db_session, peer, "GEN 2:1", score=0.75)
+        body = self._page(
+            client,
+            regular_token1,
+            {"assessment_id": compared["assessment_id"], "peer_ids": [peer]},
+            aggregate="chapter",
+            limit=1,
+        )
+        [row] = body["items"]
+        assert (row["book"], row["chapter"]) == ("GEN", 1)
+        assert row["mean_score"] == pytest.approx(0.25)
+        assert row["baseline_count"] == 1
+
+    def test_the_chapter_peer_scores_hold_the_page_keys_and_no_others(
+        self, db_session, compared
+    ):
+        """White-box, because no response can show it: the page only looks its own keys
+        up, so a chapter outside the page would go unread rather than wrong. A page that
+        spans two books, GEN 50 and EXO 1, reads both books whole; ``_peer_scores`` must
+        still hand back exactly those two chapters."""
+        peer = compared["peer_ids"][0]
+        for vref, score in [
+            ("GEN 49:1", 0.1),
+            ("GEN 50:1", 0.2),
+            ("EXO 1:1", 0.3),
+            ("EXO 2:1", 0.4),
+        ]:
+            _make_result(db_session, peer, vref, score=score)
+
+        async def peer_scores():
+            # A fresh engine on this loop: pooled connections are bound to the loop that
+            # opened them.
+            engine = create_async_engine(os.environ["AQUA_DB"], poolclass=NullPool)
+            try:
+                async with AsyncSession(engine) as db:
+                    return await assessment_service._peer_scores(
+                        db,
+                        [SimpleNamespace(id=peer)],
+                        ResultScope(aggregate=ResultAggregate.chapter),
+                        [("GEN", 50), ("EXO", 1)],
+                    )
+            finally:
+                await engine.dispose()
+
+        by_key = asyncio.run(peer_scores())
+        assert by_key == {
+            ("GEN", 50): {peer: pytest.approx(0.2)},
+            ("EXO", 1): {peer: pytest.approx(0.3)},
+        }
+
+    def test_an_unauthenticated_oversized_limit_is_still_a_401(self, client, compared):
+        """``result_page`` rejects ``limit`` above the verse-level ceiling by raising,
+        which would pre-empt any check resolved after it. Authentication is resolved
+        before it (the router-level dependency), so a caller with no token still gets
+        the 401 rather than a 422 that confirms the route's parameters."""
+        resp = client.get(
+            f"{PREFIX}/assessments/{compared['assessment_id']}/score-comparison",
+            params={"against": compared["peer_ids"], "limit": RESULT_MAX_LIMIT + 1},
+        )
+        assert resp.status_code == 401, resp.text
+
     def test_there_is_no_delta_watermark(self, client, regular_token1, compared):
         """``assessment_result`` carries no modification timestamp, so the key is present
         and null rather than absent — adding delta support later is then not a
@@ -12262,7 +12439,7 @@ class TestScoreComparisonContract:
         unreachable *by construction* once the subject is an explicit assessment id."""
         route = _route("get_assessment_score_comparison")
         declared = {param.name for param in route.dependant.query_params}
-        for dependency in route.dependant.dependencies:
+        for dependency in _all_dependencies(route):
             declared |= {param.name for param in dependency.query_params}
         assert declared == {
             "against",
@@ -12289,9 +12466,15 @@ class TestScoreComparisonContract:
 
     def test_the_route_uses_the_result_pagination_dependency(self):
         route = _route("get_assessment_score_comparison")
+        # Through ``result_page``, which holds the scope too: the verse level keeps
+        # the 1000 ceiling and a rollup gets 2000 (#1010).
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is result_page
             for dependency in route.dependant.dependencies
+        )
+        assert any(
+            dependency.call is RollupResultPaginationParams
+            for dependency in _all_dependencies(route)
         )
 
     def test_the_route_uses_the_aggregate_carrying_scope_dependency(self):
