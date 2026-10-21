@@ -495,6 +495,7 @@ and it carries **#862**, the last of this slice's five security issues.
 """
 
 import asyncio
+import math
 import statistics
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
@@ -3590,8 +3591,32 @@ def _baseline_statistics(
         return None, None, 0
     return (
         statistics.fmean(values),
-        statistics.stdev(values) if len(values) > 1 else None,
+        _sample_stdev(values) if len(values) > 1 else None,
         len(values),
+    )
+
+
+def _sample_stdev(values: list[float]) -> float:
+    """The sample standard deviation, in floats rather than :mod:`statistics`' fractions.
+
+    :func:`statistics.stdev` is exact because it works in :class:`~fractions.Fraction`
+    arithmetic, and that cost ~100 ms per 1000-row page at any two or more peers, every
+    page (#1010). This is two-pass in floats with :func:`math.fsum`, which agrees with it
+    to within a few ulps (worst relative difference 2.8e-16 over 20,000 random cases).
+
+    Two properties are kept on purpose. **Identical scores give exactly 0.0**, not
+    ~1e-17: every value is shifted by the minimum before the mean is taken, so equal
+    values become exact zeros. That matters because :func:`_comparison_z_score` treats a
+    zero spread as "no z-score", and a rounding residue there would turn ``None`` into an
+    enormous z-score instead. **The result does not depend on the peers' order**: the
+    minimum does not, and :func:`math.fsum` is exactly rounded, so the iteration-order
+    argument in :func:`get_score_comparison` still holds.
+    """
+    pivot = min(values)
+    shifted = [value - pivot for value in values]
+    mean = math.fsum(shifted) / len(shifted)
+    return math.sqrt(
+        math.fsum((value - mean) ** 2 for value in shifted) / (len(shifted) - 1)
     )
 
 
@@ -3677,7 +3702,7 @@ async def get_score_comparison(
     (a caller names a large pool, then pages through a book most of it does not cover).
     Iteration order moves with this, and cannot move the numbers:
     :func:`statistics.fmean` sums with :func:`math.fsum`, which is exactly rounded, and
-    :func:`statistics.stdev` works in :class:`~fractions.Fraction` arithmetic.
+    :func:`_sample_stdev` shifts by the minimum and sums with it too.
 
     Two v3 mechanisms are deliberately not reached for, both flagged by Q1:
     ``utils.verse_range_utils.merge_verse_ranges`` is v3's sentinel-driven design and not

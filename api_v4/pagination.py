@@ -223,26 +223,30 @@ class ResultPaginationParams(PaginationParams):
         self.include_total: bool = include_total
 
 
-#: Hard maximum page size for the result reads **when they roll up** (``aggregate`` set).
-#: Large enough that any rollup over the whole canon is one page: ``aggregate=chapter``
-#: over all of ``vref.txt`` is 1,511 rows (1,189 without the deuterocanon), and the
-#: coarser levels are fewer. Two pages there cost a whole serial round trip, which on
-#: ``/score-comparison`` was most of what kept the whole-Bible chapter view at ~2× v3's
-#: single response (#1010). A rollup row is one location and a handful of numbers, so the
-#: weight argument behind :data:`RESULT_MAX_LIMIT` does not apply; the verse level keeps
-#: that ceiling.
-RESULT_ROLLUP_MAX_LIMIT = 2000
+#: Hard maximum page size for the three result reads a client reads *whole* —
+#: ``/results``, ``/text-lengths`` and ``/score-comparison`` — at every level. Large
+#: enough that the units a client actually asks for are one request: the longest book in
+#: ``vref.txt`` is Psalms at 2,527 verses, and the largest rollup, ``aggregate=chapter``
+#: over the whole canon, is 1,511 rows. Split across 1000-row pages, those reads paid a
+#: second, serial round trip, which on ``/score-comparison`` was most of what kept a
+#: whole-book or whole-Bible read at ~2× v3's single response (#1010).
+#:
+#: This gives up the caution :data:`RESULT_MAX_LIMIT` records (a ceiling is a one-way
+#: door, and a verse row may one day carry text). That was a guard against a row weight
+#: nothing serves today: at ~200 bytes a row, a full 3000-row page is ~600 KB. The
+#: decision was made for #1010 with the one client still in development. The alignment
+#: and agent reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole.
+RESULT_BULK_MAX_LIMIT = 3000
 
 
-class RollupResultPaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the result reads that roll up: 100 by default, 2000 max.
+class BulkResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the result reads a client reads whole: 100 / 3000.
 
-    The ``Query`` bound is the *rollup* ceiling, :data:`RESULT_ROLLUP_MAX_LIMIT`, because
-    a bound declared here cannot see ``aggregate``. The verse-level ceiling,
-    :data:`RESULT_MAX_LIMIT`, is enforced per request by the route's dependency that
-    holds both this and the scope — see
-    :func:`assessment_routes.v4.assessment_routes.result_page`. Everything else is
-    :class:`ResultPaginationParams`, including not calling ``super().__init__``.
+    :class:`ResultPaginationParams` with a higher ceiling,
+    :data:`RESULT_BULK_MAX_LIMIT`, so that a whole book (Psalms included) or a whole
+    canon's rollup is one request. Out-of-range values are a 422, not a clamp, as on
+    every other list; ``super().__init__`` is not called, for the reason
+    :class:`ResultPaginationParams` gives.
     """
 
     def __init__(
@@ -250,13 +254,13 @@ class RollupResultPaginationParams(PaginationParams):
         limit: int = Query(
             RESULT_DEFAULT_LIMIT,
             ge=1,
-            le=RESULT_ROLLUP_MAX_LIMIT,
+            le=RESULT_BULK_MAX_LIMIT,
             description=(
                 f"Maximum number of items to return. Defaults to "
-                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and {RESULT_MAX_LIMIT} at "
-                f"the verse level, or between 1 and {RESULT_ROLLUP_MAX_LIMIT} when "
-                f"`aggregate` is set, so that any rollup over the whole text fits in "
-                f"one page. Out-of-range values are rejected with 422, not clamped."
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
+                f"{RESULT_BULK_MAX_LIMIT}, enough for any one book (Psalms is 2,527 "
+                f"verses) or any rollup over the whole text in a single page. "
+                f"Out-of-range values are rejected with 422, not clamped."
             ),
         ),
         offset: int = Query(
