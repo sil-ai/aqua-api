@@ -1220,6 +1220,17 @@ _SHORTLIST_DDL_LOCK_KEY = 0x7466_6964_665F_6978  # "tfidf_ix"
 _SHORTLIST_DDL_LOCK_POLL_S = 2.0
 _SHORTLIST_DDL_LOCK_WAIT_S = 30 * 60
 
+#: The ``statement_timeout`` a DDL statement runs under, in place of the engine's
+#: ``aqua_db_statement_timeout_ms`` (60 s by default). That default is a guard for request
+#: queries, and a build cannot finish inside it: ``CREATE INDEX CONCURRENTLY`` reads all of
+#: ``verse_text`` twice however small the revision, which takes minutes. Under the 60 s
+#: limit every build was cancelled partway and left an invalid index, so no revision ever
+#: got a usable one (#1020). Not unlimited, because a concurrent build also waits for every
+#: older open transaction in the database, and one left open — idle in a session, say —
+#: would otherwise hold the database-wide lock forever. The same 30 minutes a waiter gives
+#: the lock.
+_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS = 30 * 60 * 1000
+
 
 @asynccontextmanager
 async def _shortlist_ddl_connection() -> AsyncIterator:
@@ -1242,6 +1253,14 @@ async def _shortlist_ddl_connection() -> AsyncIterator:
     long as the backend doing the work. On the way out it is released explicitly; if
     that fails, the connection is invalidated rather than handed back to the pool still
     holding the lock, where it would block every later build for good.
+
+    **The engine's ``statement_timeout`` is lifted for the DDL and restored after.** The
+    connection comes from the shared engine, which sets a 60 s timeout on every
+    connection, and a build takes minutes — see
+    :data:`_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS`. ``RESET`` puts back the value the
+    connection started with, and it runs before the connection goes back to the pool: a
+    pooled connection left at 30 minutes would hand that to whatever request used it
+    next. A failed ``RESET`` invalidates the connection, the same as a failed unlock.
     """
     from database.dependencies import engine
 
@@ -1269,9 +1288,13 @@ async def _shortlist_ddl_connection() -> AsyncIterator:
         await asyncio.sleep(_SHORTLIST_DDL_LOCK_POLL_S)
 
     try:
+        await conn.exec_driver_sql(
+            f"SET statement_timeout = {_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS}"
+        )
         yield conn
     finally:
         try:
+            await conn.exec_driver_sql("RESET statement_timeout")
             await conn.exec_driver_sql(
                 f"SELECT pg_advisory_unlock({_SHORTLIST_DDL_LOCK_KEY})"
             )
@@ -1304,8 +1327,13 @@ async def ensure_shortlist_index(revision_id: int) -> None:
 
     Raises nothing on a missing ``pg_trgm``: that is a deployment fault the caller cannot
     fix mid-request, and this runs off the request path. It is logged and abandoned.
+
+    The success log carries ``build_s``, the time the ``CREATE`` took, because how long a
+    build takes on the real table is the number that decides how fast a bulk re-run of
+    assessments can go. It is near zero when the index was already there.
     """
     name = shortlist_index_name(revision_id)
+    loop = asyncio.get_running_loop()
     try:
         async with _shortlist_ddl_connection() as conn:
             invalid = (
@@ -1316,11 +1344,13 @@ async def ensure_shortlist_index(revision_id: int) -> None:
             ).scalar()
             if invalid:
                 await conn.exec_driver_sql(f'DROP INDEX CONCURRENTLY "{name}"')
+            started = loop.time()
             await conn.exec_driver_sql(
                 f'CREATE INDEX CONCURRENTLY IF NOT EXISTS "{name}" '
                 "ON verse_text USING gist (text gist_trgm_ops) "
                 f"WHERE revision_id = {int(revision_id)}"
             )
+            build_s = round(loop.time() - started, 1)
     except Exception:
         logger.warning(
             "could not create the similar-verses shortlist index",
@@ -1332,7 +1362,12 @@ async def ensure_shortlist_index(revision_id: int) -> None:
     # which is the common case when a revision is re-assessed.
     logger.info(
         "similar-verses shortlist index is in place",
-        extra={"revision_id": revision_id, "index": name},
+        extra={
+            "revision_id": revision_id,
+            "index": name,
+            "build_s": build_s,
+            "replaced_invalid": bool(invalid),
+        },
     )
 
 
