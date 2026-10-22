@@ -288,10 +288,8 @@ a ranking**, which is the one thing here that used to be guaranteed and now is n
 * **The GET reads no stored vectors.** It shortlists the revision's verse *text* on
   trigram distance and reranks the shortlist exactly, through the assessment's own fitted
   vocabulary and IDF. :mod:`assessment_routes.v4.tfidf_retrieval` owns both stages, the
-  measured evidence, and the three implementation traps — GiST rather than the GIN index
-  already on the column, partial per revision rather than global, and the revision id as
-  a literal rather than a bound parameter. Do not reach for ``tfidf_pca_vector`` from
-  this path; #967 stops storing it.
+  measured evidence, and why the shortlist runs without an index (#1022). Do not reach
+  for ``tfidf_pca_vector`` from this path; #967 stops storing it.
 * **Neither does the POST.** Both of its kinds, ``text`` and ``vref``, rank from verse
   text too: up to
   :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through the

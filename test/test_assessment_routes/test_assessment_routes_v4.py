@@ -254,12 +254,6 @@ V3_PREFIX = "/v3"
 #: pointing at the real function.
 V4_DISPATCH = "assessment_routes.v4.assessment_service.call_assessment_runner"
 V3_DISPATCH = "assessment_routes.v3.assessment_routes.call_assessment_runner"
-#: A ``tfidf`` submission schedules a real ``CREATE INDEX CONCURRENTLY`` on
-#: ``verse_text`` as a background task, which ``TestClient`` runs. Nothing here drops it,
-#: so left unpatched it leaks into every later test that reads the index catalog.
-V4_SHORTLIST_MAINTAIN = (
-    "assessment_routes.v4.assessment_routes.tfidf_retrieval.maintain_shortlist_index"
-)
 
 _names = itertools.count()
 
@@ -341,10 +335,8 @@ def _body(revision_id, options, **top_level):
 
 
 def _submit(client, token, body):
-    """POST to /v4/assessments with the Modal dispatch and index maintenance stubbed."""
-    with patch(V4_DISPATCH, new_callable=AsyncMock), patch(
-        V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
-    ):
+    """POST to /v4/assessments with the Modal dispatch stubbed."""
+    with patch(V4_DISPATCH, new_callable=AsyncMock):
         return client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
 
 
@@ -1723,9 +1715,7 @@ class TestRunnerPayload:
     """
 
     def _spawn(self, client, token, body):
-        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal, patch(
-            V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
-        ):
+        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal:
             spawn = AsyncMock()
             mock_modal.Function.from_name.return_value.spawn.aio = spawn
             resp = client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
@@ -5577,13 +5567,10 @@ class TestSimilarVersesRanking:
     ):
         """The shortlist's shape, pinned where a refactor would quietly change it.
 
-        Three properties, all of which are the difference between ~117 ms and the 401 ms
-        case: the ordering is the ``<->`` distance and nothing else (a second sort key
-        stops Postgres walking the GiST index in distance order), ``revision_id`` is
-        inlined as a literal rather than bound (so a generic plan cannot skip the partial
-        index), and the limit is
-        :func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`'s rather than the
-        caller's.
+        Three properties: the ordering is the ``<->`` distance first, with
+        ``verse_reference`` breaking ties (#1022); the query is scoped to the revision;
+        and the limit is :func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`'s
+        rather than the caller's.
         """
         assessment_id = self._texted(db_session, group1_version)
         with _captured_sql() as captured:
@@ -5600,17 +5587,15 @@ class TestSimilarVersesRanking:
             for captured_statement in _touching(captured, "verse_text")
             if "<->" in captured_statement[0]
         ]
-        # The revision id is *in the statement text*, which is the whole point: bound, a
-        # generic plan could not prove the query implies the partial index's predicate.
-        assert f"revision_id = {self.revision_id}" in shortlist, shortlist
+        assert "verse_text.revision_id = " in shortlist, shortlist
+        assert self.revision_id in tuple(parameters), parameters
         # The limit is bound, so it is asserted on the parameters rather than the text.
         # It is the shortlist's own k, not the caller's limit of 3.
         assert tfidf_retrieval.shortlist_size(3) in tuple(parameters), parameters
         assert 3 not in tuple(parameters), parameters
-        # The distance is the whole ORDER BY. Anything after it is what defeats the index.
+        # Distance first, then the tiebreak.
         order_by = shortlist.split("ORDER BY", 1)[1].split("LIMIT", 1)[0]
-        assert "<->" in order_by
-        assert "verse_reference" not in order_by, order_by
+        assert order_by.index("<->") < order_by.index("verse_reference"), order_by
 
     @pytest.mark.parametrize(
         "unusable",
