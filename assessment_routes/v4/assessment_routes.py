@@ -238,7 +238,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import fastapi
-from fastapi import BackgroundTasks, Depends, Query, Request, Response, status
+from fastapi import Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -301,7 +301,7 @@ from api_v4.schemas.assessment import (
     TextLengthsRow,
     VerseScope,
 )
-from assessment_routes.v4 import assessment_service, tfidf_retrieval
+from assessment_routes.v4 import assessment_service
 from config import settings
 from database.dependencies import get_db
 from database.models import Assessment
@@ -384,7 +384,6 @@ def _poll_url(request: Request, assessment_id: int) -> str:
 async def create_assessment(
     request: Request,
     data: AssessmentCreate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
 ) -> JSONResponse:
@@ -452,30 +451,6 @@ async def create_assessment(
             message=str(exc),
             details={"assessment_id": exc.assessment_id},
         ) from exc
-
-    # A ``tfidf`` submission is the one event that says a revision is about to want a
-    # similar-verses shortlist index, so it is where #973's "created alongside the
-    # assessment" lifecycle starts. Three things about the placement:
-    #
-    # * **After the response, not before it.** A ``CREATE INDEX CONCURRENTLY`` over a
-    #   revision's verses takes seconds to minutes, and this endpoint answers 202.
-    # * **``BackgroundTasks``, not ``asyncio.create_task``.** Both cost one task on the
-    #   worker, and Starlette runs background tasks after dependencies with ``yield`` are
-    #   finalized, so the request's database session is released first either way. The
-    #   difference is lifecycle: a bare ``create_task`` relies on the event loop
-    #   outliving the request, which is true of a uvicorn worker and false of
-    #   ``TestClient``, which builds a fresh loop per request and closes it — so the work
-    #   would be silently destroyed under test and only ever exercised in production.
-    # * **In the router rather than the service**, because this is FastAPI machinery and
-    #   the service stays free of it — and because the router is where the created row's
-    #   type is already in hand.
-    #
-    # Failures inside the task are logged and dropped: the index is a performance
-    # artifact and the read is correct without it.
-    if assessment.type == AssessmentType.tfidf.value:
-        background_tasks.add_task(
-            tfidf_retrieval.maintain_shortlist_index, assessment.revision_id
-        )
 
     return job_accepted_response(
         job_id=str(assessment.id),

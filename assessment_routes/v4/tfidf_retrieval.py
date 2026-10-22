@@ -39,86 +39,40 @@ two-stage trigram + cosine 0.866  0.963  0.905
 **The shortlist does not cost accuracy; it adds a little.** That reads as a paradox and
 is not one: the shortlist ranks on trigrams and the rerank on TF-IDF cosine, so narrowing
 first removes distractors that cosine alone ranks highly. The trade that is real is
-latency — ~117 ms end to end against ~25 ms for today's indexed vector scan — paid to
-stop storing 249 GB.
+latency, paid to stop storing 249 GB: about 1.2 s for a GET end to end on staging,
+against ~0.4 s for v3's indexed vector scan (#1020). Almost all of the difference is the
+shortlist, for the reason the next section gives.
 
-Three things here are load-bearing and easy to undo by accident.
+**The shortlist has no index, on purpose (#1022).** ``ORDER BY text <-> :query`` makes
+Postgres compute the trigram distance to every verse in the revision and keep the closest
+``k``: it reads the revision's rows through ``ix_verse_text_revision_id`` and runs a top-N
+heapsort. Measured on prod, that is ~807 ms for a 31,081-verse revision. A GiST index can
+walk the rows in distance order instead (~115 ms), and #973 built one per revision when a
+``tfidf`` assessment was submitted, capped at 128. #1022 removed them, because none ever
+finished building on the shared database. ``CREATE INDEX CONCURRENTLY`` reads all of
+``verse_text`` twice and waits for every older open transaction in the database. Builds
+were first cancelled at the 60 s request timeout (#1020), then ran past 30 minutes when
+given longer. Each index also added ~40 us of planning to every query on ``verse_text``,
+v3's included. While similar-verses is lightly used, the slower read is the better
+trade. If that changes, two things have already been ruled out:
 
-**The index must be GiST, and it is not the GIN index already on this column.**
-``ix_verse_text_nfc_trgm`` (migration ``7f2e9a4b8c31``) serves
-``/v4/revisions/{id}/text-search`` and is untouched. GIN can only answer "is this above a
-similarity cutoff", not "give me the closest k" — it has no ordering operator — and that
-is precisely what a shortlist is. Measured on GIN, a requested 500-verse shortlist had a
-*median actual size of 14*. The two indexes coexist and do different jobs.
-
-**The index must be partial, one per revision.** A single global GiST index collapses as
-revisions accumulate: 401 ms at 5 revisions and 1,662 ms at 20, because a global KNN
-ordering has the revision filter applied *after* it, so it over-fetches and discards.
-Partial per revision is 112 ms at 5 and 115 ms at 20 — flat — at ~17 MB per revision
-against 299 MB for a global one.
-
-**...and therefore bounded in number, which the measurement above does not cover.**
-Every partial index on ``verse_text`` is one more index the planner must consider for
-*every* query against that table, and ``verse_text`` is one of the busiest tables in the
-database. Measured locally on a 600k-row stand-in (2,000 revisions x 300 verses, pg16):
-
-====================  =================  ================
-partial GiST indexes  shortlist planning  point-read planning
-====================  =================  ================
-1                     1.34 ms            1.68 ms
-20                    1.30 ms            1.26 ms
-100                   6.61 ms            3.99 ms
-500                   26.8 ms            12.5 ms
-1,000                 50.1 ms            39.7 ms
-2,000                 73.6 ms            65.2 ms
-====================  =================  ================
-
-Roughly 40 us of planning per index, on every ``verse_text`` query in the API, not just
-these — and seven v3 modules read that table, so most of the cost lands on callers this
-design does nothing for. 5,066 distinct revisions have a ``tfidf`` assessment in
-production, so an index per assessed revision would put ~200 ms of *planning* on reads
-that today plan in under 2 ms. So the set is capped at
-:data:`~config.Settings.tfidf_shortlist_index_max` and the coldest are dropped — see
-:func:`prune_shortlist_indexes`. The cap is the reason this module owns
-index lifecycle at all instead of leaving it to a migration.
-
-**The revision id rides as a literal, not as a bound parameter** — and this is insurance
-rather than a requirement, which is worth stating precisely because the tempting version
-of the claim is false. A partial index is usable only where the planner can prove the
-query implies its predicate, and it cannot prove ``revision_id = $1`` implies
-``revision_id = 412`` while ``$1`` is unknown. But Postgres' default
-``plan_cache_mode = auto`` re-plans a prepared statement with the actual parameter for its
-first executions and thereafter keeps the custom plan while it is cheaper — and here it is
-much cheaper, so the bound form *does* reach the index. Measured all three ways on a
-2,000-revision stand-in::
-
-    literal revision_id                  Index Scan using the partial index
-    bound $1, plan_cache_mode = auto     Index Scan using the partial index
-    bound $1, force_generic_plan         Bitmap Index Scan + top-N heapsort
-
-So the bound form works today, and stops working if a generic plan is ever chosen — by
-configuration, or simply by the planner's estimates drifting. The failure would be silent:
-no error, just the latency this design exists to remove. :func:`shortlist` therefore
-inlines the integer, which is safe because it comes from an ``Assessment`` row rather than
-from the caller, and is spelled ``int()`` at the boundary so that stays true. The cost is
-plan caching for this one statement — about 1 ms of planning at the index cap, against
-0.14 ms for a cached plan.
-
-The read never *depends* on the index. Without it the same query is a sequential scan and
-a top-N heapsort — ~950 ms against ~115 ms, measured on prod for a 31,098-verse revision:
-slower, identical rows. That is what makes the index a pure performance
-artifact, safe to create late, drop under a cap, and leave out of the test fixtures.
+* **The GIN index already on this column.** ``ix_verse_text_nfc_trgm`` (migration
+  ``7f2e9a4b8c31``) serves ``/v4/revisions/{id}/text-search``. GIN can only answer "is
+  this above a similarity cutoff", not "give me the closest k", because it has no
+  ordering operator. Measured on GIN, a requested 500-verse shortlist had a *median
+  actual size of 14*.
+* **One global GiST index.** It gets slower as revisions accumulate: 401 ms at 5
+  revisions and 1,662 ms at 20, because the revision filter is applied *after* the
+  distance ordering, so it over-fetches and discards.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sys
-from contextlib import asynccontextmanager
-from typing import AsyncIterator, Sequence
+from typing import Sequence
 
-from sqlalchemy import Float, and_, func, literal_column, select
-from sqlalchemy import text as sa_text
+from sqlalchemy import Float, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bible_routes.v4.verse_range_service import VERSE_RANGE_MARKER
@@ -139,9 +93,10 @@ logger = setup_logger(__name__)
 # The operating point
 # ---------------------------------------------------------------------------
 
-#: Candidates the shortlist asks for. ``k = 100`` is the measured operating point:
-#: ~117 ms end to end in English and ~97 ms in Marathi, at R@1 0.866. Round 13 swept
-#: 100/250/500/1,000 and past 250 it is pure waste — 1,000 buys 0.001 MRR for +218 ms.
+#: Candidates the shortlist asks for. ``k = 100`` is the measured operating point for
+#: accuracy: R@1 0.866. Round 13 swept 100/250/500/1,000 and past 250 it buys nothing —
+#: 1,000 gains 0.001 MRR. That round's latencies were taken with a GiST index, which
+#: #1022 removed; without one, the scan costs about the same whatever ``k`` is.
 SHORTLIST_SIZE = 100
 
 #: The ceiling :func:`shortlist_size` will scale to. 250 is the last measured point that
@@ -549,14 +504,9 @@ def corpus_conditions(revision_id: int) -> list:
     one predicate covers empty and blank alike. Postgres' ``[:space:]`` and Python's
     ``str.isspace`` agree on ASCII whitespace; they can differ on a verse made *only* of
     exotic Unicode spaces (U+00A0, say), which is not worth a second definition.
-
-    The revision id rides as a literal rather than a bound parameter — insurance that the
-    shortlist reaches its partial index, see the module docstring. ``int()`` is what makes
-    inlining safe. The index's full-revision load gains nothing from it and loses nothing
-    either; sharing the clause matters more than that.
     """
     return [
-        VerseText.revision_id == literal_column(str(int(revision_id))),
+        VerseText.revision_id == revision_id,
         # Nullable column. The runner's text read joins verse_reference, so a row without
         # one was never in its corpus — and the index would fail splitting its book.
         VerseText.verse_reference.isnot(None),
@@ -592,18 +542,13 @@ async def shortlist(
     needs it, and fetching it here is what keeps the whole read at one shortlist query
     rather than a shortlist plus a hydration of its own.
 
-    **``ORDER BY`` is the distance alone.** Adding ``verse_reference`` as a tiebreak
-    would make membership fully deterministic and would also defeat the index: Postgres
-    only walks a GiST index in distance order when the ordering *is* the distance
-    expression, and any second key turns the plan into a scan plus a sort over all 41,899
-    rows — the 401 ms case. So the tiebreak lives in :func:`rerank`, over the rows that
-    came back, and the narrow consequence is stated rather than hidden: ``<->`` is
-    ``1 - similarity`` over small trigram counts, so exact ties are common, and *which*
-    of several equidistant verses occupies the last shortlist slot is not guaranteed
-    stable across an index rebuild. It is stable for fixed data and a fixed index, and a
-    verse tied at the shortlist boundary is one the rerank is overwhelmingly unlikely to
-    place in the top ``limit`` anyway. :func:`shortlist_size` keeps ``k`` at twice the
-    requested limit for exactly this reason.
+    **Ties on distance break on ``verse_reference``, then ``id``.** ``<->`` is
+    ``1 - similarity`` over small trigram counts, so exact ties are common, and without a
+    tiebreak *which* of several equidistant verses took the last shortlist slot would be
+    up to the scan. The extra sort keys cost nothing: with no index to walk in distance
+    order (see the module docstring), the plan is a top-N heapsort over the revision's
+    rows either way. :func:`rerank` breaks its own ties on ``vref`` too, over the rows
+    that came back.
 
     **Empty and continuation verses are excluded from the corpus**, which reproduces
     today's corpus rather than widening it. ``aqua-assessments``' ``fetch_revision``
@@ -616,8 +561,7 @@ async def shortlist(
 
     ``exclude_vref`` is the query verse's own leakage guard, pushed into the ``WHERE``
     clause so ``k`` rows survive the drop rather than ``k`` minus one. ``exclude_book``
-    widens it to the vref's whole book (the POST's ``text`` kind offers it). A filter on
-    the same partial index scan, so the scan is still walked in distance order.
+    widens it to the vref's whole book (the POST's ``text`` kind offers it).
 
     **Deduplicated by vref, lowest id winning.** ``verse_text`` has no uniqueness
     constraint on ``(revision_id, verse_reference)``, and unlike the stored-vector ranking
@@ -628,11 +572,11 @@ async def shortlist(
     the rest of the tree already apply to this hazard, so using it here also means the row
     that gets scored is the row whose text the response displays.
 
-    Deduplicating after the fetch rather than in SQL is forced: a ``DISTINCT ON`` would
-    have to sort by ``verse_reference`` first, and the outer ordering has to *be* the
-    distance expression or the GiST index is not walked in distance order at all. ``k`` is
-    over-fetched relative to the caller's limit anyway (:func:`shortlist_size`), so a
-    handful of collapsed duplicates does not empty the shortlist.
+    Deduplicating after the fetch keeps the query a single ``ORDER BY distance LIMIT k``:
+    a ``DISTINCT ON`` would have to sort by ``verse_reference`` first and would need a
+    subquery to get back to distance order. ``k`` is over-fetched relative to the
+    caller's limit anyway (:func:`shortlist_size`), so a handful of collapsed duplicates
+    does not empty the shortlist.
 
     The returned rows stay in distance order, but only as a convenience for reading a
     shortlist in isolation — :func:`rerank` re-sorts on cosine and nothing downstream
@@ -653,7 +597,7 @@ async def shortlist(
         await db.execute(
             select(VerseText.id, VerseText.verse_reference, VerseText.text)
             .where(and_(*conditions))
-            .order_by(distance)
+            .order_by(distance, VerseText.verse_reference, VerseText.id)
             .limit(k)
         )
     ).all()
@@ -777,12 +721,10 @@ async def two_stage(
 #: similarity but not on membership: the index scores the whole revision, the shortlist
 #: only trigram-near candidates.
 #:
-#: **Why 8.** The two-stage path costs ~63-81 ms per query with the per-revision GiST
-#: index and ~950 ms without it (``aqua-tfidf-eval`` round 15, and the prod measurement
-#: in the module docstring). An index build costs ~7.3 s. 8 x 950 ms is about one build,
-#: so a small batch is never slower than a cold large one even where the GiST index could
-#: not be created — and span suggestions, which send one text per call, never wait on a
-#: build at all. With the GiST index, 8 query points cost at most ~0.65 s.
+#: **Why 8.** The two-stage path costs ~0.8-0.95 s per query, almost all of it the
+#: shortlist, which has no index (see the module docstring). A corpus index build costs
+#: ~7.3 s, and 8 x ~0.9 s is about one build, so a small batch is never slower than a
+#: cold large one, and a single query never waits on a build.
 TWO_STAGE_MAX_QUERIES = 8
 
 #: Query rows scored per densified block in :meth:`CorpusIndex.search`. The score block is
@@ -1005,8 +947,7 @@ async def corpus_rows(db: AsyncSession, revision_id: int) -> list[tuple]:
 
     The same corpus :func:`shortlist` draws candidates from — :func:`corpus_conditions`,
     and one row per vref keeping the lowest id, for the reason :func:`shortlist` gives —
-    but a plain full read, never a call through the distance-ordered ``LIMIT``. So the
-    index does not depend on the GiST index existing.
+    but a plain full read, never a call through the distance-ordered ``LIMIT``.
     """
     rows = (
         await db.execute(
@@ -1177,322 +1118,4 @@ def _evict_corpus_indexes(keep: int) -> None:
                 "cache_entries": len(_INDEX_CACHE),
                 "budget_bytes": budget,
             },
-        )
-
-
-# ---------------------------------------------------------------------------
-# Index lifecycle
-# ---------------------------------------------------------------------------
-
-#: Prefix every index this module owns shares, so :func:`installed_shortlist_indexes` can
-#: find them by name without a registry table. Names are derived, never stored.
-SHORTLIST_INDEX_PREFIX = "ix_verse_text_trgm_gist_rev_"
-
-
-def shortlist_index_name(revision_id: int) -> str:
-    """The deterministic name of one revision's partial index.
-
-    Derived rather than recorded: the name *is* the registry, which is what lets
-    :func:`prune_shortlist_indexes` reconcile the installed set against the wanted one
-    with no table to keep in step. 28 characters plus the id, comfortably inside
-    Postgres' 63-byte identifier limit.
-    """
-    return f"{SHORTLIST_INDEX_PREFIX}{int(revision_id)}"
-
-
-#: The session-level advisory lock every shortlist DDL statement runs under. One key for
-#: all revisions, deliberately: the conflict is on ``verse_text``, not on one revision's
-#: index. ``CREATE`` and ``DROP INDEX CONCURRENTLY`` both take ``SHARE UPDATE EXCLUSIVE``
-#: on the table, which conflicts with itself, and each waits out the other's snapshot
-#: while holding it. Two of them at once — two builds for different revisions, or one
-#: task's prune overlapping another's build — deadlock, and the build Postgres aborts is
-#: left behind as an invalid index. The lock is taken in the database rather than in the
-#: process because the overlap is across workers, and across staging and prod, which
-#: share this database. A fixed value, not a hash: there is one of it. Don't change it
-#: casually, for the reason ``_TRAINING_JOB_DUP_LOCK_NS`` gives in v3 — during a rolling
-#: deploy two keys would not exclude each other.
-_SHORTLIST_DDL_LOCK_KEY = 0x7466_6964_665F_6978  # "tfidf_ix"
-
-#: How often a waiter retries the lock, and how long it keeps trying before giving up.
-#: A build over ``verse_text`` takes seconds to minutes and 4 workers per container can
-#: queue behind it, so the ceiling is generous. Giving up is safe: the read is correct
-#: without the index, and the next submission for the revision tries again.
-_SHORTLIST_DDL_LOCK_POLL_S = 2.0
-_SHORTLIST_DDL_LOCK_WAIT_S = 30 * 60
-
-#: The ``statement_timeout`` a DDL statement runs under, in place of the engine's
-#: ``aqua_db_statement_timeout_ms`` (60 s by default). That default is a guard for request
-#: queries, and a build cannot finish inside it: ``CREATE INDEX CONCURRENTLY`` reads all of
-#: ``verse_text`` twice however small the revision, which takes minutes. Under the 60 s
-#: limit every build was cancelled partway and left an invalid index, so no revision ever
-#: got a usable one (#1020). Not unlimited, because a concurrent build also waits for every
-#: older open transaction in the database, and one left open — idle in a session, say —
-#: would otherwise hold the database-wide lock forever. The same 30 minutes a waiter gives
-#: the lock.
-_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS = 30 * 60 * 1000
-
-
-@asynccontextmanager
-async def _shortlist_ddl_connection() -> AsyncIterator:
-    """An autocommit connection holding :data:`_SHORTLIST_DDL_LOCK_KEY`, for DDL.
-
-    ``CREATE INDEX CONCURRENTLY`` and ``DROP INDEX CONCURRENTLY`` cannot run inside a
-    transaction block, and the request's ``AsyncSession`` is always in one. Taking a
-    separate connection also keeps a multi-minute build off the session the request is
-    using, which would otherwise hold it open for the duration.
-
-    **``pg_try_advisory_lock`` in a loop, never ``pg_advisory_lock``.** A session blocked
-    inside ``pg_advisory_lock`` is mid-statement and holds a snapshot, and a concurrent
-    index build waits for every older snapshot to finish. So the builder waits on the
-    waiter, the waiter waits on the builder's lock, and Postgres aborts one of them —
-    measured locally, it aborted the build and left the index invalid, which is the bug
-    this lock exists to fix. Between tries a waiter holds no statement open, and it
-    returns its connection too, so a queue of waiters does not hold the pool.
-
-    The lock is taken on the same connection that runs the DDL, so it lives exactly as
-    long as the backend doing the work. On the way out it is released explicitly; if
-    that fails, the connection is invalidated rather than handed back to the pool still
-    holding the lock, where it would block every later build for good.
-
-    **The engine's ``statement_timeout`` is lifted for the DDL and restored after.** The
-    connection comes from the shared engine, which sets a 60 s timeout on every
-    connection, and a build takes minutes — see
-    :data:`_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS`. ``RESET`` puts back the value the
-    connection started with, and it runs before the connection goes back to the pool: a
-    pooled connection left at 30 minutes would hand that to whatever request used it
-    next. A failed ``RESET`` invalidates the connection, the same as a failed unlock.
-    """
-    from database.dependencies import engine
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + _SHORTLIST_DDL_LOCK_WAIT_S
-    while True:
-        conn = await engine.connect()
-        try:
-            await conn.execution_options(isolation_level="AUTOCOMMIT")
-            acquired = (
-                await conn.exec_driver_sql(
-                    f"SELECT pg_try_advisory_lock({_SHORTLIST_DDL_LOCK_KEY})"
-                )
-            ).scalar()
-        except BaseException:
-            await conn.close()
-            raise
-        if acquired:
-            break
-        await conn.close()
-        if loop.time() >= deadline:
-            raise TimeoutError(
-                "timed out waiting for the similar-verses shortlist DDL lock"
-            )
-        await asyncio.sleep(_SHORTLIST_DDL_LOCK_POLL_S)
-
-    try:
-        await conn.exec_driver_sql(
-            f"SET statement_timeout = {_SHORTLIST_DDL_STATEMENT_TIMEOUT_MS}"
-        )
-        yield conn
-    finally:
-        try:
-            await conn.exec_driver_sql("RESET statement_timeout")
-            await conn.exec_driver_sql(
-                f"SELECT pg_advisory_unlock({_SHORTLIST_DDL_LOCK_KEY})"
-            )
-        except BaseException:
-            await conn.invalidate()
-            raise
-        finally:
-            await conn.close()
-
-
-async def ensure_shortlist_index(revision_id: int) -> None:
-    """Create this revision's partial GiST index if it is not already there.
-
-    ``CONCURRENTLY`` because ``verse_text`` is read constantly and a plain ``CREATE
-    INDEX`` takes a lock that blocks writes to it for the whole build. ``IF NOT EXISTS``
-    makes the call idempotent, so the second of two submissions for one revision, once
-    it gets the DDL lock, finds the index already built and does nothing.
-
-    **An interrupted ``CONCURRENTLY`` build leaves the index present and invalid**, and
-    ``IF NOT EXISTS`` would then happily skip it forever. Postgres ignores an invalid
-    index when planning, so the effect is a silent permanent fall back to the sequential
-    scan. Detect and drop it first, the same shape migration ``7f2e9a4b8c31`` uses for
-    the sibling GIN index.
-
-    That check is only sound under the DDL lock (:func:`_shortlist_ddl_connection`). A
-    build that is still *running* also shows as invalid, so without the lock a second
-    call would mistake a healthy in-progress build for an abandoned one and drop it.
-    Holding the lock, no other build can be in progress, so an invalid index really is
-    left over.
-
-    Raises nothing on a missing ``pg_trgm``: that is a deployment fault the caller cannot
-    fix mid-request, and this runs off the request path. It is logged and abandoned.
-
-    The success log carries ``build_s``, the time the ``CREATE`` took, because how long a
-    build takes on the real table is the number that decides how fast a bulk re-run of
-    assessments can go. It is near zero when the index was already there.
-    """
-    name = shortlist_index_name(revision_id)
-    loop = asyncio.get_running_loop()
-    try:
-        async with _shortlist_ddl_connection() as conn:
-            invalid = (
-                await conn.exec_driver_sql(
-                    "SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
-                    f"WHERE c.relname = '{name}' AND NOT i.indisvalid"
-                )
-            ).scalar()
-            if invalid:
-                await conn.exec_driver_sql(f'DROP INDEX CONCURRENTLY "{name}"')
-            started = loop.time()
-            await conn.exec_driver_sql(
-                f'CREATE INDEX CONCURRENTLY IF NOT EXISTS "{name}" '
-                "ON verse_text USING gist (text gist_trgm_ops) "
-                f"WHERE revision_id = {int(revision_id)}"
-            )
-            build_s = round(loop.time() - started, 1)
-    except Exception:
-        logger.warning(
-            "could not create the similar-verses shortlist index",
-            exc_info=True,
-            extra={"revision_id": revision_id, "index": name},
-        )
-        return
-    # Not "created": IF NOT EXISTS makes this a no-op when the index was already there,
-    # which is the common case when a revision is re-assessed.
-    logger.info(
-        "similar-verses shortlist index is in place",
-        extra={
-            "revision_id": revision_id,
-            "index": name,
-            "build_s": build_s,
-            "replaced_invalid": bool(invalid),
-        },
-    )
-
-
-async def drop_shortlist_index(revision_id: int) -> None:
-    """Drop one revision's partial index. ``CONCURRENTLY``, for the reason #971 gives.
-
-    The drop itself is quick — a catalog change plus unlinking files — but a plain ``DROP
-    INDEX`` needs ``ACCESS EXCLUSIVE`` on ``verse_text``, and acquiring that stalls every
-    new query behind the in-flight ones on one of the busiest tables in the database.
-    """
-    name = shortlist_index_name(revision_id)
-    try:
-        async with _shortlist_ddl_connection() as conn:
-            await conn.exec_driver_sql(f'DROP INDEX CONCURRENTLY IF EXISTS "{name}"')
-    except Exception:
-        logger.warning(
-            "could not drop the similar-verses shortlist index",
-            exc_info=True,
-            extra={"revision_id": revision_id, "index": name},
-        )
-
-
-async def installed_shortlist_indexes(db: AsyncSession) -> set[int]:
-    """The revision ids that currently have a shortlist index, read from the catalog.
-
-    The catalog is the source of truth rather than a table of our own, so a hand-dropped
-    index or one left behind by a failed prune reconciles itself on the next pass.
-    """
-    # Raw ``text()`` rather than the ORM: ``pg_class`` is a system catalog with no mapped
-    # table to select from, and a ``literal_column`` in the FROM clause is not a valid
-    # SQLAlchemy construct. The pattern is bound rather than interpolated so its ``%`` is
-    # not read as a DBAPI format placeholder.
-    rows = (
-        await db.execute(
-            sa_text(
-                "SELECT relname FROM pg_class "
-                "WHERE relkind = 'i' AND relname LIKE :pattern"
-            ),
-            {"pattern": f"{SHORTLIST_INDEX_PREFIX}%"},
-        )
-    ).all()
-    found: set[int] = set()
-    for (relname,) in rows:
-        try:
-            found.add(int(relname[len(SHORTLIST_INDEX_PREFIX) :]))
-        except (TypeError, ValueError):
-            # A name that matches the prefix but does not end in an integer is not ours;
-            # leave it alone rather than guessing at it.
-            continue
-    return found
-
-
-async def prune_shortlist_indexes(db: AsyncSession) -> list[int]:
-    """Keep the cap's worth of shortlist indexes and drop the rest. Returns what it dropped.
-
-    The cap is the whole reason this function exists; the module docstring has the
-    measurement. Which ones to keep is decided by **the recency of each revision's
-    newest ``tfidf`` assessment**, descending — so the revisions being worked on now keep
-    their index and long-finished ones lose it.
-
-    Deliberately not a true LRU. An LRU would need read-time bookkeeping that survives
-    process restarts, i.e. a table, and ``pg_stat_user_indexes.idx_scan`` is not a
-    substitute because it resets. Assessment recency needs no new state, is the same
-    signal the lifecycle in #973 asks for ("created alongside the assessment, dropped
-    with it"), and is wrong only in the case where someone reads a years-old assessment —
-    which falls back to the sequential scan and is correct, just slower.
-    """
-    cap = settings.tfidf_shortlist_index_max
-    wanted = [
-        row.revision_id
-        for row in (
-            await db.execute(
-                select(
-                    Assessment.revision_id,
-                    func.max(Assessment.requested_time).label("newest"),
-                )
-                .where(Assessment.type == "tfidf", Assessment.revision_id.isnot(None))
-                .group_by(Assessment.revision_id)
-                .order_by(func.max(Assessment.requested_time).desc())
-                .limit(cap)
-            )
-        ).all()
-    ]
-    installed = await installed_shortlist_indexes(db)
-    surplus = sorted(installed - set(wanted))
-    for revision_id in surplus:
-        await drop_shortlist_index(revision_id)
-    if surplus:
-        logger.info(
-            "pruned %d surplus similar-verses shortlist index(es)",
-            len(surplus),
-            extra={"dropped": surplus, "cap": cap, "installed": len(installed)},
-        )
-    return surplus
-
-
-async def maintain_shortlist_index(revision_id: int) -> None:
-    """Build this revision's index, then drop whatever the cap no longer wants.
-
-    Run by the router as a FastAPI background task after ``POST /v4/assessments`` has
-    already answered ``202`` for a ``tfidf`` submission — see the comment there for why
-    that is both the right moment and the right mechanism.
-
-    **Submit time is the right moment even though no artifacts exist yet.** The index is
-    on ``verse_text``, which the revision upload already wrote; the runner's artifacts
-    are irrelevant to it. So the build overlaps the assessment run that was just
-    dispatched, and by the time anything is readable the index is warm — the one ordering
-    in which nobody ever pays for the build.
-
-    **Build before prune.** Pruning first could drop this very revision's index, if it
-    were already installed and the cap were already met, and then rebuild it a moment
-    later.
-
-    Every failure is logged and swallowed. The caller has been answered, the index is a
-    performance artifact, and the read is correct without it.
-    """
-    from database.dependencies import AsyncSessionLocal
-
-    try:
-        await ensure_shortlist_index(revision_id)
-        async with AsyncSessionLocal() as session:
-            await prune_shortlist_indexes(session)
-    except Exception:
-        logger.warning(
-            "shortlist index maintenance failed",
-            exc_info=True,
-            extra={"revision_id": revision_id},
         )
