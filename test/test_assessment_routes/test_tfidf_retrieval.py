@@ -331,19 +331,35 @@ class TestShortlistIndexLifecycle:
             )
         test_db_session.commit()
 
+        # One session per read, closed before the build. ``CREATE INDEX CONCURRENTLY``
+        # waits for every older transaction to finish, so a session left open across it
+        # deadlocks the build against the test. Until #1020 lifted the DDL timeout, that
+        # wait was cancelled at 60 s and swallowed, and the "with" read ran without one.
+        query = "And God said, Let there be light"
         async with AsyncSessionLocal() as db:
-            query = "And God said, Let there be light"
             without = await tfidf_retrieval.shortlist(
                 db, revision_id=revision_id, query_text=query, k=10
             )
-            try:
-                await tfidf_retrieval.ensure_shortlist_index(revision_id)
+        try:
+            await tfidf_retrieval.ensure_shortlist_index(revision_id)
+            async with AsyncSessionLocal() as db:
+                valid = (
+                    await db.execute(
+                        text(
+                            "SELECT i.indisvalid FROM pg_class c "
+                            "JOIN pg_index i ON i.indexrelid = c.oid "
+                            "WHERE c.relname = :name"
+                        ),
+                        {"name": tfidf_retrieval.shortlist_index_name(revision_id)},
+                    )
+                ).scalar()
+                assert valid is True
                 with_index = await tfidf_retrieval.shortlist(
                     db, revision_id=revision_id, query_text=query, k=10
                 )
-            finally:
-                await tfidf_retrieval.drop_shortlist_index(revision_id)
-            assert without == with_index
+        finally:
+            await tfidf_retrieval.drop_shortlist_index(revision_id)
+        assert without == with_index
 
 
 @pytest.mark.asyncio
@@ -447,6 +463,54 @@ class TestShortlistDdlLock:
         finally:
             await tfidf_retrieval.drop_shortlist_index(revision_id)
         assert await self._lock_is_free()
+
+    @staticmethod
+    async def _statement_timeout_ms(conn) -> str:
+        return (
+            await conn.exec_driver_sql(
+                "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'"
+            )
+        ).scalar()
+
+    async def test_the_ddl_runs_without_the_request_timeout(self):
+        """#1020: under the engine's 60 s limit every real build was cancelled partway and
+        left an invalid index. The test table builds in milliseconds, so this pins the
+        setting rather than a build's duration."""
+        async with tfidf_retrieval._shortlist_ddl_connection() as conn:
+            assert await self._statement_timeout_ms(conn) == str(
+                tfidf_retrieval._SHORTLIST_DDL_STATEMENT_TIMEOUT_MS
+            )
+
+    async def test_the_request_timeout_is_back_when_the_connection_is_reused(
+        self, monkeypatch
+    ):
+        """A pooled connection left at 30 minutes would hand that to the next request.
+
+        The suite runs on NullPool, where every connection is closed and nothing is ever
+        reused, so this swaps in a one-connection pool and checks the same backend."""
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        import database.dependencies
+
+        pooled = create_async_engine(
+            settings.aqua_db,
+            pool_size=1,
+            max_overflow=0,
+            connect_args={"server_settings": {"statement_timeout": "60000"}},
+        )
+        monkeypatch.setattr(database.dependencies, "engine", pooled)
+        try:
+            async with tfidf_retrieval._shortlist_ddl_connection() as conn:
+                ddl_pid = (
+                    await conn.exec_driver_sql("SELECT pg_backend_pid()")
+                ).scalar()
+            async with pooled.connect() as conn:
+                assert (
+                    await conn.exec_driver_sql("SELECT pg_backend_pid()")
+                ).scalar() == ddl_pid
+                assert await self._statement_timeout_ms(conn) == "60000"
+        finally:
+            await pooled.dispose()
 
 
 @pytest.mark.asyncio
