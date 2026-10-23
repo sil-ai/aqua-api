@@ -451,6 +451,7 @@ async def get_training_session_results(
         scope=scope.scope,
         limit=page.limit,
         offset=page.offset,
+        include_total=page.include_total,
         tfidf_top_k=tfidf_top_k,
     )
     # No next_updated_since: none of the result tables carries a modification timestamp,
@@ -529,6 +530,7 @@ async def list_training_jobs(
         current_user,
         limit=page.limit,
         offset=page.offset,
+        include_total=page.include_total,
         state=state,
         training_type=training_type,
         source_version_id=source_version_id,

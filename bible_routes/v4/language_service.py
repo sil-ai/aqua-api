@@ -22,6 +22,7 @@ __version__ = "v4"
 from sqlalchemy import func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.pagination import page_total
 from database.models import IsoLanguage, IsoScript
 
 #: The character ``ILIKE`` patterns below use to escape a caller's own wildcards.
@@ -65,7 +66,8 @@ async def _list_reference(
     limit: int,
     offset: int,
     q: str | None,
-) -> tuple[list, int]:
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of a reference table, plus the total matching count.
 
     Shared by both lists rather than written twice: the two tables differ only in
@@ -123,30 +125,60 @@ async def _list_reference(
             )
         )
 
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar_one()
     result = await db.execute(stmt.order_by(code_column).limit(limit).offset(offset))
-    return list(result.scalars().all()), total
+    rows = list(result.scalars().all())
+    total = await page_total(
+        db,
+        select(func.count()).select_from(stmt.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return rows, total
 
 
 async def list_languages(
-    db: AsyncSession, *, limit: int, offset: int, q: str | None = None
-) -> tuple[list[IsoLanguage], int]:
+    db: AsyncSession,
+    *,
+    limit: int,
+    offset: int,
+    q: str | None = None,
+    include_total: bool = True,
+) -> tuple[list[IsoLanguage], int | None]:
     """Return one page of ISO 639-3 languages, ordered by code, plus the total.
 
     Unscoped: the reference data is the same for every caller, so there is no user to
     filter by and no admin branch. Replaces v3 ``GET /language``, which returned an
     unbounded array.
     """
-    return await _list_reference(db, IsoLanguage, limit=limit, offset=offset, q=q)
+    return await _list_reference(
+        db,
+        IsoLanguage,
+        limit=limit,
+        offset=offset,
+        q=q,
+        include_total=include_total,
+    )
 
 
 async def list_scripts(
-    db: AsyncSession, *, limit: int, offset: int, q: str | None = None
-) -> tuple[list[IsoScript], int]:
+    db: AsyncSession,
+    *,
+    limit: int,
+    offset: int,
+    q: str | None = None,
+    include_total: bool = True,
+) -> tuple[list[IsoScript], int | None]:
     """Return one page of ISO 15924 scripts, ordered by code, plus the total.
 
     Unscoped, for the reason :func:`list_languages` gives. Replaces v3 ``GET /script``.
     """
-    return await _list_reference(db, IsoScript, limit=limit, offset=offset, q=q)
+    return await _list_reference(
+        db,
+        IsoScript,
+        limit=limit,
+        offset=offset,
+        q=q,
+        include_total=include_total,
+    )

@@ -180,8 +180,8 @@ capability rather than a port.
 the family** (repo owner, 2026-08-28). ``AssessmentResultOut.vrefs`` means the verses a
 single merged span covers: a range-merge concept, nearly always one entry, whose job is
 joining a score to the text it scored. An n-gram's list is every verse the n-gram was
-found in — an occurrence list, potentially hundreds of entries, with no range-merge
-meaning. Same name, same parent, sibling endpoints, different meanings, and nothing
+found in — an occurrence list with no fixed cap (usually a handful of entries; the most
+measured is 23), and no range-merge meaning. Same name, same parent, sibling endpoints, different meanings, and nothing
 errors when a client confuses them; a client that met ``vrefs`` on ``/results`` first
 would reasonably assume they agree. The rename costs nothing because there are no v4
 clients, and it is a response field name only — the column stays
@@ -344,7 +344,7 @@ from typing import Annotated, Literal, Union
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
-from api_v4.pagination import V4Page
+from api_v4.pagination import V4Page, envelope_total
 from api_v4.schemas.base import V4BaseModel
 
 # A book abbreviation being three characters is a fact about the *Bible* domain, not
@@ -1119,8 +1119,9 @@ class NgramResultOut(V4BaseModel):
     this docstring exists. ``AssessmentResultOut.vrefs`` on the sibling ``/results`` read
     means *the verses one merged span covers* — a range-merge concept, almost always a
     single entry, whose purpose is joining a score to the text that was scored. This field
-    means *every verse in which this n-gram occurs*: an occurrence list, potentially
-    hundreds of entries, with no range-merge meaning at all. Two fields with the same name
+    means *every verse in which this n-gram occurs*: an occurrence list with no fixed cap
+    (usually a handful of entries; the most measured is 23), and no range-merge meaning
+    at all. Two fields with the same name
     and different meanings on sibling endpoints of the same parent resource is a collision
     a client discovers only by getting wrong answers, since nothing errors when they are
     confused. v3 called this field ``vrefs``; v4 renames it because there are no clients
@@ -1153,7 +1154,8 @@ class NgramResultOut(V4BaseModel):
         description=(
             "Every verse in which this n-gram occurs, as canonical vrefs. **Not** the "
             "span coverage `/results` calls `vrefs`: these are occurrences, so the list "
-            "may hold hundreds of entries and carries no range-merge meaning. Empty for "
+            "has no fixed length (usually a handful of entries) and carries no "
+            "range-merge meaning. Empty for "
             "an n-gram stored with no verse references, which is returned rather than "
             "omitted — see the endpoint description."
         ),
@@ -1815,6 +1817,83 @@ class MissingWordOut(V4BaseModel):
     )
 
 
+#: Most target words one ``GET …/alignment-summary`` request may name (#1017). Set by the
+#: URL, not by the query: v4 answers 414 above roughly 8KB of request line, and a
+#: Cyrillic letter is six characters once percent-encoded, so 100 ordinary words is
+#: about what fits.
+ALIGNMENT_SUMMARY_MAX_TARGETS = 100
+
+#: Default and ceiling for ``limit_per_target`` on the same read.
+ALIGNMENT_SUMMARY_DEFAULT_LIMIT = 10
+ALIGNMENT_SUMMARY_MAX_LIMIT = 50
+
+
+class AlignmentSummaryMatchOut(V4BaseModel):
+    """One source word a target word aligned to, counted across the whole assessment."""
+
+    source: str = Field(
+        description="The source-side word, as the runner stored it — lower-cased.",
+    )
+    count: int = Field(
+        ge=1,
+        description=(
+            "The number of verses (distinct `vref`) in which the target aligned to this "
+            "source word. On `score_type=top` that is one row per verse; on `threshold`, "
+            "where one verse can hold several rows for the pair, each verse still "
+            "counts once."
+        ),
+    )
+    avg_score: float = Field(
+        description=(
+            "The mean score over the rows counted, after `min_score` is applied. Rows "
+            "with no stored score are not counted at all."
+        ),
+    )
+
+
+class AlignmentSummaryItemOut(V4BaseModel):
+    """What one requested target word aligned to."""
+
+    target: str = Field(
+        description=(
+            "The requested word, lower-cased. Matched against stored targets "
+            "case-insensitively."
+        ),
+    )
+    matches: list[AlignmentSummaryMatchOut] = Field(
+        description=(
+            "Up to `limit_per_target` source words, most verses first, then highest "
+            "`avg_score`, then `source`. Empty when the word has no alignments that "
+            'passed the filters, which is how a caller tells "no alignments" from '
+            '"not asked".'
+        ),
+    )
+
+
+class AlignmentSummaryOut(V4BaseModel):
+    """The body of ``GET /v4/assessments/{id}/alignment-summary`` (#1017).
+
+    Not a :class:`~api_v4.pagination.V4Page`, for the reason
+    :class:`SimilarVersesOut` is not: the items are not stored rows but one entry per
+    requested word, so the request already fixes how many there are and there is
+    nothing to page through. The size is bounded by
+    :data:`ALIGNMENT_SUMMARY_MAX_TARGETS` × :data:`ALIGNMENT_SUMMARY_MAX_LIMIT`.
+    """
+
+    assessment_id: int = Field(
+        description="The assessment summarized (echoed from the path).",
+    )
+    score_type: AlignmentScoreType = Field(
+        description="Which stored score set was read (echoed from the request).",
+    )
+    items: list[AlignmentSummaryItemOut] = Field(
+        description=(
+            "One entry per requested target, in request order, with duplicates removed "
+            "after lower-casing. Every requested word appears, even with no matches."
+        ),
+    )
+
+
 class TextLengthsOut(V4BaseModel):
     """One verse-level row of ``GET /v4/assessments/{id}/text-lengths``.
 
@@ -2233,7 +2312,7 @@ class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
         cls,
         *,
         items: list,
-        total: int,
+        total: int | None,
         pagination,
         against_assessment_ids: list[int],
         next_updated_since=None,
@@ -2248,7 +2327,7 @@ class ScoreComparisonPage(V4Page[ScoreComparisonRow]):
         """
         return cls(
             items=items,
-            total=total,
+            total=envelope_total(total, pagination),
             limit=pagination.limit,
             offset=pagination.offset,
             next_updated_since=next_updated_since,

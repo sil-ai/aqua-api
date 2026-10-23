@@ -122,7 +122,11 @@ async def list_languages(
     required ``name`` is a latent 500), and ``q`` is new.
     """
     languages, total = await language_service.list_languages(
-        db, limit=page.limit, offset=page.offset, q=q
+        db,
+        limit=page.limit,
+        offset=page.offset,
+        q=q,
+        include_total=page.include_total,
     )
     items = [LanguageOut.model_validate(language) for language in languages]
     return V4Page[LanguageOut].create(items=items, total=total, pagination=page)
@@ -143,7 +147,11 @@ async def list_scripts(
     everything — see there. Replaces v3 ``GET /script``, on the same terms.
     """
     scripts, total = await language_service.list_scripts(
-        db, limit=page.limit, offset=page.offset, q=q
+        db,
+        limit=page.limit,
+        offset=page.offset,
+        q=q,
+        include_total=page.include_total,
     )
     items = [ScriptOut.model_validate(script) for script in scripts]
     return V4Page[ScriptOut].create(items=items, total=total, pagination=page)

@@ -33,7 +33,7 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from api_v4.pagination import V4Page
+from api_v4.pagination import V4Page, envelope_total
 from api_v4.schemas.base import V4BaseModel
 
 #: Shared by ``VersionCreate`` and ``VersionPatch``. Both fields now carry the
@@ -1066,7 +1066,7 @@ class TextSearchPage(V4Page[TextSearchOut]):
         cls,
         *,
         items: list,
-        total: int,
+        total: int | None,
         pagination,
         alignment_assessment_id: int | None = None,
         next_updated_since=None,
@@ -1085,7 +1085,7 @@ class TextSearchPage(V4Page[TextSearchOut]):
         """
         return cls(
             items=items,
-            total=total,
+            total=envelope_total(total, pagination),
             limit=pagination.limit,
             offset=pagination.offset,
             next_updated_since=next_updated_since,

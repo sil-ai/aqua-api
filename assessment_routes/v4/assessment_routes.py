@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Thirteen endpoints:
+happens somewhere else. Fourteen endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -26,6 +26,8 @@ happens somewhere else. Thirteen endpoints:
   word-level pairings, paginated. Absorbs v3's ``GET /alignmentmatches``.
 * ``GET    /v4/assessments/{id}/missing-words`` — the same type's poorly-aligned words,
   weighed against peer assessments named by ``against``.
+* ``GET    /v4/assessments/{id}/alignment-summary`` — the same type's alignments grouped
+  per requested target word (#1017). Not paginated.
 * ``GET    /v4/assessments/{id}/text-lengths`` — the ``text-lengths`` type's per-verse
   word and character counts and their z-scores, paginated, with the same scoping and
   ``aggregate`` rollups as ``/results``.
@@ -149,7 +151,8 @@ table across ``GET /alignmentscores``, ``GET /alignmentmatches`` and
 ``/alignment-scores`` as ``source`` + ``min_score``, because it returns the same rows
 narrowed — the Q2/Q3 test for "filter, not resource". ``/missing-words`` keeps its own
 endpoint by the same test, since it adds fields derived from *other* assessments, which
-is what also kept ``/score-comparison`` off ``/results``.
+is what also kept ``/score-comparison`` off ``/results``. ``/alignment-summary`` (#1017)
+passes the same test: its items are counts grouped per word, not the table's rows.
 
 The fold is what closes **#858** (``/alignmentmatches`` is unauthenticated) — not by
 adding a check, but by leaving no separate endpoint on which one could be forgotten.
@@ -214,7 +217,12 @@ re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than
 shared catalog params (20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
 the shared cap. The same bounds apply to both alignment reads: the bound follows the
-row's weight, and these are small fixed-width rows.
+row's weight, and these are small fixed-width rows. The three reads a client reads
+*whole* (``/results``, ``/text-lengths``, ``/score-comparison``) take
+``BulkResultPaginationParams`` instead, 100/3000, so any one book or any rollup over
+the whole text is a single request (#1010). ``/ngrams`` is the exception: it
+takes ``NgramPaginationParams`` (20/1000), the result reads' ceiling with the catalog's
+default, because it shipped with a default of 20. Its route docstring says why.
 :class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
 :class:`~api_v4.schemas.assessment.VerseScope` and its ``aggregate``-carrying subclass,
 whose ``model_validator`` methods hold the parameters' invariants, so an inconsistent
@@ -230,7 +238,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import fastapi
-from fastapi import BackgroundTasks, Depends, Query, Request, Response, status
+from fastapi import Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -248,14 +256,24 @@ from api_v4.jobs import (
     job_accepted_response,
     set_poll_headers,
 )
-from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
+from api_v4.pagination import (
+    BulkResultPaginationParams,
+    NgramPaginationParams,
+    PaginationParams,
+    ResultPaginationParams,
+    V4Page,
+)
 from api_v4.schemas.assessment import (
+    ALIGNMENT_SUMMARY_DEFAULT_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_TARGETS,
     BOOK_ABBREVIATION_LENGTH,
     SIMILAR_VERSES_DEFAULT_LIMIT,
     SIMILAR_VERSES_MAX_LIMIT,
     VREF_MAX_LENGTH,
     AlignmentScoreOut,
     AlignmentScoreType,
+    AlignmentSummaryOut,
     AssessmentCreate,
     AssessmentJob,
     AssessmentOut,
@@ -283,7 +301,7 @@ from api_v4.schemas.assessment import (
     TextLengthsRow,
     VerseScope,
 )
-from assessment_routes.v4 import assessment_service, tfidf_retrieval
+from assessment_routes.v4 import assessment_service
 from config import settings
 from database.dependencies import get_db
 from database.models import Assessment
@@ -366,7 +384,6 @@ def _poll_url(request: Request, assessment_id: int) -> str:
 async def create_assessment(
     request: Request,
     data: AssessmentCreate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
 ) -> JSONResponse:
@@ -434,30 +451,6 @@ async def create_assessment(
             message=str(exc),
             details={"assessment_id": exc.assessment_id},
         ) from exc
-
-    # A ``tfidf`` submission is the one event that says a revision is about to want a
-    # similar-verses shortlist index, so it is where #973's "created alongside the
-    # assessment" lifecycle starts. Three things about the placement:
-    #
-    # * **After the response, not before it.** A ``CREATE INDEX CONCURRENTLY`` over a
-    #   revision's verses takes seconds to minutes, and this endpoint answers 202.
-    # * **``BackgroundTasks``, not ``asyncio.create_task``.** Both cost one task on the
-    #   worker, and Starlette runs background tasks after dependencies with ``yield`` are
-    #   finalized, so the request's database session is released first either way. The
-    #   difference is lifecycle: a bare ``create_task`` relies on the event loop
-    #   outliving the request, which is true of a uvicorn worker and false of
-    #   ``TestClient``, which builds a fresh loop per request and closes it — so the work
-    #   would be silently destroyed under test and only ever exercised in production.
-    # * **In the router rather than the service**, because this is FastAPI machinery and
-    #   the service stays free of it — and because the router is where the created row's
-    #   type is already in hand.
-    #
-    # Failures inside the task are logged and dropped: the index is a performance
-    # artifact and the read is correct without it.
-    if assessment.type == AssessmentType.tfidf.value:
-        background_tasks.add_task(
-            tfidf_retrieval.maintain_shortlist_index, assessment.revision_id
-        )
 
     return job_accepted_response(
         job_id=str(assessment.id),
@@ -918,7 +911,7 @@ def _to_result_aggregate(row) -> AssessmentResultAggregateOut:
 )
 async def get_assessment_results(
     assessment_id: int,
-    page: ResultPaginationParams = Depends(),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
@@ -977,6 +970,7 @@ async def get_assessment_results(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -997,7 +991,7 @@ async def get_assessment_results(
 )
 async def get_assessment_ngrams(
     assessment_id: int,
-    page: PaginationParams = Depends(),
+    page: NgramPaginationParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
 ) -> V4Page[NgramResultOut]:
@@ -1014,14 +1008,15 @@ async def get_assessment_ngrams(
     and each row's `occurrences` lists the verses that n-gram was found in. There is
     therefore **no `book`, `chapter`, `verse` or `aggregate`** — there is no per-verse
     axis to narrow and no per-verse set to roll up. Those parameters are not merely
-    unsupported, they are absent: v4 ignores unrecognised query parameters, so sending
-    `?book=MAT` here returns the unfiltered page rather than an error.
+    unsupported, they are absent, so sending `?book=MAT` here is a `422` naming it, as
+    any undeclared query parameter is on v4.
 
     **`occurrences` is not `/results`' `vrefs`, despite the family resemblance.** On
     `/results`, `vrefs` is the verses a single merged span *covers* — a range-merge
     concept, almost always one entry, whose purpose is joining a score to the text it
     scored. Here the list is every verse in which the n-gram *occurs*: an occurrence
-    list, sometimes hundreds of entries, with no range-merge meaning at all. v3 called
+    list with no fixed cap (usually a handful of entries; the most measured is 23), and
+    no range-merge meaning at all. v3 called
     this field `vrefs`; v4 renames it precisely because the two would otherwise collide
     silently — nothing errors when a client treats one as the other.
 
@@ -1038,10 +1033,23 @@ async def get_assessment_ngrams(
 
     `total` counts every n-gram in the assessment, including vrefless ones, and ignores
     `limit`/`offset`.
+
+    **The default page is 20 rows, smaller than the 100 on the other result reads here.
+    The maximum is the same 1000.** 20 is what this read has always defaulted to, and
+    changing a default silently changes the size of every response a client gets. A
+    client that reads the whole assessment should send `limit=1000`: a page costs about
+    the same to serve at any size, so fewer, larger pages are much faster than many
+    small ones. An n-gram row is usually small (around 140 bytes), and a 1000-row page
+    is typically around 200 KB.
     """
     try:
         rows, total = await assessment_service.get_ngrams(
-            db, current_user, assessment_id, limit=page.limit, offset=page.offset
+            db,
+            current_user,
+            assessment_id,
+            limit=page.limit,
+            offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -1122,8 +1130,8 @@ async def get_assessment_similar_verses(
     reference — the normal case for this type, and not an error. v3's `reference_id`
     parameter is **gone**: letting a caller name any revision made the response depend on
     a display preference rather than on the assessment, and a caller who wants arbitrary
-    verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is
-    ignored, not honoured.
+    verse text has `GET /v4/revisions/{id}/verses`. Passing `reference_id` here is a
+    `422`, not honoured.
 
     **`similarity` ranks, it does not calibrate.** It is the cosine between the two
     verses' TF-IDF representations, in `[0, 1]`: higher is closer and the ordering is
@@ -1414,7 +1422,7 @@ async def get_assessment_alignment_scores(
 
     **There is no `aggregate`.** Rolling word rows up to a chapter mean would produce a
     number that looks like the one `/results` gives for the same assessment and is not
-    it. Sending `aggregate` here is ignored, not an error.
+    it. Sending `aggregate` here is a `422`.
     """
     try:
         rows, total = await assessment_service.get_alignment_scores(
@@ -1427,6 +1435,7 @@ async def get_assessment_alignment_scores(
             min_score=min_score,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, exc.assessment_id) from exc
@@ -1436,6 +1445,107 @@ async def get_assessment_alignment_scores(
         items=[AlignmentScoreOut(**row) for row in rows],
         total=total,
         pagination=page,
+    )
+
+
+@router.get(
+    "/{assessment_id}/alignment-summary",
+    response_model=AlignmentSummaryOut,
+)
+async def get_assessment_alignment_summary(
+    assessment_id: int,
+    # `max_length` on a list-typed query parameter bounds the number of items, which is
+    # the cap wanted here; each item's length is checked in the body.
+    target: List[str] = Query(
+        ...,
+        min_length=1,
+        max_length=ALIGNMENT_SUMMARY_MAX_TARGETS,
+        description=(
+            "Target-side words to summarize (repeated parameter, e.g. "
+            "`?target=a&target=b`). **Case-insensitive.** Between 1 and "
+            f"{ALIGNMENT_SUMMARY_MAX_TARGETS} per request, each at most "
+            f"{ALIGNMENT_WORD_MAX_LENGTH} characters; the cap comes from the URL length "
+            "limit, not from the query."
+        ),
+    ),
+    score_type: AlignmentScoreType = Query(
+        AlignmentScoreType.top,
+        description=(
+            "Which stored score set to read, as on `/alignment-scores`. `top` (the "
+            "default) is what the text search's `include_alignments` reads. **No "
+            "fallback between them**: an assessment with only one set answers empty "
+            "`matches` for the other."
+        ),
+    ),
+    min_score: Optional[float] = Query(
+        None,
+        ge=0,
+        le=1,
+        description=(
+            "Drop alignments scoring below this (`score >= min_score` is kept) **before** "
+            "counting, so it changes `count` and `avg_score`, not just which sources "
+            "appear. No default."
+        ),
+    ),
+    limit_per_target: int = Query(
+        ALIGNMENT_SUMMARY_DEFAULT_LIMIT,
+        ge=1,
+        le=ALIGNMENT_SUMMARY_MAX_LIMIT,
+        description="Most source words returned for each target.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user_v4),
+) -> AlignmentSummaryOut:
+    """Summarize what each named target word aligned to, across the whole assessment.
+
+    Serves `type = word-alignment` only. Anything else, including an assessment that
+    does not exist or that you cannot read, is `404 ASSESSMENT_NOT_FOUND`, as on
+    `/alignment-scores`.
+
+    For each `target`, `matches` lists the source words it aligned to: in how many
+    verses (`count`) and with what mean score (`avg_score`). They are ordered by `count`,
+    then `avg_score`, then `source`. Any other ranking, such as count × score, is the
+    caller's to apply. Rows marked `hide` are left out.
+
+    **Every requested target appears**, in request order, de-duplicated after
+    lower-casing, with `matches: []` when it has none.
+
+    **Not paginated.** The request fixes the size: at most 100 targets × 50 matches.
+
+    This exists so a word list can be summarized in one request. Building the same
+    answer from `/alignment-scores` takes a request per word, because that read filters
+    on `source`, not `target`, and returns raw rows.
+    """
+    errors = [
+        {
+            "type": "string_too_short" if not value else "string_too_long",
+            "loc": ("query", "target", index),
+            "msg": (
+                "String should have at least 1 character"
+                if not value
+                else f"String should have at most {ALIGNMENT_WORD_MAX_LENGTH} characters"
+            ),
+            "input": value,
+        }
+        for index, value in enumerate(target)
+        if not value or len(value) > ALIGNMENT_WORD_MAX_LENGTH
+    ]
+    if errors:
+        raise RequestValidationError(errors)
+    try:
+        items = await assessment_service.get_alignment_summary(
+            db,
+            current_user,
+            assessment_id,
+            targets=target,
+            score_type=score_type,
+            min_score=min_score,
+            limit_per_target=limit_per_target,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, exc.assessment_id) from exc
+    return AlignmentSummaryOut(
+        assessment_id=assessment_id, score_type=score_type, items=items
     )
 
 
@@ -1523,6 +1633,7 @@ async def get_assessment_missing_words(
             against=against or [],
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         # exc.assessment_id, not the path id: an `against` peer the caller cannot read
@@ -1589,7 +1700,7 @@ def _to_text_lengths_aggregate(row) -> TextLengthsAggregateOut:
 )
 async def get_assessment_text_lengths(
     assessment_id: int,
-    page: ResultPaginationParams = Depends(),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user_v4),
@@ -1654,6 +1765,7 @@ async def get_assessment_text_lengths(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         raise _not_found_error(exc, assessment_id) from exc
@@ -1675,7 +1787,7 @@ async def get_assessment_text_lengths(
 )
 async def get_assessment_score_comparison(
     assessment_id: int,
-    page: ResultPaginationParams = Depends(),
+    page: BulkResultPaginationParams = Depends(),
     scope: ResultScopeParams = Depends(),
     against: List[int] = Query(
         ...,
@@ -1783,6 +1895,7 @@ async def get_assessment_score_comparison(
             against=against,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except assessment_service.AssessmentNotFound as exc:
         # exc.assessment_id, not the path id: an `against` peer the caller cannot read is

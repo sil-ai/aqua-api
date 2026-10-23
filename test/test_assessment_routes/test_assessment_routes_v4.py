@@ -129,9 +129,12 @@ What each group of tests pins down:
 import asyncio
 import itertools
 import os
+import random
+import statistics
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import get_args
 from unittest.mock import AsyncMock, patch
 
@@ -140,24 +143,34 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
 from api_v4.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    NGRAM_DEFAULT_LIMIT,
+    NGRAM_MAX_LIMIT,
+    RESULT_BULK_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
+    BulkResultPaginationParams,
+    NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
     V4Page,
 )
 from api_v4.schemas.assessment import (
+    ALIGNMENT_SUMMARY_MAX_LIMIT,
+    ALIGNMENT_SUMMARY_MAX_TARGETS,
     TFIDF_MAX_BATCH_RESULTS,
     TFIDF_MAX_BATCH_VECTORS,
     TFIDF_MAX_TEXT_CHARS,
     AlignmentScoreOut,
     AlignmentScoreType,
+    AlignmentSummaryOut,
     AssessmentJob,
     AssessmentOptions,
     AssessmentOptionsBase,
@@ -241,12 +254,6 @@ V3_PREFIX = "/v3"
 #: pointing at the real function.
 V4_DISPATCH = "assessment_routes.v4.assessment_service.call_assessment_runner"
 V3_DISPATCH = "assessment_routes.v3.assessment_routes.call_assessment_runner"
-#: A ``tfidf`` submission schedules a real ``CREATE INDEX CONCURRENTLY`` on
-#: ``verse_text`` as a background task, which ``TestClient`` runs. Nothing here drops it,
-#: so left unpatched it leaks into every later test that reads the index catalog.
-V4_SHORTLIST_MAINTAIN = (
-    "assessment_routes.v4.assessment_routes.tfidf_retrieval.maintain_shortlist_index"
-)
 
 _names = itertools.count()
 
@@ -328,10 +335,8 @@ def _body(revision_id, options, **top_level):
 
 
 def _submit(client, token, body):
-    """POST to /v4/assessments with the Modal dispatch and index maintenance stubbed."""
-    with patch(V4_DISPATCH, new_callable=AsyncMock), patch(
-        V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
-    ):
+    """POST to /v4/assessments with the Modal dispatch stubbed."""
+    with patch(V4_DISPATCH, new_callable=AsyncMock):
         return client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
 
 
@@ -350,6 +355,16 @@ def _job_id(resp):
 
 def _error_code(resp):
     return resp.json()["error"]["code"]
+
+
+def _refused_query_params(resp):
+    """The query parameters a 422 refused as undeclared (#1003), in order."""
+    assert resp.status_code == 422, resp.text
+    return [
+        entry["loc"][1]
+        for entry in resp.json()["error"]["details"]["errors"]
+        if entry["type"] == "extra_forbidden" and entry["loc"][0] == "query"
+    ]
 
 
 def _make_assessment(
@@ -1700,9 +1715,7 @@ class TestRunnerPayload:
     """
 
     def _spawn(self, client, token, body):
-        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal, patch(
-            V4_SHORTLIST_MAINTAIN, new_callable=AsyncMock
-        ):
+        with patch("assessment_routes.v3.assessment_routes.modal") as mock_modal:
             spawn = AsyncMock()
             mock_modal.Function.from_name.return_value.spawn.aio = spawn
             resp = client.post(f"{PREFIX}/assessments", json=body, headers=_auth(token))
@@ -2488,6 +2501,30 @@ class TestList:
         )
         assert _ids(second) == created[2:]
         assert second.json()["total"] == 3
+
+    def test_include_total_false_nulls_total_but_keeps_the_watermark(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """This list counts in the same statement that finds the delta watermark, so the
+        envelope is what nulls ``total`` here. The watermark still comes back."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        created = sorted(
+            _make_assessment(db_session, revision_id, reference_id, type_=t)
+            for t in ("ngrams", "tfidf", "text-lengths")
+        )
+        resp = _list(
+            client,
+            regular_token1,
+            revision_id=revision_id,
+            limit=2,
+            offset=2,
+            include_total="false",
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] is None
+        assert _ids(resp) == created[2:]
+        assert body["next_updated_since"] is not None
 
     def test_out_of_range_limit_is_a_422_not_a_clamp(self, client, regular_token1):
         resp = _list(client, regular_token1, limit=MAX_LIMIT + 1)
@@ -3437,16 +3474,50 @@ class TestResultsPage:
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
-        resp = _results(client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT)
+        resp = _results(
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT
+        )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
 
     def test_limit_above_the_result_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
         resp = _results(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT + 1
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+        [error] = resp.json()["error"]["details"]["errors"]
+        assert error["loc"] == ["query", "limit"]
+
+    @pytest.mark.parametrize("aggregate", ["chapter", "book", "text"])
+    def test_a_rollup_accepts_the_bulk_max(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        """#1010: any rollup over the whole canon fits in one page (1,511 chapters)."""
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate=aggregate,
+            limit=RESULT_BULK_MAX_LIMIT,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
+
+    def test_a_rollup_above_the_bulk_max_is_a_422(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
@@ -3501,6 +3572,60 @@ class TestResultsPage:
         resp = _results(client, regular_token1, assessment_id, offset=5)
         assert _rows(resp) == []
         assert resp.json()["total"] == 1
+
+    def test_total_is_the_same_on_every_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A short page reports ``total`` from its own length and a full one counts
+        (#1004). Both have to give the same number."""
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        for limit in (2, 3, 4, 5):
+            for offset in (0, 2, 3, 4, 6):
+                resp = _results(
+                    client, regular_token1, assessment_id, limit=limit, offset=offset
+                )
+                assert resp.status_code == 200, resp.text
+                assert resp.json()["total"] == 4, (limit, offset)
+
+    def test_an_aggregated_total_is_the_number_of_groups_on_every_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The rollup is the read whose count costs the most, because counting it runs
+        the whole aggregation again."""
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        for limit, offset in ((1, 0), (2, 0), (2, 2), (3, 0), (10, 0), (1, 5)):
+            resp = _results(
+                client,
+                regular_token1,
+                assessment_id,
+                aggregate="book",
+                limit=limit,
+                offset=offset,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["total"] == 3, (limit, offset)
+
+    @pytest.mark.parametrize("aggregate", [None, "book"])
+    def test_include_total_false_nulls_total_and_keeps_the_page(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        assessment_id = self._scored(
+            db_session, group1_version, ["GEN 1:1", "GEN 1:2", "EXO 1:1", "MAT 1:1"]
+        )
+        params = {"limit": 2, "offset": 1}
+        if aggregate:
+            params["aggregate"] = aggregate
+        counted = _results(client, regular_token1, assessment_id, **params)
+        uncounted = _results(
+            client, regular_token1, assessment_id, include_total="false", **params
+        )
+        assert uncounted.status_code == 200, uncounted.text
+        assert uncounted.json()["total"] is None
+        assert _rows(uncounted) == _rows(counted)
 
     def test_an_assessment_with_no_results_is_an_empty_page_not_a_404(
         self, client, regular_token1, db_session, group1_version
@@ -4107,7 +4232,7 @@ class TestResultsSchemaContract:
         thing a well-meaning cleanup would "simplify" back."""
         route = _route("get_assessment_results")
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
         )
 
@@ -4540,31 +4665,35 @@ class TestNgramsPage:
         # change the response shape.
         assert body["next_updated_since"] is None
 
-    def test_the_default_limit_is_the_shared_catalog_one(
+    def test_the_default_limit_is_still_20(
         self, client, regular_token1, db_session, group1_version
     ):
-        """Not ``/results``' 100/1000: those numbers are justified by per-verse score
-        volume, and an n-gram row is small. A future consumer that needs more should raise
-        this deliberately rather than find it already raised."""
+        """#1011 raised the ceiling but not the default. A client that omits ``limit``
+        must keep getting the 20 rows it got before, so this pins the literal rather
+        than only the constant."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
         assert (
             _ngrams(client, regular_token1, assessment_id).json()["limit"]
+            == NGRAM_DEFAULT_LIMIT
             == DEFAULT_LIMIT
+            == 20
         )
 
-    def test_limit_at_the_catalog_max_is_accepted(
+    def test_limit_at_the_ngram_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
+        """1000, not the catalog's 100: the web UI walks 10,000 n-grams per side
+        (#1011)."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
-        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == MAX_LIMIT
+        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 1000
 
-    def test_limit_above_the_catalog_max_is_a_422_not_a_clamp(
+    def test_limit_above_the_ngram_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
-        resp = _ngrams(client, regular_token1, assessment_id, limit=MAX_LIMIT + 1)
+        resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT + 1)
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
@@ -4620,6 +4749,38 @@ class TestNgramsPage:
         assert body["items"] == []
         assert body["total"] == 2
 
+    @pytest.mark.parametrize(
+        "params, counted, total",
+        [
+            # The only page is short, so it is its own total: no COUNT.
+            ({"limit": 20}, False, 3),
+            # A short last page past offset 0: no COUNT either.
+            ({"limit": 2, "offset": 2}, False, 3),
+            # A full page may have more behind it, so it counts.
+            ({"limit": 2}, True, 3),
+            # Empty past offset 0: the offset may be past the end, so it counts.
+            ({"offset": 10}, True, 3),
+            # Declined: no COUNT, and a null total.
+            ({"limit": 2, "include_total": "false"}, False, None),
+        ],
+    )
+    def test_the_count_runs_only_when_the_page_cannot_answer_it(
+        self, client, regular_token1, db_session, group1_version, params, counted, total
+    ):
+        """Pinned on the statements, because a skipped COUNT and a run one return the
+        same body (#1001, #1004)."""
+        assessment_id = self._with_ngrams(db_session, group1_version, 3)
+        with _captured_sql() as captured:
+            resp = _ngrams(client, regular_token1, assessment_id, **params)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["total"] == total
+        counts = [
+            statement
+            for statement, _ in _touching(captured, "ngrams_table")
+            if "count(" in statement.lower()
+        ]
+        assert len(counts) == (1 if counted else 0), counts
+
     def test_an_empty_page_skips_the_occurrence_query_entirely(
         self, client, regular_token1, db_session, group1_version
     ):
@@ -4667,38 +4828,45 @@ class TestNgramsSchemaContract:
     def test_the_verse_keyed_parameters_are_not_accepted(
         self, client, regular_token1, db_session, group1_version, params
     ):
-        """Not accepted *and* not an error: v4 ignores unrecognised query parameters, so
-        each of these returns the unfiltered page. The assertion is that the filter had no
-        effect — an endpoint that silently honoured ``book`` would fail the second half,
-        and one that 422'd would fail the first."""
+        """Not accepted: each is an undeclared query parameter, so a 422 naming every one
+        sent (#1003). Before #1003 they were silently ignored, which returned the
+        unfiltered page to a caller who believed it had filtered."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(
             db_session, revision_id, reference_id, type_="ngrams"
         )
-        _make_ngram(db_session, assessment_id, "in the", vrefs=["GEN 1:1"])
-        _make_ngram(db_session, assessment_id, "of the", vrefs=["MAT 1:1"])
         resp = _ngrams(client, regular_token1, assessment_id, **params)
-        assert resp.status_code == 200, resp.text
-        assert _ngram_strings(resp) == ["in the", "of the"]
+        assert _refused_query_params(resp) == list(params)
 
-    def test_the_declared_query_parameters_are_limit_and_offset_only(self):
+    def test_the_declared_query_parameters_are_the_pagination_ones_only(self):
         """Pinned at the route so OpenAPI cannot gain a verse-keyed parameter by accident.
         ``assessment_id`` is a path parameter, not a query one."""
         route = _route("get_assessment_ngrams")
         declared = {param.name for param in route.dependant.query_params}
         for dependency in route.dependant.dependencies:
             declared |= {param.name for param in dependency.query_params}
-        assert declared == {"limit", "offset"}
+        assert declared == {"limit", "offset", "include_total"}
 
-    def test_the_route_uses_the_shared_catalog_pagination_dependency(self):
-        """Not ``ResultPaginationParams``. If a measured consumer ever needs bulk pages
-        here, the change is a dedicated dependency in ``api_v4.pagination`` — never
-        raising the shared cap, which would widen the catalog lists too."""
+    def test_the_route_uses_its_own_pagination_dependency(self):
+        """Not the catalog's ``PaginationParams`` (raising that cap would widen the
+        catalog lists too) and not ``ResultPaginationParams`` (whose default of 100
+        would change what a client that omits ``limit`` gets)."""
         route = _route("get_assessment_ngrams")
         assert any(
-            dependency.call is PaginationParams
+            dependency.call is NgramPaginationParams
             for dependency in route.dependant.dependencies
         )
+
+    def test_openapi_publishes_the_ngram_bounds(self, client):
+        """The web UI sizes its page off the published maximum, so the schema is part
+        of the contract, not only the runtime check."""
+        spec = client.get("/v4/openapi.json").json()
+        params = spec["paths"]["/assessments/{assessment_id}/ngrams"]["get"][
+            "parameters"
+        ]
+        limit = next(p for p in params if p["name"] == "limit")
+        assert limit["schema"]["default"] == 20
+        assert limit["schema"]["maximum"] == 1000
 
     def test_the_route_returns_a_page_of_ngram_rows(self):
         route = _route("get_assessment_ngrams")
@@ -5399,13 +5567,10 @@ class TestSimilarVersesRanking:
     ):
         """The shortlist's shape, pinned where a refactor would quietly change it.
 
-        Three properties, all of which are the difference between ~117 ms and the 401 ms
-        case: the ordering is the ``<->`` distance and nothing else (a second sort key
-        stops Postgres walking the GiST index in distance order), ``revision_id`` is
-        inlined as a literal rather than bound (so a generic plan cannot skip the partial
-        index), and the limit is
-        :func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`'s rather than the
-        caller's.
+        Three properties: the ordering is the ``<->`` distance first, with
+        ``verse_reference`` breaking ties (#1022); the query is scoped to the revision;
+        and the limit is :func:`~assessment_routes.v4.tfidf_retrieval.shortlist_size`'s
+        rather than the caller's.
         """
         assessment_id = self._texted(db_session, group1_version)
         with _captured_sql() as captured:
@@ -5422,17 +5587,15 @@ class TestSimilarVersesRanking:
             for captured_statement in _touching(captured, "verse_text")
             if "<->" in captured_statement[0]
         ]
-        # The revision id is *in the statement text*, which is the whole point: bound, a
-        # generic plan could not prove the query implies the partial index's predicate.
-        assert f"revision_id = {self.revision_id}" in shortlist, shortlist
+        assert "verse_text.revision_id = " in shortlist, shortlist
+        assert self.revision_id in tuple(parameters), parameters
         # The limit is bound, so it is asserted on the parameters rather than the text.
         # It is the shortlist's own k, not the caller's limit of 3.
         assert tfidf_retrieval.shortlist_size(3) in tuple(parameters), parameters
         assert 3 not in tuple(parameters), parameters
-        # The distance is the whole ORDER BY. Anything after it is what defeats the index.
+        # Distance first, then the tiebreak.
         order_by = shortlist.split("ORDER BY", 1)[1].split("LIMIT", 1)[0]
-        assert "<->" in order_by
-        assert "verse_reference" not in order_by, order_by
+        assert order_by.index("<->") < order_by.index("verse_reference"), order_by
 
     @pytest.mark.parametrize(
         "unusable",
@@ -5664,25 +5827,21 @@ class TestSimilarVersesText:
             assert hits[0]["text"] == SHORTLIST_CORPUS["GEN 1:2"]
             assert hits[0]["similarity"] == pytest.approx(1.0)
 
-    def test_reference_id_passed_as_a_query_parameter_is_ignored_not_honoured(
+    def test_reference_id_passed_as_a_query_parameter_is_a_422(
         self, client, regular_token1, db_session, group1_version
     ):
-        """v3's ``reference_id`` is gone, and v4's convention for an unrecognised parameter
-        is to ignore it — the same rule the plaintext export applies to ``limit``. Pinned
-        because "ignored" and "honoured" are indistinguishable unless the named revision
-        holds text the assessment's own reference does not."""
+        """v3's ``reference_id`` is gone, so sending it is a 422 naming it, as any
+        undeclared query parameter is on v4 (#1003) — the same rule the plaintext export
+        applies to ``limit``."""
         assessment_id = self._texted(db_session, group1_version, reference=False)
-        other_revision = _make_revision(db_session, group1_version)
-        _make_verse_texts(db_session, other_revision, {"GEN 1:2": "should not appear"})
         resp = _similar(
             client,
             regular_token1,
             assessment_id,
             vref=SHORTLIST_QUERY_VREF,
-            reference_id=other_revision,
+            reference_id=1,
         )
-        assert resp.status_code == 200, resp.text
-        assert all(hit["reference_text"] is None for hit in _hits(resp))
+        assert _refused_query_params(resp) == ["reference_id"]
 
 
 class TestSimilarVersesContract:
@@ -5781,23 +5940,18 @@ class TestSimilarVersesContract:
         self, client, regular_token1, db_session, group1_version
     ):
         """v3's client sends ``page`` on every call and ``/tfidf_result`` has never
-        declared it, so nobody has ever paged this. Passing one here is ignored, which is
-        the v4 convention for an unrecognised parameter."""
+        declared it, so nobody has ever paged this. Passing either here is a 422 naming
+        it, as any undeclared query parameter is on v4 (#1003)."""
         assessment_id = self._vectorized(db_session, group1_version)
-        plain = _hit_vrefs(
-            _similar(client, regular_token1, assessment_id, vref=SHORTLIST_QUERY_VREF)
+        resp = _similar(
+            client,
+            regular_token1,
+            assessment_id,
+            vref=SHORTLIST_QUERY_VREF,
+            offset=1,
+            page=2,
         )
-        with_offset = _hit_vrefs(
-            _similar(
-                client,
-                regular_token1,
-                assessment_id,
-                vref=SHORTLIST_QUERY_VREF,
-                offset=1,
-                page=2,
-            )
-        )
-        assert plain == with_offset == SHORTLIST_ORDER
+        assert _refused_query_params(resp) == ["offset", "page"]
 
     def test_the_declared_query_parameters_are_vref_and_limit_only(self):
         """Pinned at the route so OpenAPI cannot gain ``offset``, ``page`` or
@@ -7313,9 +7467,7 @@ class TestSimilarVersesPostContract:
         caller name any revision whose text to attach, making the response depend on a
         display preference rather than on the assessment.
 
-        Note this differs from the GET, which *ignores* an unrecognised query parameter:
-        an unknown key in a JSON body is a client that believes it is sending something,
-        while an unknown query parameter is the web's normal noise.
+        The GET refuses an undeclared query parameter the same way (#1003).
         """
         assessment_id = self._vectorized(db_session, group1_version)
         # Built as a dict rather than passed as keywords: one of these keys is
@@ -8345,15 +8497,10 @@ class TestAlignmentScoresFilters:
     def test_aggregate_is_ignored_rather_than_honoured_or_rejected(
         self, client, regular_token1, aligned
     ):
-        """A row here is a word, so there is nothing to roll up. Not accepted *and* not
-        an error: v4 ignores unrecognised query parameters, so this returns the
-        unfiltered page. An endpoint that had silently gained ``aggregate`` would fail
-        the second assertion."""
+        """A row here is a word, so there is nothing to roll up. ``aggregate`` is not a
+        parameter of this read, so sending it is a 422 naming it (#1003)."""
         resp = _alignment_scores(client, regular_token1, aligned, aggregate="chapter")
-        assert resp.status_code == 200, resp.text
-        assert _pairs(resp) == _pairs(
-            _alignment_scores(client, regular_token1, aligned)
-        )
+        assert _refused_query_params(resp) == ["aggregate"]
 
     def test_an_over_long_source_is_a_422_rather_than_a_scan(
         self, client, regular_token1, aligned
@@ -8601,6 +8748,7 @@ class TestAlignmentScoresContract:
             "score_type",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_the_route_uses_the_result_pagination_dependency(self):
@@ -8660,6 +8808,339 @@ class TestAlignmentScoresContract:
         v4_paths = {route.path for route in v4_assessment_router.routes}
         assert "/assessments/{assessment_id}/alignment-scores" in v4_paths
         assert not any("match" in path for path in v4_paths)
+
+
+# ---------------------------------------------------------------------------
+# GET /v4/assessments/{id}/alignment-summary (#1017)
+# ---------------------------------------------------------------------------
+
+
+def _alignment_summary(client, token, assessment_id, targets, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+        params={"target": targets, **params},
+        headers=_auth(token),
+    )
+
+
+def _summary(resp):
+    """``{target: [(source, count, avg_score), ...]}``, asserting a 200 first."""
+    assert resp.status_code == 200, resp.text
+    return {
+        item["target"]: [
+            (m["source"], m["count"], round(m["avg_score"], 6)) for m in item["matches"]
+        ]
+        for item in resp.json()["items"]
+    }
+
+
+class TestAlignmentSummary:
+    """``GET …/alignment-summary``: per-target counts over the whole assessment."""
+
+    def _assessment(self, db_session, version_id, **kwargs):
+        revision_id, reference_id = _pair(db_session, version_id)
+        return _make_assessment(db_session, revision_id, reference_id, **kwargs)
+
+    def _align(self, db_session, assessment_id, rows, **kwargs):
+        for vref, source, target, score in rows:
+            _make_alignment(
+                db_session, assessment_id, vref, source, target, score=score, **kwargs
+            )
+
+    def test_counts_verses_and_averages_scores_per_source(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "names", "аттары", 0.8),
+                ("MAT 1:2", "names", "аттары", 0.6),
+                ("MAT 1:3", "name", "аттары", 0.9),
+                ("MAT 1:3", "other", "мында", 0.9),
+            ],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["аттары"])
+        assert resp.json()["assessment_id"] == assessment_id
+        assert resp.json()["score_type"] == "top"
+        assert _summary(resp) == {"аттары": [("names", 2, 0.7), ("name", 1, 0.9)]}
+
+    def test_ties_on_count_break_on_avg_score_then_source(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "b", "t", 0.5),
+                ("MAT 1:2", "a", "t", 0.5),
+                ("MAT 1:3", "c", "t", 0.7),
+            ],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert [m[0] for m in _summary(resp)["t"]] == ["c", "a", "b"]
+
+    def test_limit_per_target_cuts_each_target_separately(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", f"s{i}", "x", 0.5) for i in range(4)]
+            + [("MAT 1:2", f"s{i}", "y", 0.5) for i in range(4)],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["x", "y"], limit_per_target=2
+        )
+        assert {k: len(v) for k, v in _summary(resp).items()} == {"x": 2, "y": 2}
+
+    def test_an_unmatched_target_is_returned_with_no_matches(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "found", 0.5)])
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["missing", "found"]
+        )
+        assert resp.json()["items"] == [
+            {"target": "missing", "matches": []},
+            {
+                "target": "found",
+                "matches": [{"source": "s", "count": 1, "avg_score": 0.5}],
+            },
+        ]
+
+    def test_targets_are_case_insensitive_and_deduplicated_in_request_order(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Stored targets are not guaranteed lower-cased, so both sides are lowered."""
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "s", "Аттары", 0.5), ("MAT 1:2", "s", "аттары", 0.5)],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["Zed", "АТТАРЫ", "аттары", "zed"]
+        )
+        assert [item["target"] for item in resp.json()["items"]] == ["zed", "аттары"]
+        assert _summary(resp)["аттары"] == [("s", 2, 0.5)]
+
+    def test_min_score_applies_before_counting(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "s", "t", 0.9),
+                ("MAT 1:2", "s", "t", 0.2),
+                ("MAT 1:3", "low", "t", 0.1),
+            ],
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], min_score=0.5
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.9)]}
+
+    def test_min_score_is_inclusive_at_a_decimal_boundary(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.8)])
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], min_score=0.8
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.8)]}
+
+    def test_hidden_rows_are_excluded(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        self._align(db_session, assessment_id, [("MAT 1:2", "s", "t", 0.5)], hide=True)
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    def test_threshold_counts_a_verse_once_however_many_rows_it_holds(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [
+                ("MAT 1:1", "s", "t", 0.4),
+                ("MAT 1:1", "s", "t", 0.6),
+                ("MAT 1:2", "s", "t", 0.8),
+            ],
+            model=AlignmentThresholdScores,
+        )
+        resp = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], score_type="threshold"
+        )
+        assert resp.json()["score_type"] == "threshold"
+        assert _summary(resp) == {"t": [("s", 2, 0.6)]}
+
+    def test_threshold_applies_min_score_and_hide_too(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        rows = [("MAT 1:1", "s", "t", 0.8), ("MAT 1:2", "s", "t", 0.2)]
+        self._align(db_session, assessment_id, rows, model=AlignmentThresholdScores)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:3", "s", "t", 0.9)],
+            model=AlignmentThresholdScores,
+            hide=True,
+        )
+        resp = _alignment_summary(
+            client,
+            regular_token1,
+            assessment_id,
+            ["t"],
+            score_type="threshold",
+            min_score=0.8,
+        )
+        assert _summary(resp) == {"t": [("s", 1, 0.8)]}
+
+    def test_rows_with_no_score_are_not_counted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "s", "t", 0.5), ("MAT 1:2", "s", "t", None)],
+        )
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    def test_a_bad_target_is_reported_by_position(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["ok", ""])
+        assert resp.status_code == 422, resp.text
+        assert ["query", "target", 1] in [
+            error["loc"] for error in resp.json()["error"]["details"]["errors"]
+        ]
+
+    def test_score_types_do_not_fall_back_to_each_other(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "top", "t", 0.5)])
+        self._align(
+            db_session,
+            assessment_id,
+            [("MAT 1:1", "thr", "t", 0.5)],
+            model=AlignmentThresholdScores,
+        )
+        top = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        threshold = _alignment_summary(
+            client, regular_token1, assessment_id, ["t"], score_type="threshold"
+        )
+        assert _summary(top) == {"t": [("top", 1, 0.5)]}
+        assert _summary(threshold) == {"t": [("thr", 1, 0.5)]}
+
+    def test_other_assessments_rows_are_not_counted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        other_id = self._assessment(db_session, group1_version)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        self._align(db_session, other_id, [("MAT 1:2", "s", "t", 0.5)])
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert _summary(resp) == {"t": [("s", 1, 0.5)]}
+
+    @pytest.mark.parametrize("type_", ALIGNMENT_UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        assessment_id = self._assessment(db_session, group1_version, type_=type_)
+        self._align(db_session, assessment_id, [("MAT 1:1", "s", "t", 0.5)])
+        resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_unknown_and_unreadable_assessments_are_the_same_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        theirs = self._assessment(db_session, group2_version)
+        self._align(db_session, theirs, [("MAT 1:1", "s", "t", 0.5)])
+        for assessment_id in (10**9, theirs):
+            resp = _alignment_summary(client, regular_token1, assessment_id, ["t"])
+            assert resp.status_code == 404, resp.text
+            assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_needs_a_token(self, client, db_session, group1_version):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = client.get(
+            f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+            params={"target": "t"},
+        )
+        assert resp.status_code == 401, resp.text
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {},
+            {"target": [f"w{i}" for i in range(ALIGNMENT_SUMMARY_MAX_TARGETS + 1)]},
+            {"target": [""]},
+            {"target": ["x" * 201]},
+            {"target": ["t"], "min_score": 1.5},
+            {"target": ["t"], "min_score": -0.1},
+            {"target": ["t"], "limit_per_target": 0},
+            {"target": ["t"], "limit_per_target": ALIGNMENT_SUMMARY_MAX_LIMIT + 1},
+            {"target": ["t"], "score_type": "best"},
+        ],
+        ids=[
+            "no-target",
+            "too-many-targets",
+            "empty-target",
+            "long-target",
+            "min-score-above-1",
+            "min-score-below-0",
+            "limit-0",
+            "limit-above-max",
+            "unknown-score-type",
+        ],
+    )
+    def test_invalid_parameters_are_a_422(
+        self, client, regular_token1, db_session, group1_version, params
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        resp = client.get(
+            f"{PREFIX}/assessments/{assessment_id}/alignment-summary",
+            params=params,
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_full_target_cap_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._assessment(db_session, group1_version)
+        targets = [f"w{i}" for i in range(ALIGNMENT_SUMMARY_MAX_TARGETS)]
+        resp = _alignment_summary(client, regular_token1, assessment_id, targets)
+        assert len(_summary(resp)) == ALIGNMENT_SUMMARY_MAX_TARGETS
+
+    def test_the_declared_query_parameters_are_exactly_these(self):
+        route = _route("get_assessment_alignment_summary")
+        assert {param.name for param in route.dependant.query_params} == {
+            "target",
+            "score_type",
+            "min_score",
+            "limit_per_target",
+        }
+        assert route.response_model is AlignmentSummaryOut
 
 
 class TestMissingWordsAuthorization:
@@ -9340,8 +9821,9 @@ class TestMissingWordsPeers:
             for statement, _p in _touching(captured, "alignment_top_source_scores")
             if "SELECT" in statement
         ]
-        # The subject's count, the subject's page, and one lookup for both peers.
-        assert len(selects) == 3
+        # The subject's page and one lookup for both peers. The page is shorter than
+        # ``limit``, so it answers ``total`` itself and no count runs.
+        assert len(selects) == 2
 
     def test_an_empty_page_skips_the_peer_query_entirely(
         self, client, regular_token1, db_session, subject
@@ -9357,7 +9839,8 @@ class TestMissingWordsPeers:
             for statement, _p in _touching(captured, "alignment_top_source_scores")
             if "SELECT" in statement
         ]
-        assert len(selects) == 2
+        # The subject's page alone: empty at offset 0 is an empty list, so no count.
+        assert len(selects) == 1
 
     def test_a_peers_rows_for_another_verse_do_not_bleed_across(
         self, client, regular_token1, db_session, subject
@@ -9522,6 +10005,7 @@ class TestMissingWordsContract:
             "against",
             "limit",
             "offset",
+            "include_total",
         }
 
     @pytest.mark.parametrize(
@@ -9531,14 +10015,12 @@ class TestMissingWordsContract:
         self, client, regular_token1, db_session, group1_version, dead
     ):
         """Each becomes unreachable once the subject is an explicit assessment id. Not
-        carried, not deprecated — and ignored rather than rejected, since v4 ignores
-        unrecognised query parameters."""
+        carried, not deprecated — and refused with a 422 naming it, as any undeclared
+        query parameter is on v4 (#1003)."""
         revision_id, reference_id = _pair(db_session, group1_version)
         assessment_id = _make_assessment(db_session, revision_id, reference_id)
-        _make_alignment(db_session, assessment_id, "MAT 1:1", "word", score=0.01)
         resp = _missing_words(client, regular_token1, assessment_id, **{dead: 1})
-        assert resp.status_code == 200, resp.text
-        assert _sources(resp) == ["word"]
+        assert _refused_query_params(resp) == [dead]
 
     def test_too_many_peers_is_a_422_naming_the_limit(
         self, client, regular_token1, db_session, group1_version
@@ -10160,20 +10642,42 @@ class TestTextLengthsPage:
     ):
         assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
         resp = _text_lengths(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+        assert resp.json()["limit"] == RESULT_BULK_MAX_LIMIT
 
     def test_limit_above_the_result_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
         resp = _text_lengths(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=RESULT_BULK_MAX_LIMIT + 1
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_a_rollup_accepts_the_bulk_max_and_no_more(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = _measured(db_session, group1_version, ["GEN 1:1"])
+        accepted = _text_lengths(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_BULK_MAX_LIMIT,
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["limit"] == RESULT_BULK_MAX_LIMIT
+        rejected = _text_lengths(
+            client,
+            regular_token1,
+            assessment_id,
+            aggregate="chapter",
+            limit=RESULT_BULK_MAX_LIMIT + 1,
+        )
+        assert rejected.status_code == 422, rejected.text
 
     def test_offset_past_the_end_is_an_empty_page(
         self, client, regular_token1, db_session, group1_version
@@ -10719,13 +11223,14 @@ class TestTextLengthsContract:
             "aggregate",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_the_route_uses_the_result_pagination_dependency(self):
         """Not the shared catalog params — 100/1000, the bounds ``/results`` uses."""
         route = _route("get_assessment_text_lengths")
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
         )
 
@@ -11246,8 +11751,9 @@ class TestScoreComparisonPeers:
             for statement, _p in _touching(captured, "assessment_result")
             if "SELECT" in statement
         ]
-        # The subject's count, the subject's page, and one lookup for both peers.
-        assert len(selects) == 3
+        # The subject's page and one lookup for both peers. The page is shorter than
+        # ``limit``, so it answers ``total`` itself and no count runs.
+        assert len(selects) == 2
 
     def test_the_peer_query_carries_this_pages_groups_and_no_others(
         self, client, regular_token1, db_session, compared
@@ -11282,7 +11788,12 @@ class TestScoreComparisonPeers:
         # The peer lookup is the only grouped statement: the subject's two ride
         # ``DISTINCT ON`` instead.
         assert len(grouped) == 1
-        assert list(grouped[0][1]) == [peer, "GEN", 3, 17]
+        # One array per key column, joined through ``unnest`` rather than a row ``IN``
+        # list, which Postgres was slow to plan at 1,000 keys (#1010).
+        statement, parameters = grouped[0]
+        assert "unnest(" in statement
+        assert ") IN (" not in statement
+        assert list(parameters) == [["GEN"], [3], [17], peer]
 
     def test_an_empty_page_skips_the_peer_query_entirely(
         self, client, regular_token1, db_session, group1_version
@@ -11301,7 +11812,40 @@ class TestScoreComparisonPeers:
             for statement, _p in _touching(captured, "assessment_result")
             if "SELECT" in statement
         ]
-        assert len(selects) == 2
+        # The subject's page alone: empty at offset 0 is an empty list, so no count.
+        assert len(selects) == 1
+
+
+class TestSampleStdev:
+    """``_sample_stdev`` replaced :func:`statistics.stdev` for speed (#1010). These pin
+    the three properties it was chosen to keep."""
+
+    @pytest.mark.parametrize(
+        "values", [[0.1] * 3, [0.7] * 6, [1 / 3] * 5, [0.29, 0.29]]
+    )
+    def test_identical_scores_are_exactly_zero(self, values):
+        """Not ~1e-17: a zero spread means "no z-score", and a rounding residue would
+        report an enormous one instead. A plain float mean of three 0.1s is off by one
+        ulp, which is the case the shift by the minimum exists for."""
+        assert assessment_service._sample_stdev(values) == 0.0
+
+    def test_it_matches_statistics_stdev_to_within_rounding(self):
+        rng = random.Random(1010)
+        for _ in range(2000):
+            values = [rng.random() for _ in range(rng.randint(2, 12))]
+            assert assessment_service._sample_stdev(values) == pytest.approx(
+                statistics.stdev(values), rel=1e-14
+            )
+
+    def test_the_peers_order_cannot_move_it(self):
+        rng = random.Random(42)
+        for _ in range(500):
+            values = [round(rng.random(), rng.randint(1, 6)) for _ in range(7)]
+            shuffled = values[:]
+            rng.shuffle(shuffled)
+            assert assessment_service._sample_stdev(
+                shuffled
+            ) == assessment_service._sample_stdev(values)
 
 
 class TestScoreComparisonRows:
@@ -12032,6 +12576,25 @@ class TestScoreComparisonPage:
         assert body["items"] == []
         assert body["against_assessment_ids"] == compared["peer_ids"]
 
+    def test_total_is_the_same_on_every_page(self, client, regular_token1, compared):
+        for limit, offset in ((2, 0), (2, 2), (2, 4), (5, 0), (6, 0), (2, 9)):
+            body = self._page(
+                client, regular_token1, compared, limit=limit, offset=offset
+            )
+            assert body["total"] == 5, (limit, offset)
+
+    def test_include_total_false_nulls_total_and_still_names_the_peers(
+        self, client, regular_token1, compared
+    ):
+        """``ScoreComparisonPage`` overrides ``create``, so it has to apply the rule
+        too (#1010)."""
+        body = self._page(
+            client, regular_token1, compared, limit=2, offset=2, include_total="false"
+        )
+        assert body["total"] is None
+        assert len(body["items"]) == 2
+        assert body["against_assessment_ids"] == compared["peer_ids"]
+
     def test_the_default_and_maximum_limits_are_the_result_reads(
         self, client, regular_token1, compared
     ):
@@ -12039,10 +12602,10 @@ class TestScoreComparisonPage:
             RESULT_DEFAULT_LIMIT
         )
         assert (
-            self._page(client, regular_token1, compared, limit=RESULT_MAX_LIMIT)[
+            self._page(client, regular_token1, compared, limit=RESULT_BULK_MAX_LIMIT)[
                 "limit"
             ]
-            == RESULT_MAX_LIMIT
+            == RESULT_BULK_MAX_LIMIT
         )
 
     def test_a_limit_above_the_maximum_is_rejected_not_clamped(
@@ -12053,9 +12616,91 @@ class TestScoreComparisonPage:
             regular_token1,
             compared["assessment_id"],
             against=compared["peer_ids"],
-            limit=RESULT_MAX_LIMIT + 1,
+            limit=RESULT_BULK_MAX_LIMIT + 1,
         )
         assert resp.status_code == 422, resp.text
+
+    def test_a_rollup_takes_the_bulk_max(self, client, regular_token1, compared):
+        """#1010: the whole-Bible chapter view is one request, as v3's was."""
+        assert (
+            self._page(
+                client,
+                regular_token1,
+                compared,
+                aggregate="chapter",
+                limit=RESULT_BULK_MAX_LIMIT,
+            )["limit"]
+            == RESULT_BULK_MAX_LIMIT
+        )
+        resp = _score_comparison(
+            client,
+            regular_token1,
+            compared["assessment_id"],
+            against=compared["peer_ids"],
+            aggregate="chapter",
+            limit=RESULT_BULK_MAX_LIMIT + 1,
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_a_chapter_page_rolls_up_only_its_own_chapter(
+        self, client, regular_token1, db_session, compared
+    ):
+        """The chapter peer query reads the page's whole books (#1010). A peer scored in
+        GEN 1 and GEN 2, on a one-chapter page holding GEN 1, must contribute GEN 1's mean
+        alone: GEN 2's verses are read, but rolled up into their own chapter."""
+        # The fixture already scores the subject's GEN 1:1-5; give it a GEN 2 as well.
+        _make_results(db_session, compared["assessment_id"], ["GEN 2:1"])
+        peer = compared["peer_ids"][0]
+        _make_result(db_session, peer, "GEN 1:1", score=0.25)
+        _make_result(db_session, peer, "GEN 2:1", score=0.75)
+        body = self._page(
+            client,
+            regular_token1,
+            {"assessment_id": compared["assessment_id"], "peer_ids": [peer]},
+            aggregate="chapter",
+            limit=1,
+        )
+        [row] = body["items"]
+        assert (row["book"], row["chapter"]) == ("GEN", 1)
+        assert row["mean_score"] == pytest.approx(0.25)
+        assert row["baseline_count"] == 1
+
+    def test_the_chapter_peer_scores_hold_the_page_keys_and_no_others(
+        self, db_session, compared
+    ):
+        """White-box, because no response can show it: the page only looks its own keys
+        up, so a chapter outside the page would go unread rather than wrong. A page that
+        spans two books, GEN 50 and EXO 1, reads both books whole; ``_peer_scores`` must
+        still hand back exactly those two chapters."""
+        peer = compared["peer_ids"][0]
+        for vref, score in [
+            ("GEN 49:1", 0.1),
+            ("GEN 50:1", 0.2),
+            ("EXO 1:1", 0.3),
+            ("EXO 2:1", 0.4),
+        ]:
+            _make_result(db_session, peer, vref, score=score)
+
+        async def peer_scores():
+            # A fresh engine on this loop: pooled connections are bound to the loop that
+            # opened them.
+            engine = create_async_engine(os.environ["AQUA_DB"], poolclass=NullPool)
+            try:
+                async with AsyncSession(engine) as db:
+                    return await assessment_service._peer_scores(
+                        db,
+                        [SimpleNamespace(id=peer)],
+                        ResultScope(aggregate=ResultAggregate.chapter),
+                        [("GEN", 50), ("EXO", 1)],
+                    )
+            finally:
+                await engine.dispose()
+
+        by_key = asyncio.run(peer_scores())
+        assert by_key == {
+            ("GEN", 50): {peer: pytest.approx(0.2)},
+            ("EXO", 1): {peer: pytest.approx(0.3)},
+        }
 
     def test_there_is_no_delta_watermark(self, client, regular_token1, compared):
         """``assessment_result`` carries no modification timestamp, so the key is present
@@ -12125,6 +12770,7 @@ class TestScoreComparisonContract:
             "aggregate",
             "limit",
             "offset",
+            "include_total",
         }
 
     def test_against_is_a_required_parameter(self):
@@ -12142,7 +12788,7 @@ class TestScoreComparisonContract:
     def test_the_route_uses_the_result_pagination_dependency(self):
         route = _route("get_assessment_score_comparison")
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is BulkResultPaginationParams
             for dependency in route.dependant.dependencies
         )
 

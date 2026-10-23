@@ -300,6 +300,7 @@ async def list_verses(
             scope=scope.scope,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except revision_service.RevisionNotFound as exc:
         raise _revision_not_found_error(exc, revision_id) from exc
@@ -346,7 +347,7 @@ async def export_text(
     And there is nothing for a cap to bound — pagination exists to stop a *caller* making a
     response arbitrarily large, and no parameter here changes the size: one revision is at
     most 41,899 lines, full stop. `limit` and `offset` are simply not parameters of this
-    operation, so sending them is ignored, exactly as any other unrecognized query
+    operation, so sending them is a `422`, exactly as any other undeclared query
     parameter is anywhere on this API.
 
     **`<range>` markers are preserved verbatim,** unlike on the verses read. Here the
@@ -594,6 +595,7 @@ async def text_search(
             query=query.query,
             limit=page.limit,
             offset=page.offset,
+            include_total=page.include_total,
         )
     except revision_service.RevisionNotFound as exc:
         # `exc.revision_id`, not `revision_id`: this read authorizes two revisions and the

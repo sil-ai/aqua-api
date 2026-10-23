@@ -59,9 +59,28 @@ surface, and the one that shows the pattern is about matching consumers rather t
 about growing: a search page is something a person looks at, and each of its rows can
 carry alignment links. :class:`ReferencePaginationParams` (#951) is the fourth, and
 the only one whose default *is* its maximum — see its docstring for why a list bounded
-by an ISO standard rather than by usage is a different kind of list. Five dependencies
-rather than one shared cap is the intended shape, not drift: each names a page size
-sized to what its own consumers actually ask for, and none of them can widen another.
+by an ISO standard rather than by usage is a different kind of list.
+:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/1000 policy for the n-gram
+read: the catalog's default, because a default is the part that binds once clients
+exist, and the result reads' ceiling, because its one client walks the whole corpus.
+Six dependencies rather than one shared cap is the intended shape, not drift: each names
+a page size sized to what its own consumers actually ask for, and none of them can widen
+another.
+
+**``total`` costs a second query, and a client can decline it.** ``total`` is a ``COUNT``
+over everything the page is drawn from. On a rollup (``/results?aggregate=``,
+``/score-comparison``, ``/text-lengths``) that is the whole aggregation run a second time,
+so the count can cost as much as the page. A client that walks a list reads ``total`` once,
+from the first page, and has no use for it on the rest. Every params class above therefore
+takes ``include_total`` (default true). Sent as false, ``total`` is ``null`` and the count is
+not run. The rule is strict, "always null", not "null unless it happened to be cheap", so a
+client never has to work out which it got. :meth:`V4Page.create` (and the two subclasses'
+overrides) apply it, so it holds on every list whether or not its service skips the count.
+
+When ``total`` is asked for, :func:`page_total` still skips the ``COUNT`` wherever the page
+already answers it: a page shorter than ``limit`` is the last one, so ``total`` is
+``offset`` plus its length. That is also exact rather than estimated, since it comes from
+the same statement as the rows.
 """
 
 from datetime import datetime
@@ -69,6 +88,8 @@ from typing import Generic, TypeVar
 
 from fastapi import Query
 from pydantic import Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -77,6 +98,22 @@ DEFAULT_LIMIT = 20
 #: Hard maximum page size; ``limit`` above this is a 422, not a clamp. See the
 #: module docstring for why 100 (and not v3's result-endpoint ``le=1000``).
 MAX_LIMIT = 100
+
+
+def _include_total_query():
+    """The ``include_total`` query parameter, shared by every params class below.
+
+    A function rather than one module-level ``Query`` so each ``__init__`` gets its own
+    instance, like the ``limit`` and ``offset`` each class declares for itself.
+    """
+    return Query(
+        True,
+        description=(
+            "Whether to count `total`. Defaults to true. Send false on every page after "
+            "the first when you already have the total: `total` is then null, and the "
+            "server skips a count that can cost as much as the page itself."
+        ),
+    )
 
 
 class PaginationParams:
@@ -112,12 +149,14 @@ class PaginationParams:
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         # Annotate the instance attributes explicitly so consumers
         # (``page.limit`` / ``page.offset``) get static types and editor support;
         # the values are already range-validated by the Query bounds above.
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the verse-level result reads. 100 rather than the catalog's
@@ -177,9 +216,66 @@ class ResultPaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
+
+
+#: Hard maximum page size for the three result reads a client reads *whole* —
+#: ``/results``, ``/text-lengths`` and ``/score-comparison`` — at every level. Large
+#: enough that the units a client actually asks for are one request: the longest book in
+#: ``vref.txt`` is Psalms at 2,527 verses, and the largest rollup, ``aggregate=chapter``
+#: over the whole canon, is 1,511 rows. Split across 1000-row pages, those reads paid a
+#: second, serial round trip, which on ``/score-comparison`` was most of what kept a
+#: whole-book or whole-Bible read at ~2× v3's single response (#1010).
+#:
+#: This gives up the caution :data:`RESULT_MAX_LIMIT` records (a ceiling is a one-way
+#: door, and a verse row may one day carry text). That was a guard against a row weight
+#: nothing serves today: at ~200 bytes a row, a full 3000-row page is ~600 KB. The
+#: decision was made for #1010 with the one client still in development. The alignment
+#: and agent reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole.
+RESULT_BULK_MAX_LIMIT = 3000
+
+
+class BulkResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the result reads a client reads whole: 100 / 3000.
+
+    :class:`ResultPaginationParams` with a higher ceiling,
+    :data:`RESULT_BULK_MAX_LIMIT`, so that a whole book (Psalms included) or a whole
+    canon's rollup is one request. Out-of-range values are a 422, not a clamp, as on
+    every other list; ``super().__init__`` is not called, for the reason
+    :class:`ResultPaginationParams` gives.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            RESULT_DEFAULT_LIMIT,
+            ge=1,
+            le=RESULT_BULK_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
+                f"{RESULT_BULK_MAX_LIMIT}, enough for any one book (Psalms is 2,527 "
+                f"verses) or any rollup over the whole text in a single page. "
+                f"Out-of-range values are rejected with 422, not clamped."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the verses read. 200 rather than the results read's 100 because
@@ -243,9 +339,11 @@ class VersePaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Default page size for the text search. 10 rather than the verses read's 200, and it is
@@ -303,9 +401,11 @@ class TextSearchPaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0. Cannot be combined with `random=true`."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 #: Page size for the two reference lists — both the default *and* the maximum, which
@@ -379,9 +479,78 @@ class ReferencePaginationParams(PaginationParams):
                 "Defaults to 0; must be >= 0."
             ),
         ),
+        include_total: bool = _include_total_query(),
     ) -> None:
         self.limit: int = limit
         self.offset: int = offset
+        self.include_total: bool = include_total
+
+
+#: Default page size for the n-gram read. The catalog's 20, not the result reads' 100,
+#: and kept there on purpose: ``/ngrams`` shipped with 20, and changing a default once
+#: clients exist silently changes every response they get. A client that wants more
+#: asks for it with ``limit``.
+NGRAM_DEFAULT_LIMIT = DEFAULT_LIMIT
+#: Hard maximum page size for the n-gram read; above this is a 422, not a clamp.
+#:
+#: 1000 because the one client walks the whole corpus. The web UI's Repeated Phrases
+#: card loads the first 10,000 n-grams per side and filters, sorts and counts across
+#: all of them. A page costs about 0.19 s whatever its size, and client-side
+#: concurrency does not help (the server saturates at about 44 pages/s), so load time
+#: scales with the number of requests. At a ceiling of 100 that is 200 requests and
+#: 4.2 s; at 1000 it is 20, about v3's 1.4 s. Measured on staging, 16 October 2026.
+#:
+#: The row's weight is the ``occurrences`` list, which has no cap. It is long in
+#: principle, not in practice: across every row of two full staging corpora (58,024
+#: and 55,689 n-grams) the mean row was ~137 bytes, the largest 531 bytes, the longest
+#: list 23 entries and the 99th percentile 5. The largest 1000-row page was 220 KB,
+#: smaller than an ``/alignment-scores`` page at that read's own ceiling. Not higher
+#: than 1000 for the reason :data:`RESULT_MAX_LIMIT` gives: raising a ceiling later
+#: is non-breaking and lowering it is not.
+NGRAM_MAX_LIMIT = 1000
+
+
+class NgramPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the n-gram read: 20 by default, 1000 max.
+
+    Consumed as ``page: NgramPaginationParams = Depends()`` and interchangeable with the
+    others at :meth:`V4Page.create`, for the reason :class:`ResultPaginationParams`
+    documents.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    the override.
+
+    See :data:`NGRAM_DEFAULT_LIMIT` and :data:`NGRAM_MAX_LIMIT` for where each number
+    comes from.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            NGRAM_DEFAULT_LIMIT,
+            ge=1,
+            le=NGRAM_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{NGRAM_DEFAULT_LIMIT}; must be between 1 and {NGRAM_MAX_LIMIT} "
+                f"(out-of-range values are rejected with 422, not clamped). A client "
+                f"that reads the whole assessment should send the maximum."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
 
 
 DataT = TypeVar("DataT")
@@ -399,11 +568,12 @@ class V4Page(V4BaseModel, Generic[DataT]):
     items: list[DataT] = Field(
         description="The page of results (at most ``limit`` items)."
     )
-    total: int = Field(
+    total: int | None = Field(
         ge=0,
         description=(
             "Total rows matching the query, ignoring limit/offset — the "
-            "full-result count for computing how many pages exist, not len(items)."
+            "full-result count for computing how many pages exist, not len(items). "
+            "Null only when the request sent `include_total=false`."
         ),
     )
     # ge=1 mirrors the PaginationParams floor and makes the response schema
@@ -443,7 +613,7 @@ class V4Page(V4BaseModel, Generic[DataT]):
         cls,
         *,
         items: list[DataT],
-        total: int,
+        total: int | None,
         pagination: PaginationParams,
         next_updated_since: datetime | None = None,
     ) -> "V4Page[DataT]":
@@ -473,11 +643,53 @@ class V4Page(V4BaseModel, Generic[DataT]):
         A list without a modification timestamp leaves it at its ``None`` default,
         which serializes as ``null`` — the field is always *present*, so adding delta
         support to a list later is not a response-shape change.
+
+        ``total`` is replaced by ``None`` when the request sent ``include_total=false``,
+        whatever the caller passed. See :func:`envelope_total`.
         """
         return cls(
             items=items,
-            total=total,
+            total=envelope_total(total, pagination),
             limit=pagination.limit,
             offset=pagination.offset,
             next_updated_since=next_updated_since,
         )
+
+
+def envelope_total(total: int | None, pagination: PaginationParams) -> int | None:
+    """The ``total`` a page reports: ``None`` if the request declined it, else ``total``.
+
+    Applied when the envelope is built, not left to each service, so ``include_total=false``
+    means null on every list even where the service ran the count anyway (the three lists
+    with a delta watermark count in the same statement that finds it). The two
+    :class:`V4Page` subclasses that override ``create`` call this too.
+    """
+    return total if pagination.include_total else None
+
+
+async def page_total(
+    db: AsyncSession,
+    count_statement: Select,
+    *,
+    returned: int,
+    limit: int,
+    offset: int,
+    include_total: bool,
+) -> int | None:
+    """``total`` for a page that has already been fetched, counting only when needed.
+
+    ``returned`` is the number of rows the page's SQL statement returned, before any
+    reshaping in Python. Call this *after* fetching the page, with the ``COUNT`` statement
+    built but not run:
+
+    * ``include_total`` false: ``None``, and nothing is run.
+    * A page shorter than ``limit`` is the last one, so ``total`` is ``offset + returned``.
+      An empty page at offset 0 is the same case: the list is empty. An empty page past
+      offset 0 says nothing (the offset may be past the end), so that one is counted.
+    * A full page: run ``count_statement``.
+    """
+    if not include_total:
+        return None
+    if 0 < returned < limit or (returned == 0 and offset == 0):
+        return offset + returned
+    return await db.scalar(count_statement) or 0

@@ -288,10 +288,8 @@ a ranking**, which is the one thing here that used to be guaranteed and now is n
 * **The GET reads no stored vectors.** It shortlists the revision's verse *text* on
   trigram distance and reranks the shortlist exactly, through the assessment's own fitted
   vocabulary and IDF. :mod:`assessment_routes.v4.tfidf_retrieval` owns both stages, the
-  measured evidence, and the three implementation traps — GiST rather than the GIN index
-  already on the column, partial per revision rather than global, and the revision id as
-  a literal rather than a bound parameter. Do not reach for ``tfidf_pca_vector`` from
-  this path; #967 stops storing it.
+  measured evidence, and why the shortlist runs without an index (#1022). Do not reach
+  for ``tfidf_pca_vector`` from this path; #967 stops storing it.
 * **Neither does the POST.** Both of its kinds, ``text`` and ``vref``, rank from verse
   text too: up to
   :data:`~assessment_routes.v4.tfidf_retrieval.TWO_STAGE_MAX_QUERIES` of them through the
@@ -495,18 +493,21 @@ and it carries **#862**, the last of this slice's five security issues.
 """
 
 import asyncio
+import math
 import statistics
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, and_, func, or_, select, tuple_
+from sqlalchemy import JSON, Text, and_, bindparam, cast, func, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from api_v4.jobs import JobState, state_for_assessment_status
+from api_v4.pagination import page_total
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
     AlignmentScoreType,
@@ -1665,7 +1666,11 @@ def _placeable_results(assessment_ids: Sequence[int], scope: ResultScope) -> lis
 
 
 def _deduplicated_results(
-    assessment_ids: Sequence[int], scope: ResultScope, *, per_assessment: bool = False
+    assessment_ids: Sequence[int],
+    scope: ResultScope,
+    *,
+    per_assessment: bool = False,
+    groups: tuple[tuple[str, ...], list[tuple]] | None = None,
 ):
     """Those assessments' placeable rows as a subquery, one row per verse, first-write-wins.
 
@@ -1724,25 +1729,61 @@ def _deduplicated_results(
     quietly of size one, reported as whatever ``baseline_count`` counted. Nothing else
     moves: the ``ORDER BY`` still ends in ``id``, so first-write-wins still decides which
     of a verse's duplicate rows survives, now per assessment rather than outright.
+
+    ``groups`` is ``(names, keys)``: keep only rows whose ``names`` columns match one of
+    ``keys``, for :func:`_peer_scores`, which needs one page's groups and nothing else.
+    The filter is applied *before* the ``DISTINCT ON``, and that cannot change which row
+    survives: ``names`` is always a prefix of ``(book, chapter, verse)``, so a verse's
+    duplicate rows match or miss together. See :func:`_peer_scores` for why multi-column
+    keys are joined from arrays rather than listed in a row ``IN``.
     """
     distinct_on = ((AssessmentResult.assessment_id,) if per_assessment else ()) + (
         AssessmentResult.book,
         AssessmentResult.chapter,
         AssessmentResult.verse,
     )
-    return (
-        select(
-            AssessmentResult.id,
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            AssessmentResult.verse,
-            AssessmentResult.score,
-            AssessmentResult.flag,
-            AssessmentResult.hide,
-            AssessmentResult.note,
+    statement = select(
+        AssessmentResult.id,
+        AssessmentResult.assessment_id,
+        AssessmentResult.book,
+        AssessmentResult.chapter,
+        AssessmentResult.verse,
+        AssessmentResult.score,
+        AssessmentResult.flag,
+        AssessmentResult.hide,
+        AssessmentResult.note,
+    )
+    names, keys = groups if groups is not None else ((), [])
+    columns = [getattr(AssessmentResult, name) for name in names]
+    if len(columns) == 1:
+        # ``aggregate=book``: at most 66 keys, so a plain ``IN`` plans cheaply, and it
+        # measured ~120 ms faster than the join over the whole Bible.
+        statement = statement.where(columns[0].in_([key[0] for key in keys]))
+    elif columns:
+        page = (
+            func.unnest(
+                *(
+                    cast(
+                        bindparam(
+                            f"page_{name}",
+                            [key[i] for key in keys],
+                            type_=ARRAY(column.type),
+                            unique=True,
+                        ),
+                        ARRAY(column.type),
+                    )
+                    for i, (name, column) in enumerate(zip(names, columns))
+                )
+            )
+            .table_valued(*names)
+            .render_derived(name="page")
         )
-        .where(*_placeable_results(assessment_ids, scope))
+        statement = statement.join(
+            page,
+            and_(*(page.c[name] == column for name, column in zip(names, columns))),
+        )
+    return (
+        statement.where(*_placeable_results(assessment_ids, scope))
         .distinct(*distinct_on)
         .order_by(*distinct_on, AssessmentResult.id)
         .subquery()
@@ -1750,8 +1791,14 @@ def _deduplicated_results(
 
 
 async def _verse_level_results(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of verse-level rows in canonical order, plus the total row count.
 
     **Canonical vref order, not v3's ``id`` order.** v3 orders these by ``min(id)``, i.e.
@@ -1772,7 +1819,6 @@ async def _verse_level_results(
         .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
         .subquery()
     )
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -1781,12 +1827,26 @@ async def _verse_level_results(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def _aggregated_results(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of rolled-up rows in canonical order, plus the number of groups.
 
     v3's rollup, preserved: ``avg(score)``, ``bool_or(flag)``, ``bool_or(hide)``, grouped
@@ -1846,9 +1906,16 @@ async def _aggregated_results(
         # abbreviation is determined by its number — so the group columns can just follow.
         .order_by(*canonical_columns, *group_columns)
     )
-    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
     rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(grouped.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_results(
@@ -1859,7 +1926,8 @@ async def get_results(
     scope: ResultScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's generic results: rows, total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=RESULT_ASSESSMENT_TYPES``, so the
@@ -1893,12 +1961,22 @@ async def get_results(
     )
     if scope.aggregate is not None:
         rows, total = await _aggregated_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
         return rows, total, {}
 
     rows, total = await _verse_level_results(
-        db, assessment_id, scope, limit=limit, offset=offset
+        db,
+        assessment_id,
+        scope,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -1999,8 +2077,14 @@ async def _ngrams_page(
 
 
 async def get_ngrams(
-    db: AsyncSession, user: UserDB, assessment_id: int, *, limit: int, offset: int
-) -> tuple[list[dict], int]:
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of an assessment's n-grams, plus the total ignoring ``limit``/``offset``.
 
     Authorized by :func:`get_assessment` with ``types=NGRAMS_ASSESSMENT_TYPES``, so this
@@ -2021,13 +2105,20 @@ async def get_ngrams(
     modification timestamp, so this list has no delta feed.
     """
     await get_assessment(db, user, assessment_id, types=NGRAMS_ASSESSMENT_TYPES)
-    total = await db.scalar(
+    # One row per ``ngrams_table`` row, vrefless ones included, so ``len(rows)`` is the
+    # page statement's own row count.
+    rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
+    total = await page_total(
+        db,
         select(func.count())
         .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
+        .where(NgramsTable.assessment_id == assessment_id),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
-    rows = await _ngrams_page(db, assessment_id, limit=limit, offset=offset)
-    return rows, total or 0
+    return rows, total
 
 
 # ---------------------------------------------------------------------------
@@ -2507,8 +2598,9 @@ def _alignment_scope_clauses(model, assessment_id: int, scope: VerseScope) -> li
     hidden filter.
 
     ``book`` is compared to the already-upper-cased scope value directly rather than
-    through ``func.upper(column)``, so the comparison can use
-    ``ix_alignment_scores_grouping``.
+    through ``func.upper(column)``, so the comparison can use an index:
+    ``ix_alignment_threshold_scores_assessment_book_chapter`` on the threshold table,
+    ``ix_alignment_top_source_scores_assessment_book_chapter`` on the top-source one.
     """
     clauses = [
         model.assessment_id == assessment_id,
@@ -2526,8 +2618,14 @@ def _alignment_scope_clauses(model, assessment_id: int, scope: VerseScope) -> li
 
 
 async def _alignment_page(
-    db: AsyncSession, model, clauses: list, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    model,
+    clauses: list,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of alignment rows in canonical order, plus the total ignoring the page.
 
     **Canonical vref order, then ``source``, then ``id``** — Bible order rather than
@@ -2572,7 +2670,6 @@ async def _alignment_page(
         .where(*clauses)
         .subquery()
     )
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -2587,7 +2684,15 @@ async def _alignment_page(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_alignment_scores(
@@ -2601,7 +2706,8 @@ async def get_alignment_scores(
     min_score: float | None,
     limit: int,
     offset: int,
-) -> tuple[list[dict], int]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of a word-alignment assessment's word pairings, plus the total.
 
     Authorized by :func:`get_assessment` with ``types=ALIGNMENT_ASSESSMENT_TYPES``, the
@@ -2653,7 +2759,14 @@ async def get_alignment_scores(
     if min_score is not None:
         clauses.append(model.score >= _score_bound(min_score))
 
-    rows, total = await _alignment_page(db, model, clauses, limit=limit, offset=offset)
+    rows, total = await _alignment_page(
+        db,
+        model,
+        clauses,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
     vrefs = [f"{row.book} {row.chapter}:{row.verse}" for row in rows]
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -2681,6 +2794,114 @@ async def get_alignment_scores(
         }
         for row, vref in zip(rows, vrefs)
     ], total
+
+
+async def get_alignment_summary(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    targets: list[str],
+    score_type: AlignmentScoreType,
+    min_score: float | None,
+    limit_per_target: int,
+) -> list[dict]:
+    """For each target word, the source words it aligned to across the assessment (#1017).
+
+    Authorized exactly as :func:`get_alignment_scores` is, so the same ids 404.
+
+    One grouped query over the assessment's rows, ranked per target with
+    ``row_number()`` and cut at ``limit_per_target`` in the database, so at most
+    ``len(targets) * limit_per_target`` rows come back. ``count`` is
+    ``count(DISTINCT vref)`` on both tables: on ``top`` that equals the row count,
+    because ``(vref, source)`` is unique there, and on ``threshold`` it stops a verse
+    that holds several rows for one pair from counting twice.
+
+    ``target`` is matched by lowering **both** sides, and both in Postgres. ``source`` is
+    documented as stored lower-cased, and :func:`get_alignment_scores` relies on that to
+    keep its index; there is no such guarantee for ``target``, and no index on it to
+    lose. The requested words are lowered by the database too, not by Python, because
+    the two can disagree (Greek final sigma, dotted ``İ``, or any non-ASCII letter under
+    a C locale), and a disagreement would silently answer ``matches: []`` for a word
+    that has alignments. The read is bounded by the ``assessment_id`` index either way.
+
+    ``hide`` rows are excluded, as on the text search's alignments, and so are rows with
+    no ``source``, ``vref`` or ``score``, which have nothing to count or average.
+    ``min_score`` applies before grouping, so it changes ``count`` as well as which
+    sources appear.
+
+    Returns one dict per distinct lowered target, in request order, each with its
+    ``matches`` (possibly empty).
+    """
+    await get_assessment(db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES)
+    requested = (
+        func.unnest(cast(targets, ARRAY(Text)))
+        .table_valued("value", with_ordinality="position")
+        .render_derived()
+    )
+    lowered_targets = (
+        await db.execute(
+            select(func.lower(requested.c.value)).order_by(requested.c.position)
+        )
+    ).scalars()
+    wanted = list(dict.fromkeys(lowered_targets))
+    model = _ALIGNMENT_SCORE_MODELS[score_type]
+    lowered = func.lower(model.target)
+    clauses = [
+        model.assessment_id == assessment_id,
+        lowered.in_(wanted),
+        model.hide.is_not(True),
+        model.source.is_not(None),
+        model.vref.is_not(None),
+        model.score.is_not(None),
+    ]
+    if min_score is not None:
+        clauses.append(model.score >= _score_bound(min_score))
+
+    grouped = (
+        select(
+            lowered.label("target"),
+            model.source,
+            # Not labelled "count": on a Row that name is the tuple method.
+            func.count(model.vref.distinct()).label("n_verses"),
+            func.avg(model.score).label("avg_score"),
+        )
+        .where(*clauses)
+        .group_by(lowered, model.source)
+        .subquery()
+    )
+    ranked = select(
+        grouped,
+        func.row_number()
+        .over(
+            partition_by=grouped.c.target,
+            order_by=(
+                grouped.c.n_verses.desc(),
+                grouped.c.avg_score.desc(),
+                grouped.c.source,
+            ),
+        )
+        .label("rank"),
+    ).subquery()
+    rows = (
+        await db.execute(
+            select(ranked)
+            .where(ranked.c.rank <= limit_per_target)
+            .order_by(ranked.c.target, ranked.c.rank)
+        )
+    ).all()
+
+    # Every returned row's key is one of `wanted`, because the IN clause matched it.
+    matches: dict[str, list[dict]] = {target: [] for target in wanted}
+    for row in rows:
+        matches[row.target].append(
+            {
+                "source": row.source,
+                "count": row.n_verses,
+                "avg_score": float(row.avg_score),
+            }
+        )
+    return [{"target": target, "matches": matches[target]} for target in wanted]
 
 
 async def _baseline_peers(
@@ -2927,7 +3148,8 @@ async def get_missing_words(
     against: list[int],
     limit: int,
     offset: int,
-) -> tuple[list[dict], int]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None]:
     """One page of words a word-alignment assessment aligned poorly, plus the total.
 
     Serves a **word-alignment** assessment id — see :data:`ALIGNMENT_ASSESSMENT_TYPES`
@@ -2942,8 +3164,9 @@ async def get_missing_words(
     and is preserved: one endpoint is looking for good alignments and the other for the
     absence of them.
 
-    Five statements, in this order: authorize the subject; authorize and check the peers
-    (:func:`_baseline_peers`); count and fetch one page; fetch that page's peer rows
+    Up to five statements, in this order: authorize the subject; authorize and check the
+    peers (:func:`_baseline_peers`); fetch one page, and count only if the page cannot
+    answer ``total`` (:func:`api_v4.pagination.page_total`); fetch that page's peer rows
     (:func:`_peer_alignments`); load the span map. The peer work is bounded by the page,
     never by the assessment.
 
@@ -2969,7 +3192,12 @@ async def get_missing_words(
         AlignmentTopSourceScores, assessment_id, scope
     ) + [AlignmentTopSourceScores.score < _score_bound(max_score)]
     rows, total = await _alignment_page(
-        db, AlignmentTopSourceScores, clauses, limit=limit, offset=offset
+        db,
+        AlignmentTopSourceScores,
+        clauses,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
 
     keys = [(row.book, row.chapter, row.verse, row.source) for row in rows]
@@ -3124,8 +3352,14 @@ def _placed_text_lengths(assessment_id: int, scope: ResultScope):
 
 
 async def _verse_level_text_lengths(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of verse-level rows in canonical order, plus the total row count.
 
     Canonical Bible order — ``book_reference.number``, then the chapter number, then the
@@ -3140,7 +3374,6 @@ async def _verse_level_text_lengths(
     offset-pagination drift between two statements still applies.
     """
     placed = _placed_text_lengths(assessment_id, scope)
-    total = await db.scalar(select(func.count()).select_from(placed))
     rows = (
         await db.execute(
             select(placed)
@@ -3149,12 +3382,26 @@ async def _verse_level_text_lengths(
             .offset(offset)
         )
     ).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(placed),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def _aggregated_text_lengths(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
+    db: AsyncSession,
+    assessment_id: int,
+    scope: ResultScope,
+    *,
+    limit: int,
+    offset: int,
+    include_total: bool = True,
+) -> tuple[list, int | None]:
     """One page of rolled-up rows in canonical order, plus the number of groups.
 
     **All four measures roll up as ``avg``**, which makes this rollup simpler than
@@ -3216,9 +3463,16 @@ async def _aggregated_text_lengths(
         # abbreviation is determined by its number — so the group columns can just follow.
         .order_by(*canonical_columns, *group_columns)
     )
-    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
     rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
-    return list(rows), total or 0
+    total = await page_total(
+        db,
+        select(func.count()).select_from(grouped.subquery()),
+        returned=len(rows),
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
+    )
+    return list(rows), total
 
 
 async def get_text_lengths(
@@ -3229,7 +3483,8 @@ async def get_text_lengths(
     scope: ResultScope,
     limit: int,
     offset: int,
-) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    include_total: bool = True,
+) -> tuple[list, int | None, dict[tuple[str, int, int], list[str]]]:
     """One page of an assessment's text-length measurements: rows, total, and the span map.
 
     Authorized by :func:`get_assessment` with ``types=TEXT_LENGTHS_ASSESSMENT_TYPES``, so
@@ -3268,12 +3523,22 @@ async def get_text_lengths(
     )
     if scope.aggregate is not None:
         rows, total = await _aggregated_text_lengths(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
         return rows, total, {}
 
     rows, total = await _verse_level_text_lengths(
-        db, assessment_id, scope, limit=limit, offset=offset
+        db,
+        assessment_id,
+        scope,
+        limit=limit,
+        offset=offset,
+        include_total=include_total,
     )
     continuations = await verse_range_service.continuations_for_revision(
         db, assessment.revision_id
@@ -3347,14 +3612,46 @@ async def _peer_scores(
     filter already implies it. It is the same "the join is also a filter" argument
     :func:`_aggregated_results` makes: a peer's population is then defined by exactly the
     predicate the subject's is, at whichever level is being read.
+
+    **The page's keys are joined from ``unnest`` of one array per column, not listed in a
+    row ``IN (...)``** (#1010). A 1,000-key row ``IN`` expands into a 1,000-branch
+    ``BitmapOr``, and Postgres took ~470 ms just to *plan* it, against ~40 ms to run it;
+    that planning cost was most of what made this read ~2× v3's. Joined from arrays, the
+    plan is a nested loop doing one ``idx_assessment_result_main`` lookup per key, planned
+    in under a millisecond, and the cost follows the page rather than the scope (checked
+    against the live database: 6 peers over the whole Bible, 0.3 ms to plan, 71 ms to run).
+    The join goes inside :func:`_deduplicated_results`, before its ``DISTINCT ON``, so
+    the lookups can use the index. ``aggregate=book`` keeps a plain ``book IN (...)``
+    (at most 66 keys, which plans cheaply). At ``aggregate=text`` there are no key columns
+    and so no filter: the one group is the whole scope.
+
+    **``aggregate=chapter`` filters by the page's books instead, then drops the chapters
+    outside the page here** (#1010, again checked against the live database). A chapter
+    page holds whole books almost entirely, so its rollup reads nearly every verse of
+    every peer in those books either way. The per-key join did that as one index descent
+    per ``(book, chapter)`` per peer, about 29,000 buffer reads for a 1,000-chapter page;
+    a plain ``book IN`` reads each book's rows as one range, about 1,300 buffer reads,
+    and took ~320–390 ms against ~420–590 ms. What it rolls up beyond the page is at most
+    the rest of the two books the page starts and ends in, and the ``page_keys`` check
+    below discards those, so the result is exactly the per-key query's.
     """
     if not peers or not keys:
         return {}
 
-    deduplicated = _deduplicated_results(
-        [peer.id for peer in peers], scope, per_assessment=True
-    )
     names = _comparison_group_names(scope.aggregate)
+    if scope.aggregate is ResultAggregate.chapter:
+        # Filter by the page's books and drop the chapters outside it after the rollup.
+        # See the docstring for why the per-chapter join was slower.
+        page_books = list(dict.fromkeys(key[0] for key in keys))
+        groups = (("book",), [(book,) for book in page_books])
+    else:
+        groups = (names, keys)
+    deduplicated = _deduplicated_results(
+        [peer.id for peer in peers],
+        scope,
+        per_assessment=True,
+        groups=groups,
+    )
     group_columns = tuple(deduplicated.c[name] for name in names)
     statement = (
         select(
@@ -3366,20 +3663,14 @@ async def _peer_scores(
         .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
         .group_by(deduplicated.c.assessment_id, *group_columns)
     )
-    if len(group_columns) == 1:
-        # A one-column ``tuple_(...).in_(...)`` is legal but renders as ``(book) IN
-        # (('GEN'))``; the plain column form is what the index expects to see.
-        statement = statement.where(group_columns[0].in_([key[0] for key in keys]))
-    elif group_columns:
-        statement = statement.where(tuple_(*group_columns).in_(keys))
 
+    page_keys = set(keys)
     by_key: dict[tuple, dict[int, float]] = {}
     for row in (await db.execute(statement)).all():
-        if row.score is None:
+        key = tuple(getattr(row, name) for name in names)
+        if row.score is None or key not in page_keys:
             continue
-        by_key.setdefault(tuple(getattr(row, name) for name in names), {})[
-            row.assessment_id
-        ] = float(row.score)
+        by_key.setdefault(key, {})[row.assessment_id] = float(row.score)
     return by_key
 
 
@@ -3406,8 +3697,32 @@ def _baseline_statistics(
         return None, None, 0
     return (
         statistics.fmean(values),
-        statistics.stdev(values) if len(values) > 1 else None,
+        _sample_stdev(values) if len(values) > 1 else None,
         len(values),
+    )
+
+
+def _sample_stdev(values: list[float]) -> float:
+    """The sample standard deviation, in floats rather than :mod:`statistics`' fractions.
+
+    :func:`statistics.stdev` is exact because it works in :class:`~fractions.Fraction`
+    arithmetic, and that cost ~100 ms per 1000-row page at any two or more peers, every
+    page (#1010). This is two-pass in floats with :func:`math.fsum`, which agrees with it
+    to within a few ulps (worst relative difference 2.8e-16 over 20,000 random cases).
+
+    Two properties are kept on purpose. **Identical scores give exactly 0.0**, not
+    ~1e-17: every value is shifted by the minimum before the mean is taken, so equal
+    values become exact zeros. That matters because :func:`_comparison_z_score` treats a
+    zero spread as "no z-score", and a rounding residue there would turn ``None`` into an
+    enormous z-score instead. **The result does not depend on the peers' order**: the
+    minimum does not, and :func:`math.fsum` is exactly rounded, so the iteration-order
+    argument in :func:`get_score_comparison` still holds.
+    """
+    pivot = min(values)
+    shifted = [value - pivot for value in values]
+    mean = math.fsum(shifted) / len(shifted)
+    return math.sqrt(
+        math.fsum((value - mean) ** 2 for value in shifted) / (len(shifted) - 1)
     )
 
 
@@ -3433,7 +3748,8 @@ async def get_score_comparison(
     against: list[int],
     limit: int,
     offset: int,
-) -> tuple[list[dict], int, list[int]]:
+    include_total: bool = True,
+) -> tuple[list[dict], int | None, list[int]]:
     """One page of an assessment's scores against a peer distribution, plus the total.
 
     Serves all three of :data:`RESULT_ASSESSMENT_TYPES`, authorized by the same
@@ -3460,8 +3776,9 @@ async def get_score_comparison(
     the design rather than an argument about scheduling — the v3 exposure lasts until v3
     is retired regardless of when this ships.
 
-    Five statements plus the span maps: authorize the subject; authorize and check the
-    peers; count and fetch one page; fetch that page's peer scores; and, at the verse
+    Up to five statements plus the span maps: authorize the subject; authorize and check
+    the peers; fetch one page, and count only if the page cannot answer ``total``
+    (:func:`api_v4.pagination.page_total`); fetch that page's peer scores; and, at the verse
     level, the subject's span map plus one for each peer that actually reached the page.
     Those are memoised per revision, so a peer costs a lookup rather than a scan. **Every
     part of the peer work is bounded by the page rather than by ``against``** — which is
@@ -3491,7 +3808,7 @@ async def get_score_comparison(
     (a caller names a large pool, then pages through a book most of it does not cover).
     Iteration order moves with this, and cannot move the numbers:
     :func:`statistics.fmean` sums with :func:`math.fsum`, which is exactly rounded, and
-    :func:`statistics.stdev` works in :class:`~fractions.Fraction` arithmetic.
+    :func:`_sample_stdev` shifts by the minimum and sums with it too.
 
     Two v3 mechanisms are deliberately not reached for, both flagged by Q1:
     ``utils.verse_range_utils.merge_verse_ranges`` is v3's sentinel-driven design and not
@@ -3514,18 +3831,28 @@ async def get_score_comparison(
 
     if scope.aggregate is not None:
         rows, total = await _aggregated_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
     else:
         rows, total = await _verse_level_results(
-            db, assessment_id, scope, limit=limit, offset=offset
+            db,
+            assessment_id,
+            scope,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
         )
 
     names = _comparison_group_names(scope.aggregate)
     keys = [tuple(getattr(row, name) for name in names) for row in rows]
     # dict.fromkeys: the page's *distinct* groups, keeping their order. At the verse level
     # the keys are already distinct; under a rollup they are too. It costs nothing and
-    # means a duplicate could never widen the ``IN`` list.
+    # means a duplicate could never widen the key list or fan out the ``unnest`` join.
     peer_scores = await _peer_scores(db, peers, scope, list(dict.fromkeys(keys)))
 
     continuations: dict[tuple[str, int, int], list[str]] = {}

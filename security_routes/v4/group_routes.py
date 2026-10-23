@@ -113,7 +113,10 @@ async def list_groups(
     authentication still happens exactly once.
     """
     groups, total = await user_service.list_groups(
-        db, limit=page.limit, offset=page.offset
+        db,
+        limit=page.limit,
+        offset=page.offset,
+        include_total=page.include_total,
     )
     items = [GroupOut.model_validate(group) for group in groups]
     return V4Page[GroupOut].create(items=items, total=total, pagination=page)
