@@ -4682,12 +4682,12 @@ class TestNgramsPage:
     def test_limit_at_the_ngram_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
-        """1000, not the catalog's 100: the web UI walks 10,000 n-grams per side
-        (#1011)."""
+        """10,000, not the catalog's 100: the web UI walks 10,000 n-grams per side,
+        one request each as on v3 (#1011, #1029)."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
         resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 1000
+        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 10_000
 
     def test_limit_above_the_ngram_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
@@ -4866,7 +4866,7 @@ class TestNgramsSchemaContract:
         ]
         limit = next(p for p in params if p["name"] == "limit")
         assert limit["schema"]["default"] == 20
-        assert limit["schema"]["maximum"] == 1000
+        assert limit["schema"]["maximum"] == 10_000
 
     def test_the_route_returns_a_page_of_ngram_rows(self):
         route = _route("get_assessment_ngrams")
