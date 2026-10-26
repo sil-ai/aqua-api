@@ -9947,8 +9947,9 @@ class TestMissingWordsPeers:
         self, client, regular_token1, db_session, subject
     ):
         """#1037: the old lookup bound four parameters per row on the page, which is what
-        made a whole-book page take ~30 s to plan and run. The chapter-range read binds a
-        fixed number per book, however many rows the page holds."""
+        made a whole-book page take ~30 s to plan and run. The chapter-range read binds
+        nothing: its values are inlined so Postgres never reuses a generic plan for it,
+        which scans every assessment's rows in the book. See ``_peer_alignments``."""
         for n in range(1, 21):
             _make_alignment(
                 db_session,
@@ -9967,15 +9968,19 @@ class TestMissingWordsPeers:
             )
         assert len(_rows(resp)) == 20
         peer_selects = [
-            parameters
+            (statement, parameters)
             for statement, parameters in _touching(
                 captured, "alignment_top_source_scores"
             )
             if "SELECT" in statement and "BETWEEN" in statement
         ]
         assert len(peer_selects) == 1
-        # Two peer ids, then book, low and high chapter for the one book.
-        assert len(peer_selects[0]) == 5
+        statement, parameters = peer_selects[0]
+        assert len(parameters) == 0
+        assert "'MAT'" in statement
+        assert "BETWEEN 1 AND 1" in statement
+        for peer in sorted((peer_a, peer_b)):
+            assert str(peer) in statement
 
 
 class TestMissingWordsPage:

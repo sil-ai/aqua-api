@@ -3028,10 +3028,22 @@ async def _peer_alignments(
     page's rows or from ``unnest`` arrays the way :func:`_peer_scores` does, timed out.
     The only index on the four key columns, ``ix_alignment_scores_grouping``, does not
     start with ``assessment_id``, so each key's probe reads every assessment's rows for
-    that word. Filtering by book instead is a range read on
-    ``ix_alignment_top_source_scores_assessment_book_chapter``, and for the same page it
-    took 0.5-0.9 s warm (4.4 s cold, mostly disk reads). The match is done here rather
-    than by a join so the planner cannot fall back to that nested loop.
+    that word. Filtering by book and chapter instead, the same page took 0.27 s for two
+    peers. The match is done here rather than by a join so the planner cannot fall back
+    to that nested loop.
+
+    **The filter values are inlined into the SQL, not bound** (``literal_execute``).
+    asyncpg prepares each statement and reuses it on its pooled connection, and after
+    five runs Postgres may switch that statement to a *generic* plan, built without the
+    values. For this query the generic plan is a disaster. Not knowing the book or the
+    chapters, it bitmap-scans ``ix_alignment_scores_grouping`` for the range, which is
+    every assessment's rows in the book (110 million index entries for MAT), and only
+    then intersects with the peers. Measured against production: 5.7 s generic against
+    0.16-0.28 s custom, and on staging the same request swung between 1 s and 7-15 s
+    depending on which connection served it. With the values in the statement text
+    there is nothing for a generic plan to leave out. The values are the page's own
+    stored book codes and integer chapters and ids, and SQLAlchemy renders them as
+    quoted literals.
 
     **The range is always narrowed to chapters, not just to the book.** A small page
     covers one or two chapters, and reading the peers' whole book for it would be far
@@ -3053,7 +3065,7 @@ async def _peer_alignments(
     """
     if not peers or not keys:
         return {}
-    peer_ids = {peer.id for peer in peers}
+    peer_ids = sorted({peer.id for peer in peers})
     chapters_by_book: dict[str, tuple[int, int]] = {}
     for book, chapter, _verse, _source in keys:
         low, high = chapters_by_book.get(book, (chapter, chapter))
@@ -3071,12 +3083,18 @@ async def _peer_alignments(
                 AlignmentTopSourceScores.score,
             )
             .where(
-                AlignmentTopSourceScores.assessment_id.in_(peer_ids),
+                AlignmentTopSourceScores.assessment_id.in_(
+                    bindparam(None, peer_ids, expanding=True, literal_execute=True)
+                ),
                 or_(
                     *(
                         and_(
-                            AlignmentTopSourceScores.book == book,
-                            AlignmentTopSourceScores.chapter.between(low, high),
+                            AlignmentTopSourceScores.book
+                            == bindparam(None, book, literal_execute=True),
+                            AlignmentTopSourceScores.chapter.between(
+                                bindparam(None, low, literal_execute=True),
+                                bindparam(None, high, literal_execute=True),
+                            ),
                         )
                         for book, (low, high) in chapters_by_book.items()
                     )
