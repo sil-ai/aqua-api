@@ -26,10 +26,13 @@ import base64
 import fastapi
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import app as app_module
 from api_v4.app import create_v4_app
 from api_v4.errors import V4ErrorDetail, V4ErrorResponse, _NulByteGuard
+from api_v4.pagination import V4Page
+from api_v4.schemas import base as base_module
 from api_v4.schemas.base import (
     NUL,
     NUL_BYTE_ERROR_TYPE,
@@ -348,6 +351,32 @@ def test_response_models_still_serialize(client):
     response = client.get("/probe-out")
     assert response.status_code == 200
     assert response.json() == {"label": "ok", "rows": ["a", "b"]}
+
+
+def test_a_row_is_checked_once_not_again_when_wrapped_in_a_page(monkeypatch):
+    """Pydantic re-runs an instance's after-validators when it is nested in another
+    model. Without the ``_nul_checked`` mark, a route that builds its rows and then
+    wraps them in a page walked every row twice — ~160 ms extra on a 10,000-row
+    ``/ngrams`` page."""
+    walks = []
+    original = base_module._nul_byte_paths
+    monkeypatch.setattr(
+        base_module,
+        "_nul_byte_paths",
+        lambda roots: walks.append(roots) or original(roots),
+    )
+    rows = [_Out(label=f"row {n}", rows=["a"]) for n in range(5)]
+    assert len(walks) == 5
+    V4Page[_Out](items=rows, total=5, limit=5, offset=0)
+    assert len(walks) == 6, "the page's own check only; its rows already passed"
+
+
+def test_a_nul_in_a_row_built_by_the_page_is_still_rejected():
+    """Rows handed to a page as dicts are built, and checked, by the page itself."""
+    with pytest.raises(ValidationError, match=NUL_BYTE_ERROR_TYPE):
+        V4Page[_Out](
+            items=[{"label": "a\x00b", "rows": []}], total=1, limit=1, offset=0
+        )
 
 
 # --- Part 2: the query/path guard ---------------------------------------------------
