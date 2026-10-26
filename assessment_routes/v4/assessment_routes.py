@@ -214,7 +214,7 @@ descriptions both say so.
 
 **The result reads declare their own pagination and their own scope, and neither is
 re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than the
-shared catalog params (20/100), because a results consumer wants bulk —
+shared params (20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
 the shared cap. The same bounds apply to both alignment reads: the bound follows the
 row's weight, and these are small fixed-width rows. The three reads a client reads
@@ -258,8 +258,8 @@ from api_v4.jobs import (
 )
 from api_v4.pagination import (
     BulkResultPaginationParams,
+    CatalogPaginationParams,
     NgramPaginationParams,
-    PaginationParams,
     ResultPaginationParams,
     V4Page,
 )
@@ -578,7 +578,7 @@ def _incompatible_peer_error(
     response_model=V4Page[AssessmentOut],
 )
 async def list_assessments(
-    page: PaginationParams = Depends(),
+    page: CatalogPaginationParams = Depends(),
     # Optional[...] rather than `X | None` only because black splits the union across
     # lines when it carries a Query() default; identical semantics. Same below.
     ids: Optional[List[int]] = Query(
