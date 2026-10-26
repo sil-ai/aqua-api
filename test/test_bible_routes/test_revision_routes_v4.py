@@ -41,6 +41,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from api_v4.delta import DELTA_SAFETY_LAP, next_watermark
+from api_v4.pagination import CATALOG_MAX_LIMIT
 from app import app
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import Group
@@ -770,13 +771,21 @@ class TestListAndGet:
         assert second["items"][0]["id"] != one["items"][0]["id"]
 
         # Out-of-range limits reject with 422 (#829: reject, never clamp).
-        for limit in (0, 101):
+        for limit in (0, CATALOG_MAX_LIMIT + 1):
             resp = client.get(
                 f"{PREFIX}/revisions",
                 params={"limit": limit},
                 headers=_auth(regular_token1),
             )
             assert resp.status_code == 422, (limit, resp.text)
+        # 10,000, not the shared 100: the web app's sync reads the whole list (#1030).
+        at_max = client.get(
+            f"{PREFIX}/revisions",
+            params={"limit": CATALOG_MAX_LIMIT},
+            headers=_auth(regular_token1),
+        )
+        assert at_max.status_code == 200, at_max.text
+        assert at_max.json()["limit"] == CATALOG_MAX_LIMIT == 10_000
 
     def test_revision_visible_through_two_groups_is_not_double_counted(
         self, client, regular_token1, admin_token, db_session

@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 
 from api_v4.app import create_v4_app
 from api_v4.pagination import (
+    CATALOG_MAX_LIMIT,
     DEFAULT_LIMIT,
     MAX_LIMIT,
     PaginationParams,
@@ -252,6 +253,27 @@ def test_every_paginated_v4_route_declares_include_total():
                 paginated[f"{method.upper()} {path}"] = "include_total" in names
     assert len(paginated) >= 19, paginated
     assert all(paginated.values()), [k for k, ok in paginated.items() if not ok]
+
+
+def test_each_list_publishes_its_own_maximum():
+    """The catalog lists went to 10,000 for the web app's sync (#1030) on their own
+    params class, so the lists still on the shared one keep 100. Pinned against the
+    real app's OpenAPI, which is what a client reads."""
+    spec = create_v4_app(configure_cors=lambda _app: None).openapi()
+
+    def maximum(path):
+        params = spec["paths"][path]["get"]["parameters"]
+        return next(p for p in params if p["name"] == "limit")["schema"]["maximum"]
+
+    for path in ("/versions", "/revisions", "/assessments"):
+        assert maximum(path) == CATALOG_MAX_LIMIT == 10_000, path
+    for path in (
+        "/training-jobs",
+        "/training-sessions/{session_id}/results",
+        "/groups",
+        "/users/me/groups",
+    ):
+        assert maximum(path) == MAX_LIMIT == 100, path
 
 
 class _CountingSession:

@@ -149,14 +149,15 @@ from sqlalchemy.pool import NullPool
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
 from api_v4.pagination import (
+    CATALOG_MAX_LIMIT,
     DEFAULT_LIMIT,
-    MAX_LIMIT,
     NGRAM_DEFAULT_LIMIT,
     NGRAM_MAX_LIMIT,
     RESULT_BULK_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
     RESULT_MAX_LIMIT,
     BulkResultPaginationParams,
+    CatalogPaginationParams,
     NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
@@ -2527,9 +2528,25 @@ class TestList:
         assert body["next_updated_since"] is not None
 
     def test_out_of_range_limit_is_a_422_not_a_clamp(self, client, regular_token1):
-        resp = _list(client, regular_token1, limit=MAX_LIMIT + 1)
+        resp = _list(client, regular_token1, limit=CATALOG_MAX_LIMIT + 1)
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_limit_at_the_catalog_max_is_accepted(self, client, regular_token1):
+        """10,000, not the shared 100: the web app's sync reads the whole list, one
+        request on v3 (#1030)."""
+        resp = _list(client, regular_token1, limit=CATALOG_MAX_LIMIT)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == CATALOG_MAX_LIMIT == 10_000
+
+    def test_the_route_uses_the_catalog_pagination_dependency(self):
+        """Not the shared ``PaginationParams``: raising that cap would widen the
+        training-job, group and user lists too."""
+        route = _route("list_assessments")
+        assert any(
+            dependency.call is CatalogPaginationParams
+            for dependency in route.dependant.dependencies
+        )
 
     def test_items_carry_the_public_state_not_the_internal_status(
         self, client, regular_token1, db_session, group1_version
@@ -3522,19 +3539,18 @@ class TestResultsPage:
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
-    def test_raising_this_cap_did_not_raise_the_catalog_cap(
+    def test_this_cap_and_the_catalog_cap_are_independent(
         self, client, regular_token1, db_session, group1_version
     ):
-        """The reason this is its own dependency rather than a wider bound on the shared
-        one: the same limit is legal here and rejected on the assessments list."""
+        """Each list has its own dependency rather than one shared bound: the same
+        limit is rejected here and legal on the assessments list (#1030)."""
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        over = RESULT_BULK_MAX_LIMIT + 1
         assert (
-            _results(
-                client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
-            ).status_code
-            == 200
+            _results(client, regular_token1, assessment_id, limit=over).status_code
+            == 422
         )
-        assert _list(client, regular_token1, limit=MAX_LIMIT + 1).status_code == 422
+        assert _list(client, regular_token1, limit=over).status_code == 200
 
     def test_order_is_canonical_and_not_insertion_order(
         self, client, regular_token1, db_session, group1_version
@@ -4228,7 +4244,7 @@ class TestResultsSchemaContract:
         assert route.response_model.__name__.startswith("V4Page")
 
     def test_the_route_uses_the_result_pagination_dependency(self):
-        """Not the shared catalog params — the whole point of #893 decision 3, and the
+        """Not the shared params — the whole point of #893 decision 3, and the
         thing a well-meaning cleanup would "simplify" back."""
         route = _route("get_assessment_results")
         assert any(
@@ -4682,7 +4698,7 @@ class TestNgramsPage:
     def test_limit_at_the_ngram_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
-        """10,000, not the catalog's 100: the web UI walks 10,000 n-grams per side,
+        """10,000, not the shared 100: the web UI walks 10,000 n-grams per side,
         one request each as on v3 (#1011, #1029)."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
         resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT)
@@ -4848,8 +4864,8 @@ class TestNgramsSchemaContract:
         assert declared == {"limit", "offset", "include_total"}
 
     def test_the_route_uses_its_own_pagination_dependency(self):
-        """Not the catalog's ``PaginationParams`` (raising that cap would widen the
-        catalog lists too) and not ``ResultPaginationParams`` (whose default of 100
+        """Not the shared ``PaginationParams`` (raising that cap would widen every
+        list on it) and not ``ResultPaginationParams`` (whose default of 100
         would change what a client that omits ``limit`` gets)."""
         route = _route("get_assessment_ngrams")
         assert any(
