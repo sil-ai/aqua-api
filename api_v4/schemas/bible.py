@@ -476,8 +476,10 @@ BOOK_ABBREVIATION_LENGTH = 3
 #: settled on #892). A vref costs 23-27 bytes once percent-encoded with its
 #: ``&only_vrefs=`` overhead, so 1000 is ~24 KB of URL — comfortably under the ~60 KB
 #: platform ingress ceiling, with 500-per-request already proven in production by the
-#: one known client. It is also :data:`api_v4.pagination.VERSE_MAX_LIMIT`, so a caller
-#: who asks for the maximum number of references can receive them all in a single page.
+#: one known client. It is at most :data:`api_v4.pagination.VERSE_MAX_LIMIT` (10,000
+#: since #1031), so a caller who asks for the maximum number of references can receive
+#: them all in a single page. The two are not meant to be equal: this one is bounded by
+#: URL length, that one by page size.
 #:
 #: **The limit is not the point; the error is.** v3 accepts an unlimited list, but past
 #: roughly 3,000 references the URL exceeds the platform ingress limit and is rejected
