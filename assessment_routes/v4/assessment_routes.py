@@ -221,8 +221,8 @@ row's weight, and these are small fixed-width rows. The three reads a client rea
 *whole* (``/results``, ``/text-lengths``, ``/score-comparison``) take
 ``BulkResultPaginationParams`` instead, 100/3000, so any one book or any rollup over
 the whole text is a single request (#1010). ``/ngrams`` is the exception: it
-takes ``NgramPaginationParams`` (20/1000), the result reads' ceiling with the catalog's
-default, because it shipped with a default of 20. Its route docstring says why.
+takes ``NgramPaginationParams`` (20/10,000), v3's ceiling with the catalog's default,
+because it shipped with a default of 20. Its route docstring says why.
 :class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
 :class:`~api_v4.schemas.assessment.VerseScope` and its ``aggregate``-carrying subclass,
 whose ``model_validator`` methods hold the parameters' invariants, so an inconsistent
@@ -1035,12 +1035,12 @@ async def get_assessment_ngrams(
     `limit`/`offset`.
 
     **The default page is 20 rows, smaller than the 100 on the other result reads here.
-    The maximum is the same 1000.** 20 is what this read has always defaulted to, and
-    changing a default silently changes the size of every response a client gets. A
-    client that reads the whole assessment should send `limit=1000`: a page costs about
-    the same to serve at any size, so fewer, larger pages are much faster than many
-    small ones. An n-gram row is usually small (around 140 bytes), and a 1000-row page
-    is typically around 200 KB.
+    The maximum is 10,000, larger than theirs.** 20 is what this read has always
+    defaulted to, and changing a default silently changes the size of every response a
+    client gets. A client that reads the whole assessment should send `limit=10000`: a
+    page costs about the same to serve at any size, so fewer, larger pages are much
+    faster than many small ones. An n-gram row is usually small (around 140 bytes), and
+    a 10,000-row page is typically around 2 MB.
     """
     try:
         rows, total = await assessment_service.get_ngrams(

@@ -60,9 +60,9 @@ about growing: a search page is something a person looks at, and each of its row
 carry alignment links. :class:`ReferencePaginationParams` (#951) is the fourth, and
 the only one whose default *is* its maximum — see its docstring for why a list bounded
 by an ISO standard rather than by usage is a different kind of list.
-:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/1000 policy for the n-gram
-read: the catalog's default, because a default is the part that binds once clients
-exist, and the result reads' ceiling, because its one client walks the whole corpus.
+:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/10,000 policy for the
+n-gram read: the catalog's default, because a default is the part that binds once
+clients exist, and v3's own ceiling, because its one client walks the whole corpus.
 Six dependencies rather than one shared cap is the intended shape, not drift: each names
 a page size sized to what its own consumers actually ask for, and none of them can widen
 another.
@@ -493,25 +493,25 @@ class ReferencePaginationParams(PaginationParams):
 NGRAM_DEFAULT_LIMIT = DEFAULT_LIMIT
 #: Hard maximum page size for the n-gram read; above this is a 422, not a clamp.
 #:
-#: 1000 because the one client walks the whole corpus. The web UI's Repeated Phrases
-#: card loads the first 10,000 n-grams per side and filters, sorts and counts across
-#: all of them. A page costs about 0.19 s whatever its size, and client-side
-#: concurrency does not help (the server saturates at about 44 pages/s), so load time
-#: scales with the number of requests. At a ceiling of 100 that is 200 requests and
-#: 4.2 s; at 1000 it is 20, about v3's 1.4 s. Measured on staging, 16 October 2026.
+#: 10,000 so the one client reads each side in one request, as it does on v3 (#1029).
+#: The web UI's Repeated Phrases card loads the first 10,000 n-grams per side and
+#: filters, sorts and counts across all of them. Each request costs about 0.2 s however
+#: many rows it returns, and sending pages concurrently does not help, so load time
+#: follows the number of requests. Measured on staging on 26 October 2026, both sides
+#: loaded together: v3 (one request per side) 1.42 s, v4 at a ceiling of 1000 (ten per
+#: side) 1.85 s. v3's ``/ngrams_result`` has served ``page_size=10000`` for years.
 #:
-#: The row's weight is the ``occurrences`` list, which has no cap. It is long in
-#: principle, not in practice: across every row of two full staging corpora (58,024
-#: and 55,689 n-grams) the mean row was ~137 bytes, the largest 531 bytes, the longest
-#: list 23 entries and the 99th percentile 5. The largest 1000-row page was 220 KB,
-#: smaller than an ``/alignment-scores`` page at that read's own ceiling. Not higher
-#: than 1000 for the reason :data:`RESULT_MAX_LIMIT` gives: raising a ceiling later
-#: is non-breaking and lowering it is not.
-NGRAM_MAX_LIMIT = 1000
+#: The row's weight is the ``occurrences`` list, which has no cap; that is why #930 and
+#: #1011 kept this tight. It is long in principle, not in practice: across every row of
+#: two full staging corpora (58,024 and 55,689 n-grams) the mean row was ~137 bytes, the
+#: largest 531 bytes, the longest list 23 entries and the 99th percentile 5. The largest
+#: 1000-row page was 220 KB, so a 10,000-row page is about 2 MB. The default stays at
+#: 20, so only a client that asks for a big page gets one.
+NGRAM_MAX_LIMIT = 10_000
 
 
 class NgramPaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the n-gram read: 20 by default, 1000 max.
+    """``limit`` / ``offset`` for the n-gram read: 20 by default, 10,000 max.
 
     Consumed as ``page: NgramPaginationParams = Depends()`` and interchangeable with the
     others at :meth:`V4Page.create`, for the reason :class:`ResultPaginationParams`
