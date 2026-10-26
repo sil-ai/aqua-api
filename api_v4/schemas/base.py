@@ -59,7 +59,7 @@ the guard middleware in :mod:`api_v4.errors`.
 from collections import deque
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 from pydantic_core import PydanticCustomError
 
 #: The one character a Postgres ``text`` column cannot hold (#954). Every other C0
@@ -111,6 +111,21 @@ class V4BaseModel(BaseModel):
     #: so pydantic treats it as a class attribute instead of a field.
     _checks_nul_bytes: ClassVar[bool] = True
 
+    #: Set once :meth:`_reject_nul_bytes` has passed on this instance, so it runs once
+    #: per instance rather than once per model it is nested in. Pydantic re-runs a
+    #: model's ``mode="after"`` validators whenever an existing instance is placed
+    #: inside another model, even though it keeps the instance and re-checks none of
+    #: its fields. A list route that builds its rows and then wraps them in a
+    #: :class:`~api_v4.pagination.V4Page` would otherwise check every row twice.
+    #: Private, so it is never a field and never reaches a response.
+    #:
+    #: Two side effects, harmless while nothing calls ``model_copy()`` or
+    #: ``model_construct()`` (see :func:`_nul_byte_paths`): a ``model_copy(update=...)``
+    #: inherits the mark, so its new values are never checked; and pydantic's ``==``
+    #: compares private attributes, so a validated instance no longer equals a
+    #: ``model_construct()`` one with the same fields.
+    _nul_checked: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def _reject_nul_bytes(self) -> "V4BaseModel":
         """Reject any string in this model that contains a NUL byte (#954).
@@ -137,17 +152,25 @@ class V4BaseModel(BaseModel):
           and seconds for the decode and 41,899 inserts that follow.
         * **Responses** are limited by the *number of models*, and that is where the
           real cost is: about 5 µs per model, which on a full 1000-row page of
-          ``VerseOut`` is ~8 ms and roughly doubles that page's validation time. It is
-          bounded — every model-returning v4 read is paginated at 1000 rows, and the one
-          unpaginated read returns ``text/plain``, not models — and it is accepted
-          rather than optimized away. A scalar fast path was tried and recovered only
-          17% of it; the rest is pydantic's per-model validator dispatch, which no
-          cleverness inside the validator can avoid. Exempting response models via
-          :attr:`_checks_nul_bytes` would avoid it, and is deliberately not done: the
-          exemption list is asserted to have exactly one entry so that turning the check
-          off somewhere is a decision, not a habit.
+          ``VerseOut`` is ~8 ms and roughly doubles that page's validation time. Pages
+          now reach 10,000 rows (``/ngrams``, #1029), where it is tens of ms, so it is
+          paid once per instance and no more: see :attr:`_nul_checked`. Before that,
+          a 10,000-row ``/ngrams`` page checked every row twice and spent ~160 ms more
+          building the page. The cost is otherwise accepted rather than optimized away.
+          A scalar fast path was tried and recovered only 17% of it; the rest is
+          pydantic's per-model validator dispatch, which no cleverness inside the
+          validator can avoid. Exempting response models via :attr:`_checks_nul_bytes`
+          would avoid it, and is deliberately not done: the exemption list is asserted
+          to have exactly one entry so that turning the check off somewhere is a
+          decision, not a habit.
+
+        Skipping an instance that already passed opens no hole. Nothing in v4 changes
+        a model's fields after it is built: no model sets ``validate_assignment``, and
+        neither ``model_copy()`` nor ``model_construct()`` is called (see
+        :func:`_nul_byte_paths`). A field assigned after construction was never
+        re-checked anyway, except by the accident of being nested later.
         """
-        if not type(self)._checks_nul_bytes:
+        if not type(self)._checks_nul_bytes or self._nul_checked:
             return self
         roots = [(name, value) for name, value in self.__dict__.items()]
         # ``extra="allow"`` models keep unmodelled keys in __pydantic_extra__ rather than
@@ -171,6 +194,7 @@ class V4BaseModel(BaseModel):
                 NUL_BYTE_ERROR_TEMPLATE,
                 {"fields": found},
             )
+        self._nul_checked = True
         return self
 
 
