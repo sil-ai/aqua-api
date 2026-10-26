@@ -389,9 +389,10 @@ handling once rather than twice.
   different table's rows under the same request with nothing in the response saying so.
   An empty page is the honest answer, and the client's probe keeps working against it.
 * **Peer work is bounded by the page, never by the assessment.** v3 aggregates the peers
-  in SQL over the whole unpaginated result set. Here :func:`_peer_alignments` fetches one
-  page's exact ``(book, chapter, verse, source)`` tuples, for the same reason the text
-  hydration and the ``/ngrams`` occurrence lookup are per page.
+  in SQL over the whole unpaginated result set. Here :func:`_peer_alignments` reads the
+  peers' rows in the chapters the page covers and keeps the page's exact
+  ``(book, chapter, verse, source)`` keys, for the same reason the text hydration and the
+  ``/ngrams`` occurrence lookup are per page.
 
 
 How the text-lengths read is shaped (:func:`get_text_lengths`)
@@ -500,7 +501,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, Text, and_, bindparam, cast, func, or_, select, tuple_
+from sqlalchemy import JSON, Text, and_, bindparam, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -3016,10 +3017,27 @@ async def _peer_alignments(
 ) -> dict[tuple, dict[int, object]]:
     """``{(book, chapter, verse, source): {peer_assessment_id: row}}`` for one page.
 
-    One statement for the whole page over the exact ``(book, chapter, verse, source)``
-    tuples it holds, rather than one per row or a broad ``vref IN (...) AND
-    source IN (...)`` that would over-fetch the cross product of the two lists. The
-    four-column tuple matches ``ix_alignment_scores_grouping``.
+    One statement for the whole page. It reads the peers' rows in the chapters the page
+    covers, one ``book = :b AND chapter BETWEEN :lo AND :hi`` branch per book on the page,
+    and the exact ``(book, chapter, verse, source)`` keys are matched here in Python.
+
+    **Why not filter on the page's keys in SQL** (#1037, measured against production).
+    The original lookup was a row ``IN`` over every key on the page. At a whole book
+    (3,301 keys, two peers) Postgres took 4.2 s to plan it and 21 s to run it, re-checking
+    each candidate row against the full list. Joining the keys instead, either to the
+    page's rows or from ``unnest`` arrays the way :func:`_peer_scores` does, timed out.
+    The only index on the four key columns, ``ix_alignment_scores_grouping``, does not
+    start with ``assessment_id``, so each key's probe reads every assessment's rows for
+    that word. Filtering by book instead is a range read on
+    ``ix_alignment_top_source_scores_assessment_book_chapter``, and for the same page it
+    took 0.5-0.9 s warm (4.4 s cold, mostly disk reads). The match is done here rather
+    than by a join so the planner cannot fall back to that nested loop.
+
+    **The range is always narrowed to chapters, not just to the book.** A small page
+    covers one or two chapters, and reading the peers' whole book for it would be far
+    slower than the 100-key ``IN`` it replaces. What the range reads beyond the page is
+    at most the rest of the first and last chapter in each book, and the key check below
+    discards it.
 
     v3 does this work in SQL, grouping the peers together with ``avg(score)`` and a
     ``jsonb_object_agg`` keyed by revision id, over the whole unpaginated result set.
@@ -3036,6 +3054,10 @@ async def _peer_alignments(
     if not peers or not keys:
         return {}
     peer_ids = {peer.id for peer in peers}
+    chapters_by_book: dict[str, tuple[int, int]] = {}
+    for book, chapter, _verse, _source in keys:
+        low, high = chapters_by_book.get(book, (chapter, chapter))
+        chapters_by_book[book] = (min(low, chapter), max(high, chapter))
     rows = (
         await db.execute(
             select(
@@ -3050,19 +3072,25 @@ async def _peer_alignments(
             )
             .where(
                 AlignmentTopSourceScores.assessment_id.in_(peer_ids),
-                tuple_(
-                    AlignmentTopSourceScores.book,
-                    AlignmentTopSourceScores.chapter,
-                    AlignmentTopSourceScores.verse,
-                    AlignmentTopSourceScores.source,
-                ).in_(keys),
+                or_(
+                    *(
+                        and_(
+                            AlignmentTopSourceScores.book == book,
+                            AlignmentTopSourceScores.chapter.between(low, high),
+                        )
+                        for book, (low, high) in chapters_by_book.items()
+                    )
+                ),
             )
             .order_by(AlignmentTopSourceScores.id)
         )
     ).all()
+    page_keys = set(keys)
     by_key: dict[tuple, dict[int, object]] = {}
     for row in rows:
         key = (row.book, row.chapter, row.verse, row.source)
+        if key not in page_keys:
+            continue
         # setdefault, ordered by id ascending: the lowest-id row wins if the natural key
         # is ever duplicated, as everywhere else in this module.
         by_key.setdefault(key, {}).setdefault(row.assessment_id, row)
@@ -3586,8 +3614,8 @@ async def _peer_scores(
 ) -> dict[tuple, dict[int, float]]:
     """``{group_key: {peer_assessment_id: score}}`` for one page's groups.
 
-    One statement for the whole page, over the exact groups it holds — the same shape
-    :func:`_peer_alignments` uses on ``/missing-words`` and for the same reason. v3
+    One statement for the whole page, over the exact groups it holds, for the same reason
+    :func:`_peer_alignments` is per page on ``/missing-words``. v3
     aggregates its baselines over the entire unpaginated result set; doing it per page is
     what pagination requires, since the distribution has to cover *this page's* groups
     rather than the assessment's.

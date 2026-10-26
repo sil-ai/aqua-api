@@ -9883,6 +9883,100 @@ class TestMissingWordsPeers:
             ("peace", None),
         ]
 
+    def test_peer_rows_inside_the_chapter_range_but_off_the_page_do_not_bleed_in(
+        self, client, regular_token1, db_session, subject
+    ):
+        """#1037: the peer read covers every chapter between the page's first and last
+        in each book, so it fetches rows for words the page does not hold, including the
+        same word in a chapter the page skips. None of them may reach the response."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 1:1", "grace", score=0.01
+        )
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 3:1", "peace", score=0.01
+        )
+        (peer_a, _), _ = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 2:1", "grace", "inrange", score=0.9)
+        _make_alignment(db_session, peer_a, "MAT 3:1", "grace", "wrongword", score=0.9)
+        _make_alignment(db_session, peer_a, "MAT 3:1", "peace", "amani", score=0.9)
+        rows = _rows(
+            _missing_words(
+                client, regular_token1, subject["assessment_id"], against=[peer_a]
+            )
+        )
+        assert [(row["source"], row["targets"][0]["target"]) for row in rows] == [
+            ("grace", None),
+            ("peace", "amani"),
+        ]
+
+    def test_peer_rows_are_matched_across_books_on_one_page(
+        self, client, regular_token1, db_session, subject
+    ):
+        """A page with no book filter spans books; each book gets its own chapter range,
+        so a peer row in another book's chapter that one book's range covers is not read
+        as a match."""
+        _make_alignment(
+            db_session, subject["assessment_id"], "MAT 2:1", "grace", score=0.01
+        )
+        _make_alignment(
+            db_session, subject["assessment_id"], "MRK 5:1", "peace", score=0.01
+        )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        _make_alignment(db_session, peer_a, "MAT 2:1", "grace", "neema", score=0.9)
+        _make_alignment(db_session, peer_b, "MRK 5:1", "peace", "amani", score=0.9)
+        # Inside MAT's range (2..2) under MRK's chapter number, and vice versa: neither
+        # range covers it in its own book.
+        _make_alignment(db_session, peer_a, "MRK 2:1", "grace", "wrongbook", score=0.9)
+        _make_alignment(db_session, peer_b, "MAT 5:1", "peace", "wrongbook", score=0.9)
+        rows = _rows(
+            _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        )
+        assert [
+            (row["vref"], [t["target"] for t in row["targets"]]) for row in rows
+        ] == [
+            ("MAT 2:1", ["neema", None]),
+            ("MRK 5:1", [None, "amani"]),
+        ]
+
+    def test_the_peer_query_does_not_grow_with_the_page(
+        self, client, regular_token1, db_session, subject
+    ):
+        """#1037: the old lookup bound four parameters per row on the page, which is what
+        made a whole-book page take ~30 s to plan and run. The chapter-range read binds a
+        fixed number per book, however many rows the page holds."""
+        for n in range(1, 21):
+            _make_alignment(
+                db_session,
+                subject["assessment_id"],
+                f"MAT 1:{n}",
+                f"w{n}",
+                score=0.01,
+            )
+        (peer_a, _), (peer_b, _) = subject["peers"]
+        with _captured_sql() as captured:
+            resp = _missing_words(
+                client,
+                regular_token1,
+                subject["assessment_id"],
+                against=[peer_a, peer_b],
+            )
+        assert len(_rows(resp)) == 20
+        peer_selects = [
+            parameters
+            for statement, parameters in _touching(
+                captured, "alignment_top_source_scores"
+            )
+            if "SELECT" in statement and "BETWEEN" in statement
+        ]
+        assert len(peer_selects) == 1
+        # Two peer ids, then book, low and high chapter for the one book.
+        assert len(peer_selects[0]) == 5
+
 
 class TestMissingWordsPage:
     """The pagination this read has never had."""
