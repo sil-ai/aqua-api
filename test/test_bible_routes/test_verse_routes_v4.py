@@ -465,8 +465,9 @@ class TestScope:
         self, client, regular_token1, genesis_revision
     ):
         """Exactly at the cap succeeds — the boundary is inclusive, and the one page a
-        maximum-size list can produce fits under the maximum page size by construction,
-        since ``MAX_VREFS`` and ``VERSE_MAX_LIMIT`` are the same number."""
+        maximum-size list can produce fits under the maximum page size, since
+        ``MAX_VREFS`` is at most ``VERSE_MAX_LIMIT``."""
+        assert MAX_VREFS <= VERSE_MAX_LIMIT
         vrefs = list(VREF_LINES[:MAX_VREFS])
         assert len(vrefs) == MAX_VREFS
         page = _page(
@@ -1090,7 +1091,8 @@ class TestPagination:
         page = _page(
             _verses(client, regular_token1, genesis_revision, limit=VERSE_MAX_LIMIT)
         )
-        assert page["limit"] == VERSE_MAX_LIMIT == 1000
+        # 10,000 so the web app reads a whole book in one request (#1031).
+        assert page["limit"] == VERSE_MAX_LIMIT == 10_000
 
     def test_over_the_ceiling_is_a_422_not_a_clamp(
         self, client, regular_token1, genesis_revision
@@ -2232,7 +2234,9 @@ class TestTextSearchPaging:
         """Not the verse read's 200 default: a search page is read, not bulk-fetched."""
         assert TEXT_SEARCH_DEFAULT_LIMIT == 10
         assert TEXT_SEARCH_DEFAULT_LIMIT != VERSE_DEFAULT_LIMIT
-        assert TEXT_SEARCH_MAX_LIMIT == VERSE_MAX_LIMIT == 1000
+        # Not the verse read's 10,000 (#1031): nothing reads a search whole.
+        assert TEXT_SEARCH_MAX_LIMIT == 1000
+        assert TEXT_SEARCH_MAX_LIMIT < VERSE_MAX_LIMIT
 
 
 class TestTextSearchRandom:

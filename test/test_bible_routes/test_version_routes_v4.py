@@ -33,6 +33,7 @@ defect deliberately not carried over (see ``version_service``'s module docstring
 from datetime import datetime
 
 from api_v4.delta import DELTA_SAFETY_LAP, next_watermark
+from api_v4.pagination import CATALOG_MAX_LIMIT
 from database.models import BibleVersion as BibleVersionModel
 from database.models import BibleVersionAccess, Group
 from database.models import UserDB as UserModel
@@ -420,11 +421,19 @@ class TestListAndGet:
         assert (
             client.get(
                 f"{PREFIX}/versions",
-                params={"limit": 101},
+                params={"limit": CATALOG_MAX_LIMIT + 1},
                 headers=_auth(regular_token1),
             ).status_code
             == 422
         )
+        # 10,000, not the shared 100: the web app's sync reads the whole list (#1030).
+        at_max = client.get(
+            f"{PREFIX}/versions",
+            params={"limit": CATALOG_MAX_LIMIT},
+            headers=_auth(regular_token1),
+        )
+        assert at_max.status_code == 200, at_max.text
+        assert at_max.json()["limit"] == CATALOG_MAX_LIMIT == 10_000
 
 
 class TestDelete:

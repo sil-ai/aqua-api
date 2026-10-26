@@ -43,7 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
 from api_v4.errors import V4_FORBIDDEN_RESPONSE, V4APIError, error_responses
-from api_v4.pagination import PaginationParams, V4Page
+from api_v4.pagination import CatalogPaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
 from bible_routes.v4 import version_service
 from database.dependencies import get_db
@@ -87,7 +87,7 @@ def _to_out(version: BibleVersion, group_ids: list[int]) -> VersionOut:
 
 @router.get("", response_model=V4Page[VersionOut])
 async def list_versions(
-    page: PaginationParams = Depends(),
+    page: CatalogPaginationParams = Depends(),
     include_deleted: bool = False,
     # Optional[...] rather than `datetime | None` only because black splits the
     # union across lines when it carries a Query() default; identical semantics.

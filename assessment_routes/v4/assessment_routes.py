@@ -213,16 +213,17 @@ that a rolled-up z-score is a mean of per-verse z-scores; the endpoint and the f
 descriptions both say so.
 
 **The result reads declare their own pagination and their own scope, and neither is
-re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than the
-shared catalog params (20/100), because a results consumer wants bulk —
+re-validated in the handler.** Each takes its own params rather than the shared ones
+(20/100), because a results consumer wants bulk —
 :mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
-the shared cap. The same bounds apply to both alignment reads: the bound follows the
-row's weight, and these are small fixed-width rows. The three reads a client reads
-*whole* (``/results``, ``/text-lengths``, ``/score-comparison``) take
+the shared cap. The two word-keyed reads (``/alignment-scores``, ``/missing-words``) take
+``WordResultPaginationParams``, 100/10,000, because a book of them can run to thousands
+of rows (one per word) and the web app reads a whole book at once (#1031). The three
+reads a client reads *whole* (``/results``, ``/text-lengths``, ``/score-comparison``) take
 ``BulkResultPaginationParams`` instead, 100/3000, so any one book or any rollup over
 the whole text is a single request (#1010). ``/ngrams`` is the exception: it
-takes ``NgramPaginationParams`` (20/1000), the result reads' ceiling with the catalog's
-default, because it shipped with a default of 20. Its route docstring says why.
+takes ``NgramPaginationParams`` (20/10,000), v3's ceiling with the catalog's default,
+because it shipped with a default of 20. Its route docstring says why.
 :class:`VerseScopeParams` and :class:`ResultScopeParams` are thin adapters over
 :class:`~api_v4.schemas.assessment.VerseScope` and its ``aggregate``-carrying subclass,
 whose ``model_validator`` methods hold the parameters' invariants, so an inconsistent
@@ -258,10 +259,10 @@ from api_v4.jobs import (
 )
 from api_v4.pagination import (
     BulkResultPaginationParams,
+    CatalogPaginationParams,
     NgramPaginationParams,
-    PaginationParams,
-    ResultPaginationParams,
     V4Page,
+    WordResultPaginationParams,
 )
 from api_v4.schemas.assessment import (
     ALIGNMENT_SUMMARY_DEFAULT_LIMIT,
@@ -578,7 +579,7 @@ def _incompatible_peer_error(
     response_model=V4Page[AssessmentOut],
 )
 async def list_assessments(
-    page: PaginationParams = Depends(),
+    page: CatalogPaginationParams = Depends(),
     # Optional[...] rather than `X | None` only because black splits the union across
     # lines when it carries a Query() default; identical semantics. Same below.
     ids: Optional[List[int]] = Query(
@@ -1035,12 +1036,12 @@ async def get_assessment_ngrams(
     `limit`/`offset`.
 
     **The default page is 20 rows, smaller than the 100 on the other result reads here.
-    The maximum is the same 1000.** 20 is what this read has always defaulted to, and
-    changing a default silently changes the size of every response a client gets. A
-    client that reads the whole assessment should send `limit=1000`: a page costs about
-    the same to serve at any size, so fewer, larger pages are much faster than many
-    small ones. An n-gram row is usually small (around 140 bytes), and a 1000-row page
-    is typically around 200 KB.
+    The maximum is 10,000, larger than theirs.** 20 is what this read has always
+    defaulted to, and changing a default silently changes the size of every response a
+    client gets. A client that reads the whole assessment should send `limit=10000`: a
+    page costs about the same to serve at any size, so fewer, larger pages are much
+    faster than many small ones. An n-gram row is usually small (around 140 bytes), and
+    a 10,000-row page is typically around 2 MB.
     """
     try:
         rows, total = await assessment_service.get_ngrams(
@@ -1350,7 +1351,7 @@ async def post_assessment_similar_verses(
 )
 async def get_assessment_alignment_scores(
     assessment_id: int,
-    page: ResultPaginationParams = Depends(),
+    page: WordResultPaginationParams = Depends(),
     scope: VerseScopeParams = Depends(),
     score_type: AlignmentScoreType = Query(
         AlignmentScoreType.top,
@@ -1405,7 +1406,7 @@ async def get_assessment_alignment_scores(
     Everything it returned is here, verse text included.
 
     **Filter before you page.** An unfiltered word-alignment assessment holds on the
-    order of 242,000 rows — roughly 2,400 pages at the maximum page size. `source`,
+    order of 242,000 rows — roughly 25 pages even at the maximum page size. `source`,
     `min_score` and the `book`/`chapter`/`verse` scope are how this read is meant to be
     used, not conveniences bolted on.
 
@@ -1555,7 +1556,7 @@ async def get_assessment_alignment_summary(
 )
 async def get_assessment_missing_words(
     assessment_id: int,
-    page: ResultPaginationParams = Depends(),
+    page: WordResultPaginationParams = Depends(),
     scope: VerseScopeParams = Depends(),
     max_score: float = Query(
         settings.missing_words_missing_threshold,
@@ -1617,9 +1618,9 @@ async def get_assessment_missing_words(
 
     **This read is paginated, which v3's was not.** v3 returned the whole filtered set
     and declared no page parameters at all, so a client that sent them had them silently
-    discarded. `limit` is capped at the same 1000 the other result reads use. In practice
-    the filtered set is small — measured at a few hundred rows for a whole book — so a
-    book-scoped request is usually one page, but a whole-Bible request is not.
+    discarded. `limit` goes up to 10,000, enough for a whole book in one request: the
+    largest measured book is about 8,200 rows. A client that reads a whole book should
+    send the maximum. A whole-Bible request may still take more than one page.
 
     Rows are in canonical Bible order, then by source word, then by stored row id.
     """

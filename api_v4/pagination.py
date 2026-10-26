@@ -39,20 +39,27 @@ handler already knows how to shape. Rejecting rather than clamping is explicit a
 self-documenting in OpenAPI: a caller learns their request was malformed instead of
 silently receiving a different page than they asked for.
 
-**DEFAULT_LIMIT / MAX_LIMIT = 20 / 100.** These are the documented default page
-size and hard ceiling for the v4 *catalog* lists (versions, revisions,
-assessments). v3's ``le=1000`` / ``le=10_000`` caps live on the verse-level
-*result / search* endpoints — a different, far larger category — and even there v3
-had to add a separate absolute SQL cap because an unbounded ``limit=1000`` could
-pull tens of thousands of rows. 100 keeps a single v4 page's payload and DB scan
-bounded; a client that needs more walks pages via ``offset``. This is a policy
-decision, not a hard constraint: a future heavy list that genuinely needs a larger
-ceiling should define its own params dependency rather than raise this shared cap.
+**Each list's maximum is sized so its real clients' normal reads take one request, as
+on v3.** On v4 most of a request's cost is fixed: auth, the session, the count and the
+round trip cost about the same for 1 row as for 100. So a ceiling below what a client
+reads in one go makes v4 slower than v3 through the request count alone, and splitting
+the read into concurrent pages does not win it back (#1029, #1030). A ceiling still
+exists, and still rejects rather than clamps, so no one request can ask for more than
+the largest read a known client makes. The default is the part that binds a client
+that does not ask, and is set separately.
+
+**DEFAULT_LIMIT / MAX_LIMIT = 20 / 100** is the shared policy on
+:class:`PaginationParams`, used today by the training-job lists, groups and users.
+None of them has a client that reads more than a page of a person's own rows. A list
+whose client needs more defines its own params dependency rather than raising this
+shared cap, so the change cannot widen another list's.
 
 :class:`ResultPaginationParams` is the first list to take that route (#893). It
-subclasses this one with a 100/1000 policy for the verse-level *result* reads, so
-the two ceilings sit side by side and the catalog cap stays where the catalog
-lists want it. :class:`VersePaginationParams` (#892) is the second, with a 200/1000
+subclasses this one with a 100/1000 policy, now used only by the agent result reads.
+:class:`BulkResultPaginationParams` (#1010) is its 100/3000 sibling for the result reads
+a client reads whole, and :class:`WordResultPaginationParams` (#1031) its 100/10,000
+sibling for the two word-keyed reads (``/missing-words``, ``/alignment-scores``).
+:class:`VersePaginationParams` (#892) is the second, with a 200/10,000
 policy for the verse *text* read. :class:`TextSearchPaginationParams` (#893) is the
 third, with a 10/1000 policy for the text search — the *smallest* default on the
 surface, and the one that shows the pattern is about matching consumers rather than
@@ -60,12 +67,14 @@ about growing: a search page is something a person looks at, and each of its row
 carry alignment links. :class:`ReferencePaginationParams` (#951) is the fourth, and
 the only one whose default *is* its maximum — see its docstring for why a list bounded
 by an ISO standard rather than by usage is a different kind of list.
-:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/1000 policy for the n-gram
-read: the catalog's default, because a default is the part that binds once clients
-exist, and the result reads' ceiling, because its one client walks the whole corpus.
-Six dependencies rather than one shared cap is the intended shape, not drift: each names
-a page size sized to what its own consumers actually ask for, and none of them can widen
-another.
+:class:`NgramPaginationParams` (#1011) is the fifth, with a 20/10,000 policy for the
+n-gram read: the shared default, because a default is the part that binds once
+clients exist, and v3's own ceiling, because its one client walks the whole corpus.
+:class:`CatalogPaginationParams` (#1030) is the sixth, with a 20/10,000 policy for the
+catalog lists (versions, revisions, assessments), which the web app's sync reads in full.
+One dependency per kind of list rather than one shared cap is the intended shape, not
+drift: each names a page size sized to what its own consumers actually ask for, and none
+of them can widen another.
 
 **``total`` costs a second query, and a client can decline it.** ``total`` is a ``COUNT``
 over everything the page is drawn from. On a rollup (``/results?aggregate=``,
@@ -95,8 +104,9 @@ from api_v4.schemas.base import V4BaseModel
 
 #: Default page size when a caller supplies no ``limit``.
 DEFAULT_LIMIT = 20
-#: Hard maximum page size; ``limit`` above this is a 422, not a clamp. See the
-#: module docstring for why 100 (and not v3's result-endpoint ``le=1000``).
+#: Hard maximum page size; ``limit`` above this is a 422, not a clamp. Shared by every
+#: list on :class:`PaginationParams` (training jobs, groups, users); the catalog lists
+#: have their own, :data:`CATALOG_MAX_LIMIT`. See the module docstring.
 MAX_LIMIT = 100
 
 
@@ -172,11 +182,17 @@ RESULT_DEFAULT_LIMIT = 100
 #: unusually thin *because* v3 never populated the text fields; if a later read serves
 #: verse text, rows reach ~700-1000 bytes and a 5000-row page becomes 3-5 MB. Sizing
 #: the ceiling against the thin row would lock in a number to regret.
+#:
+#: Only the agent reads (critique issues, translations) still use it. Every other result
+#: read has since moved to a ceiling sized to how its client reads it:
+#: :data:`RESULT_BULK_MAX_LIMIT`, :data:`WORD_RESULT_MAX_LIMIT` and
+#: :data:`NGRAM_MAX_LIMIT`. An agent run is one chapter, so its result sets are smaller
+#: than one default page and nothing asks for more.
 RESULT_MAX_LIMIT = 1000
 
 
 class ResultPaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the verse-level result reads: 100 by default, 1000 max.
+    """``limit`` / ``offset`` for the agent result reads: 100 by default, 1000 max.
 
     Consumed exactly like the shared params — ``page: ResultPaginationParams = Depends()``
     — and interchangeable with them at :meth:`V4Page.create`, which is why this subclasses
@@ -184,14 +200,14 @@ class ResultPaginationParams(PaginationParams):
     through the same envelope.
 
     A separate dependency rather than a wider bound on the shared one, per the module
-    docstring: the catalog lists (versions, revisions, assessments) have no reason to
-    serve 1000 rows, and a shared cap raised for one consumer silently widens every
-    other. Out-of-range values are a 422 here too — the bounds are the same ``Query``
+    docstring: the lists on the shared params (training jobs, groups, users) have no
+    reason to serve 1000 rows, and a shared cap raised for one consumer silently widens
+    every other. Out-of-range values are a 422 here too — the bounds are the same ``Query``
     mechanism, only the numbers differ.
 
     ``super().__init__`` is deliberately **not** called: its whole body is the two
     ``Query`` defaults being replaced, and FastAPI reads the signature of *this*
-    ``__init__`` to declare the parameters. Calling it would re-declare the catalog
+    ``__init__`` to declare the parameters. Calling it would re-declare the shared
     bounds this class exists to override.
     """
 
@@ -234,8 +250,9 @@ class ResultPaginationParams(PaginationParams):
 #: This gives up the caution :data:`RESULT_MAX_LIMIT` records (a ceiling is a one-way
 #: door, and a verse row may one day carry text). That was a guard against a row weight
 #: nothing serves today: at ~200 bytes a row, a full 3000-row page is ~600 KB. The
-#: decision was made for #1010 with the one client still in development. The alignment
-#: and agent reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole.
+#: decision was made for #1010 with the one client still in development. The agent
+#: reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole. The two
+#: word-keyed reads have their own, larger ceiling, :data:`WORD_RESULT_MAX_LIMIT`.
 RESULT_BULK_MAX_LIMIT = 3000
 
 
@@ -278,6 +295,64 @@ class BulkResultPaginationParams(PaginationParams):
         self.include_total: bool = include_total
 
 
+#: Hard maximum page size for the two word-keyed result reads, ``/missing-words`` and
+#: ``/alignment-scores``; above this is a 422, not a clamp.
+#:
+#: 10,000 so the web app reads a whole book in one request, as it does on v3 (#1031).
+#: v3 returns both reads whole, with no paging at all. A row here is keyed by word, not
+#: verse, so a book is not bounded by its verse count the way
+#: :data:`RESULT_BULK_MAX_LIMIT` is: missing words for Genesis on one staging assessment
+#: is 8,205 rows. Each v4 request has a large fixed cost (0.52 s at ``limit=1`` for that
+#: read, 0.66 s at 1000), so at a ceiling of 1000 that book took 9 requests and 2.42 s
+#: against v3's 1.80 s. Measured on staging on 26 October 2026.
+#:
+#: These rows are heavier than ``/results``': an alignment-score row carries the verse
+#: and reference text, and a missing-word row one target per peer. No full page has been
+#: measured. v3 has always sent the whole filtered set in one response, which is larger
+#: than any one page here. The default stays at :data:`RESULT_DEFAULT_LIMIT`, so only a
+#: client that asks for a big page gets one.
+WORD_RESULT_MAX_LIMIT = 10_000
+
+
+class WordResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the word-keyed result reads: 100 by default, 10,000 max.
+
+    Used by ``GET /v4/assessments/{id}/missing-words`` and
+    ``GET /v4/assessments/{id}/alignment-scores``. :class:`ResultPaginationParams` with
+    a higher ceiling, :data:`WORD_RESULT_MAX_LIMIT`, so the agent reads that keep that
+    class are not widened. ``super().__init__`` is not called, for the reason
+    :class:`ResultPaginationParams` gives.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            RESULT_DEFAULT_LIMIT,
+            ge=1,
+            le=WORD_RESULT_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
+                f"{WORD_RESULT_MAX_LIMIT} (out-of-range values are rejected with 422, "
+                f"not clamped). A client that reads a whole book should send the "
+                f"maximum."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
+
+
 #: Default page size for the verses read. 200 rather than the results read's 100 because
 #: the request this endpoint most often serves is *one chapter* — v3's ``GET /chapter``
 #: is the second-busiest verse endpoint in the one known client — and the longest chapter
@@ -285,24 +360,28 @@ class BulkResultPaginationParams(PaginationParams):
 #: whole unit across two pages for no reason; 200 covers every chapter in the canon in a
 #: single default-sized page.
 VERSE_DEFAULT_LIMIT = 200
-#: Hard maximum page size for the verses read; above this is a 422, not a clamp. 1000
-#: matches both the result reads' ceiling and
-#: :data:`api_v4.schemas.bible.MAX_VREFS`, so a caller who asks for the maximum number of
-#: verse references can receive all of them in one page and there is a single number to
-#: remember across the verse-level surface.
+#: Hard maximum page size for the verses read; above this is a 422, not a clamp.
 #:
-#: Not larger, and this is the read the shared module docstring's warning was written
-#: about: a result row is ~194 bytes *because* v3 never populated its text fields, while
-#: a verse row carries the verse itself. Measured whole-revision exports run 250 KB for a
-#: gospel to 9.4 MB for a full Bible — and size tracks script and language far more than
-#: verse count, since one measured revision has 21% fewer verses than another and is 2.4x
-#: larger. At the worst measured density a 1000-row page is well under a megabyte; at
-#: 5000 it would not be. Size nothing here off verse counts.
-VERSE_MAX_LIMIT = 1000
+#: 10,000 so the web app reads a whole book in one request, as it does on v3 (#1031).
+#: Each v4 request has a fixed cost (0.29 s at ``limit=1`` for Psalms, 0.40 s at 1000),
+#: so at a ceiling of 1000 Psalms took 3 requests and 0.57 s against v3's 0.32 s.
+#: Measured on staging on 26 October 2026. 10,000 rather than 3,000 (Psalms is 2,527
+#: verses) so the verse-level reads the app reads whole share one number.
+#:
+#: A verse row carries the verse text, so page size tracks script and language more than
+#: verse count. Measured whole-revision exports run 250 KB for a gospel to 9.4 MB for a
+#: full Bible, so a 10,000-row page can reach about 3 MB. v3's ``/text`` sends a whole
+#: revision in one response, and has for years, so this is still tighter than v3. The
+#: default stays at :data:`VERSE_DEFAULT_LIMIT`.
+#:
+#: Not tied to :data:`api_v4.schemas.bible.MAX_VREFS`, which stays at 1000 because it is
+#: bounded by URL length, not page size. What matters is that a full ``only_vrefs`` list
+#: fits in one page, and it does.
+VERSE_MAX_LIMIT = 10_000
 
 
 class VersePaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the verses read: 200 by default, 1000 max.
+    """``limit`` / ``offset`` for the verses read: 200 by default, 10,000 max.
 
     Consumed as ``page: VersePaginationParams = Depends()`` and interchangeable with the
     other two at :meth:`V4Page.create`, for the reason
@@ -310,7 +389,7 @@ class VersePaginationParams(PaginationParams):
     limit produced it through the one envelope.
 
     ``super().__init__`` is deliberately not called here either; see
-    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    :class:`ResultPaginationParams` for why re-declaring the shared bounds would defeat
     the override.
 
     Note ``GET /v4/revisions/{id}/text`` takes **no** pagination dependency at all: it is
@@ -356,8 +435,8 @@ class VersePaginationParams(PaginationParams):
 TEXT_SEARCH_DEFAULT_LIMIT = 10
 #: Hard maximum page size for the text search; above this is a 422, not a clamp. 1000 is
 #: v3's own ``le=1000`` on this endpoint, unchanged, so nothing a v3 caller can ask for is
-#: lost — and it is the same ceiling the result and verse reads carry, which keeps one
-#: number to remember across the whole verse-level surface.
+#: lost. The verse read went to 10,000 (#1031) because the web app reads a whole book of
+#: it at once. A search page is read by a person, so nothing asks for that here.
 TEXT_SEARCH_MAX_LIMIT = 1000
 
 
@@ -369,7 +448,7 @@ class TextSearchPaginationParams(PaginationParams):
     :class:`ResultPaginationParams` documents.
 
     ``super().__init__`` is deliberately not called here either; see
-    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    :class:`ResultPaginationParams` for why re-declaring the shared bounds would defeat
     the override.
 
     **``offset`` is a v4 addition to this endpoint, not a port.** v3's ``/textsearch`` has
@@ -449,7 +528,7 @@ class ReferencePaginationParams(PaginationParams):
     declares no ``le`` on its echoed ``limit``, so a 10,000 echoes back and validates.
 
     ``super().__init__`` is deliberately not called here either; see
-    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    :class:`ResultPaginationParams` for why re-declaring the shared bounds would defeat
     the override.
 
     See :data:`REFERENCE_DEFAULT_LIMIT` for why the default and the maximum are the same
@@ -493,32 +572,32 @@ class ReferencePaginationParams(PaginationParams):
 NGRAM_DEFAULT_LIMIT = DEFAULT_LIMIT
 #: Hard maximum page size for the n-gram read; above this is a 422, not a clamp.
 #:
-#: 1000 because the one client walks the whole corpus. The web UI's Repeated Phrases
-#: card loads the first 10,000 n-grams per side and filters, sorts and counts across
-#: all of them. A page costs about 0.19 s whatever its size, and client-side
-#: concurrency does not help (the server saturates at about 44 pages/s), so load time
-#: scales with the number of requests. At a ceiling of 100 that is 200 requests and
-#: 4.2 s; at 1000 it is 20, about v3's 1.4 s. Measured on staging, 16 October 2026.
+#: 10,000 so the one client reads each side in one request, as it does on v3 (#1029).
+#: The web UI's Repeated Phrases card loads the first 10,000 n-grams per side and
+#: filters, sorts and counts across all of them. Each request costs about 0.2 s however
+#: many rows it returns, and sending pages concurrently does not help, so load time
+#: follows the number of requests. Measured on staging on 26 October 2026, both sides
+#: loaded together: v3 (one request per side) 1.42 s, v4 at a ceiling of 1000 (ten per
+#: side) 1.85 s. v3's ``/ngrams_result`` has served ``page_size=10000`` for years.
 #:
-#: The row's weight is the ``occurrences`` list, which has no cap. It is long in
-#: principle, not in practice: across every row of two full staging corpora (58,024
-#: and 55,689 n-grams) the mean row was ~137 bytes, the largest 531 bytes, the longest
-#: list 23 entries and the 99th percentile 5. The largest 1000-row page was 220 KB,
-#: smaller than an ``/alignment-scores`` page at that read's own ceiling. Not higher
-#: than 1000 for the reason :data:`RESULT_MAX_LIMIT` gives: raising a ceiling later
-#: is non-breaking and lowering it is not.
-NGRAM_MAX_LIMIT = 1000
+#: The row's weight is the ``occurrences`` list, which has no cap; that is why #930 and
+#: #1011 kept this tight. It is long in principle, not in practice: across every row of
+#: two full staging corpora (58,024 and 55,689 n-grams) the mean row was ~137 bytes, the
+#: largest 531 bytes, the longest list 23 entries and the 99th percentile 5. The largest
+#: 1000-row page was 220 KB, so a 10,000-row page is about 2 MB. The default stays at
+#: 20, so only a client that asks for a big page gets one.
+NGRAM_MAX_LIMIT = 10_000
 
 
 class NgramPaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the n-gram read: 20 by default, 1000 max.
+    """``limit`` / ``offset`` for the n-gram read: 20 by default, 10,000 max.
 
     Consumed as ``page: NgramPaginationParams = Depends()`` and interchangeable with the
     others at :meth:`V4Page.create`, for the reason :class:`ResultPaginationParams`
     documents.
 
     ``super().__init__`` is deliberately not called here either; see
-    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    :class:`ResultPaginationParams` for why re-declaring the shared bounds would defeat
     the override.
 
     See :data:`NGRAM_DEFAULT_LIMIT` and :data:`NGRAM_MAX_LIMIT` for where each number
@@ -536,6 +615,70 @@ class NgramPaginationParams(PaginationParams):
                 f"{NGRAM_DEFAULT_LIMIT}; must be between 1 and {NGRAM_MAX_LIMIT} "
                 f"(out-of-range values are rejected with 422, not clamped). A client "
                 f"that reads the whole assessment should send the maximum."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
+
+
+#: Default page size for the catalog lists (versions, revisions, assessments). The
+#: shared 20, kept as it was: changing a default once clients exist silently changes
+#: every response they get.
+CATALOG_DEFAULT_LIMIT = DEFAULT_LIMIT
+#: Hard maximum page size for the catalog lists; above this is a 422, not a clamp.
+#:
+#: 10,000 so the web app's full sync is a handful of requests, not hundreds (#1030). The
+#: app reads all three lists whole, with the admin token and ``include_deleted=true``, on
+#: its first sync and again every 24 hours. v3 returns each list in one response. At the
+#: shared ceiling of 100 that was 361 requests for assessments (~36,000 rows) and 275 for
+#: revisions (~27,000). Measured on staging on 26 October 2026, median of 3: assessments
+#: v3 4.3 s against v4 20.7 s, revisions 3.5 s against 9.7 s. A v4 request cost about
+#: 0.3 s whether it returned 1 row or 100, so the time was almost all request count.
+#:
+#: At 10,000 an assessments page is about 4 MB. v3 has served the whole list, about
+#: 15 MB, in one response for years. The default stays at 20, so only a client that asks
+#: for a big page gets one.
+CATALOG_MAX_LIMIT = 10_000
+
+
+class CatalogPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the catalog lists: 20 by default, 10,000 max.
+
+    Used by ``GET /v4/versions``, ``GET /v4/revisions`` and ``GET /v4/assessments``.
+    Consumed as ``page: CatalogPaginationParams = Depends()`` and interchangeable with
+    the others at :meth:`V4Page.create`, for the reason :class:`ResultPaginationParams`
+    documents.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the shared bounds would defeat
+    the override.
+
+    See :data:`CATALOG_DEFAULT_LIMIT` and :data:`CATALOG_MAX_LIMIT` for where each
+    number comes from.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            CATALOG_DEFAULT_LIMIT,
+            ge=1,
+            le=CATALOG_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{CATALOG_DEFAULT_LIMIT}; must be between 1 and {CATALOG_MAX_LIMIT} "
+                f"(out-of-range values are rejected with 422, not clamped). A client "
+                f"that reads the whole list should send the maximum."
             ),
         ),
         offset: int = Query(

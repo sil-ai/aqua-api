@@ -3177,9 +3177,10 @@ async def get_missing_words(
     "page 2". Measured against production the filtered set is far smaller than the
     ~242,000 rows an unfiltered assessment holds — 1,495 and 4,868 rows whole-Bible on
     two sampled assessments at the default threshold, with the largest single book at
-    284 — so the client's actual per-book call fits inside one 1000-row page. The change
-    is still real and belongs in the migration guide; it is just not the cliff the raw
-    table size suggests.
+    284. Other assessments run far larger: Genesis on staging assessment 2666 is 8,205
+    rows. The page ceiling is 10,000 (#1031) so a whole book is still one request. The
+    change is still real and belongs in the migration guide; it is just not the cliff the
+    raw table size suggests.
     """
     subject = await get_assessment(
         db, user, assessment_id, types=ALIGNMENT_ASSESSMENT_TYPES

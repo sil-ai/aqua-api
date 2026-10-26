@@ -149,18 +149,20 @@ from sqlalchemy.pool import NullPool
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
 from api_v4.pagination import (
+    CATALOG_MAX_LIMIT,
     DEFAULT_LIMIT,
-    MAX_LIMIT,
     NGRAM_DEFAULT_LIMIT,
     NGRAM_MAX_LIMIT,
     RESULT_BULK_MAX_LIMIT,
     RESULT_DEFAULT_LIMIT,
-    RESULT_MAX_LIMIT,
+    WORD_RESULT_MAX_LIMIT,
     BulkResultPaginationParams,
+    CatalogPaginationParams,
     NgramPaginationParams,
     PaginationParams,
     ResultPaginationParams,
     V4Page,
+    WordResultPaginationParams,
 )
 from api_v4.schemas.assessment import (
     ALIGNMENT_SUMMARY_MAX_LIMIT,
@@ -2527,9 +2529,25 @@ class TestList:
         assert body["next_updated_since"] is not None
 
     def test_out_of_range_limit_is_a_422_not_a_clamp(self, client, regular_token1):
-        resp = _list(client, regular_token1, limit=MAX_LIMIT + 1)
+        resp = _list(client, regular_token1, limit=CATALOG_MAX_LIMIT + 1)
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_limit_at_the_catalog_max_is_accepted(self, client, regular_token1):
+        """10,000, not the shared 100: the web app's sync reads the whole list, one
+        request on v3 (#1030)."""
+        resp = _list(client, regular_token1, limit=CATALOG_MAX_LIMIT)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == CATALOG_MAX_LIMIT == 10_000
+
+    def test_the_route_uses_the_catalog_pagination_dependency(self):
+        """Not the shared ``PaginationParams``: raising that cap would widen the
+        training-job, group and user lists too."""
+        route = _route("list_assessments")
+        assert any(
+            dependency.call is CatalogPaginationParams
+            for dependency in route.dependant.dependencies
+        )
 
     def test_items_carry_the_public_state_not_the_internal_status(
         self, client, regular_token1, db_session, group1_version
@@ -3522,19 +3540,18 @@ class TestResultsPage:
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
 
-    def test_raising_this_cap_did_not_raise_the_catalog_cap(
+    def test_this_cap_and_the_catalog_cap_are_independent(
         self, client, regular_token1, db_session, group1_version
     ):
-        """The reason this is its own dependency rather than a wider bound on the shared
-        one: the same limit is legal here and rejected on the assessments list."""
+        """Each list has its own dependency rather than one shared bound: the same
+        limit is rejected here and legal on the assessments list (#1030)."""
         assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        over = RESULT_BULK_MAX_LIMIT + 1
         assert (
-            _results(
-                client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
-            ).status_code
-            == 200
+            _results(client, regular_token1, assessment_id, limit=over).status_code
+            == 422
         )
-        assert _list(client, regular_token1, limit=MAX_LIMIT + 1).status_code == 422
+        assert _list(client, regular_token1, limit=over).status_code == 200
 
     def test_order_is_canonical_and_not_insertion_order(
         self, client, regular_token1, db_session, group1_version
@@ -4228,7 +4245,7 @@ class TestResultsSchemaContract:
         assert route.response_model.__name__.startswith("V4Page")
 
     def test_the_route_uses_the_result_pagination_dependency(self):
-        """Not the shared catalog params — the whole point of #893 decision 3, and the
+        """Not the shared params — the whole point of #893 decision 3, and the
         thing a well-meaning cleanup would "simplify" back."""
         route = _route("get_assessment_results")
         assert any(
@@ -4682,12 +4699,12 @@ class TestNgramsPage:
     def test_limit_at_the_ngram_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
-        """1000, not the catalog's 100: the web UI walks 10,000 n-grams per side
-        (#1011)."""
+        """10,000, not the shared 100: the web UI walks 10,000 n-grams per side,
+        one request each as on v3 (#1011, #1029)."""
         assessment_id = self._with_ngrams(db_session, group1_version, 1)
         resp = _ngrams(client, regular_token1, assessment_id, limit=NGRAM_MAX_LIMIT)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 1000
+        assert resp.json()["limit"] == NGRAM_MAX_LIMIT == 10_000
 
     def test_limit_above_the_ngram_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
@@ -4848,8 +4865,8 @@ class TestNgramsSchemaContract:
         assert declared == {"limit", "offset", "include_total"}
 
     def test_the_route_uses_its_own_pagination_dependency(self):
-        """Not the catalog's ``PaginationParams`` (raising that cap would widen the
-        catalog lists too) and not ``ResultPaginationParams`` (whose default of 100
+        """Not the shared ``PaginationParams`` (raising that cap would widen every
+        list on it) and not ``ResultPaginationParams`` (whose default of 100
         would change what a client that omits ``limit`` gets)."""
         route = _route("get_assessment_ngrams")
         assert any(
@@ -4866,7 +4883,7 @@ class TestNgramsSchemaContract:
         ]
         limit = next(p for p in params if p["name"] == "limit")
         assert limit["schema"]["default"] == 20
-        assert limit["schema"]["maximum"] == 1000
+        assert limit["schema"]["maximum"] == 10_000
 
     def test_the_route_returns_a_page_of_ngram_rows(self):
         route = _route("get_assessment_ngrams")
@@ -8541,29 +8558,29 @@ class TestAlignmentScoresPage:
     def test_the_default_limit_is_the_result_default_not_the_catalog_one(
         self, client, regular_token1, db_session, group1_version
     ):
-        """These are small fixed-width rows, so they take ``/results``' bounds — the
-        rule is that the bound follows the row's weight, not the endpoint's family."""
+        """The result reads' default of 100, not the catalog's 20."""
         assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
         body = _alignment_scores(client, regular_token1, assessment_id).json()
         assert body["limit"] == RESULT_DEFAULT_LIMIT
         assert body["limit"] != DEFAULT_LIMIT
 
-    def test_limit_at_the_result_max_is_accepted(
+    def test_limit_at_the_word_result_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
+        """10,000, not the agent reads' 1000: the web app reads a whole book (#1031)."""
         assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
         resp = _alignment_scores(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+            client, regular_token1, assessment_id, limit=WORD_RESULT_MAX_LIMIT
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+        assert resp.json()["limit"] == WORD_RESULT_MAX_LIMIT == 10_000
 
-    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+    def test_limit_above_the_word_result_max_is_a_422_not_a_clamp(
         self, client, regular_token1, db_session, group1_version
     ):
         assessment_id = self._aligned(db_session, group1_version, [("GEN 1:1", "a")])
         resp = _alignment_scores(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=WORD_RESULT_MAX_LIMIT + 1
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
@@ -8751,10 +8768,10 @@ class TestAlignmentScoresContract:
             "include_total",
         }
 
-    def test_the_route_uses_the_result_pagination_dependency(self):
+    def test_the_route_uses_the_word_result_pagination_dependency(self):
         route = _route("get_assessment_alignment_scores")
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is WordResultPaginationParams
             for dependency in route.dependant.dependencies
         )
 
@@ -9918,14 +9935,25 @@ class TestMissingWordsPage:
             )
         assert seen == [f"w{n:02d}" for n in range(7)]
 
-    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+    def test_limit_at_the_word_result_max_is_accepted(
         self, client, regular_token1, db_session, group1_version
     ):
-        """The client currently defeats pagination with ``page_size=5_000_000``. The
-        ceiling is the shared result bound and is not widened to suit one call site."""
+        """10,000, enough for a whole book: Genesis is 8,205 rows on one staging
+        assessment (#1031)."""
         assessment_id = self._aligned(db_session, group1_version, 1)
         resp = _missing_words(
-            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+            client, regular_token1, assessment_id, limit=WORD_RESULT_MAX_LIMIT
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == WORD_RESULT_MAX_LIMIT == 10_000
+
+    def test_limit_above_the_word_result_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A ceiling still exists: the v3 client sent ``page_size=5_000_000``."""
+        assessment_id = self._aligned(db_session, group1_version, 1)
+        resp = _missing_words(
+            client, regular_token1, assessment_id, limit=WORD_RESULT_MAX_LIMIT + 1
         )
         assert resp.status_code == 422, resp.text
         assert _error_code(resp) == "VALIDATION_ERROR"
@@ -10046,10 +10074,10 @@ class TestMissingWordsContract:
         cannot reach this limit with peers that actually exist."""
         assert MAX_AGAINST_ASSESSMENTS >= 1000
 
-    def test_the_route_uses_the_result_pagination_dependency(self):
+    def test_the_route_uses_the_word_result_pagination_dependency(self):
         route = _route("get_assessment_missing_words")
         assert any(
-            dependency.call is ResultPaginationParams
+            dependency.call is WordResultPaginationParams
             for dependency in route.dependant.dependencies
         )
 
