@@ -25,6 +25,10 @@ from api_v4.pagination import (
     CATALOG_MAX_LIMIT,
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    RESULT_MAX_LIMIT,
+    TEXT_SEARCH_MAX_LIMIT,
+    VERSE_MAX_LIMIT,
+    WORD_RESULT_MAX_LIMIT,
     PaginationParams,
     V4Page,
     page_total,
@@ -257,8 +261,10 @@ def test_every_paginated_v4_route_declares_include_total():
 
 def test_each_list_publishes_its_own_maximum():
     """The catalog lists went to 10,000 for the web app's sync (#1030) on their own
-    params class, so the lists still on the shared one keep 100. Pinned against the
-    real app's OpenAPI, which is what a client reads."""
+    params class, so the lists still on the shared one keep 100. The per-verse reads the
+    app reads by the book went to 10,000 the same way (#1031), and the agent reads and
+    text search, which share or sit beside them, keep 1000. Pinned against the real
+    app's OpenAPI, which is what a client reads."""
     spec = create_v4_app(configure_cors=lambda _app: None).openapi()
 
     def maximum(path):
@@ -274,6 +280,20 @@ def test_each_list_publishes_its_own_maximum():
         "/users/me/groups",
     ):
         assert maximum(path) == MAX_LIMIT == 100, path
+    for path in (
+        "/assessments/{assessment_id}/missing-words",
+        "/assessments/{assessment_id}/alignment-scores",
+    ):
+        assert maximum(path) == WORD_RESULT_MAX_LIMIT == 10_000, path
+    assert maximum("/revisions/{revision_id}/verses") == VERSE_MAX_LIMIT == 10_000
+    for path in (
+        "/assessments/{assessment_id}/critique-issues",
+        "/assessments/{assessment_id}/translations",
+    ):
+        assert maximum(path) == RESULT_MAX_LIMIT == 1000, path
+    assert (
+        maximum("/revisions/{revision_id}/text-search") == TEXT_SEARCH_MAX_LIMIT == 1000
+    )
 
 
 class _CountingSession:

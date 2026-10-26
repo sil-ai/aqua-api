@@ -55,10 +55,11 @@ whose client needs more defines its own params dependency rather than raising th
 shared cap, so the change cannot widen another list's.
 
 :class:`ResultPaginationParams` is the first list to take that route (#893). It
-subclasses this one with a 100/1000 policy for the verse-level *result* reads, and
+subclasses this one with a 100/1000 policy, now used only by the agent result reads.
 :class:`BulkResultPaginationParams` (#1010) is its 100/3000 sibling for the result reads
-a client reads whole.
-:class:`VersePaginationParams` (#892) is the second, with a 200/1000
+a client reads whole, and :class:`WordResultPaginationParams` (#1031) its 100/10,000
+sibling for the two word-keyed reads (``/missing-words``, ``/alignment-scores``).
+:class:`VersePaginationParams` (#892) is the second, with a 200/10,000
 policy for the verse *text* read. :class:`TextSearchPaginationParams` (#893) is the
 third, with a 10/1000 policy for the text search — the *smallest* default on the
 surface, and the one that shows the pattern is about matching consumers rather than
@@ -181,11 +182,17 @@ RESULT_DEFAULT_LIMIT = 100
 #: unusually thin *because* v3 never populated the text fields; if a later read serves
 #: verse text, rows reach ~700-1000 bytes and a 5000-row page becomes 3-5 MB. Sizing
 #: the ceiling against the thin row would lock in a number to regret.
+#:
+#: Only the agent reads (critique issues, translations) still use it. Every other result
+#: read has since moved to a ceiling sized to how its client reads it:
+#: :data:`RESULT_BULK_MAX_LIMIT`, :data:`WORD_RESULT_MAX_LIMIT` and
+#: :data:`NGRAM_MAX_LIMIT`. An agent run is one chapter, so its result sets are smaller
+#: than one default page and nothing asks for more.
 RESULT_MAX_LIMIT = 1000
 
 
 class ResultPaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the verse-level result reads: 100 by default, 1000 max.
+    """``limit`` / ``offset`` for the agent result reads: 100 by default, 1000 max.
 
     Consumed exactly like the shared params — ``page: ResultPaginationParams = Depends()``
     — and interchangeable with them at :meth:`V4Page.create`, which is why this subclasses
@@ -243,8 +250,9 @@ class ResultPaginationParams(PaginationParams):
 #: This gives up the caution :data:`RESULT_MAX_LIMIT` records (a ceiling is a one-way
 #: door, and a verse row may one day carry text). That was a guard against a row weight
 #: nothing serves today: at ~200 bytes a row, a full 3000-row page is ~600 KB. The
-#: decision was made for #1010 with the one client still in development. The alignment
-#: and agent reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole.
+#: decision was made for #1010 with the one client still in development. The agent
+#: reads keep :data:`RESULT_MAX_LIMIT`, since nothing there is read whole. The two
+#: word-keyed reads have their own, larger ceiling, :data:`WORD_RESULT_MAX_LIMIT`.
 RESULT_BULK_MAX_LIMIT = 3000
 
 
@@ -287,6 +295,64 @@ class BulkResultPaginationParams(PaginationParams):
         self.include_total: bool = include_total
 
 
+#: Hard maximum page size for the two word-keyed result reads, ``/missing-words`` and
+#: ``/alignment-scores``; above this is a 422, not a clamp.
+#:
+#: 10,000 so the web app reads a whole book in one request, as it does on v3 (#1031).
+#: v3 returns both reads whole, with no paging at all. A row here is keyed by word, not
+#: verse, so a book is not bounded by its verse count the way
+#: :data:`RESULT_BULK_MAX_LIMIT` is: missing words for Genesis on one staging assessment
+#: is 8,205 rows. Each v4 request has a large fixed cost (0.52 s at ``limit=1`` for that
+#: read, 0.66 s at 1000), so at a ceiling of 1000 that book took 9 requests and 2.42 s
+#: against v3's 1.80 s. Measured on staging on 26 October 2026.
+#:
+#: These rows are heavier than ``/results``': an alignment-score row carries the verse
+#: and reference text, and a missing-word row one target per peer. No full page has been
+#: measured. v3 has always sent the whole filtered set in one response, which is larger
+#: than any one page here. The default stays at :data:`RESULT_DEFAULT_LIMIT`, so only a
+#: client that asks for a big page gets one.
+WORD_RESULT_MAX_LIMIT = 10_000
+
+
+class WordResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the word-keyed result reads: 100 by default, 10,000 max.
+
+    Used by ``GET /v4/assessments/{id}/missing-words`` and
+    ``GET /v4/assessments/{id}/alignment-scores``. :class:`ResultPaginationParams` with
+    a higher ceiling, :data:`WORD_RESULT_MAX_LIMIT`, so the agent reads that keep that
+    class are not widened. ``super().__init__`` is not called, for the reason
+    :class:`ResultPaginationParams` gives.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            RESULT_DEFAULT_LIMIT,
+            ge=1,
+            le=WORD_RESULT_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
+                f"{WORD_RESULT_MAX_LIMIT} (out-of-range values are rejected with 422, "
+                f"not clamped). A client that reads a whole book should send the "
+                f"maximum."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+        include_total: bool = _include_total_query(),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+        self.include_total: bool = include_total
+
+
 #: Default page size for the verses read. 200 rather than the results read's 100 because
 #: the request this endpoint most often serves is *one chapter* — v3's ``GET /chapter``
 #: is the second-busiest verse endpoint in the one known client — and the longest chapter
@@ -294,24 +360,28 @@ class BulkResultPaginationParams(PaginationParams):
 #: whole unit across two pages for no reason; 200 covers every chapter in the canon in a
 #: single default-sized page.
 VERSE_DEFAULT_LIMIT = 200
-#: Hard maximum page size for the verses read; above this is a 422, not a clamp. 1000
-#: matches both the result reads' ceiling and
-#: :data:`api_v4.schemas.bible.MAX_VREFS`, so a caller who asks for the maximum number of
-#: verse references can receive all of them in one page and there is a single number to
-#: remember across the verse-level surface.
+#: Hard maximum page size for the verses read; above this is a 422, not a clamp.
 #:
-#: Not larger, and this is the read the shared module docstring's warning was written
-#: about: a result row is ~194 bytes *because* v3 never populated its text fields, while
-#: a verse row carries the verse itself. Measured whole-revision exports run 250 KB for a
-#: gospel to 9.4 MB for a full Bible — and size tracks script and language far more than
-#: verse count, since one measured revision has 21% fewer verses than another and is 2.4x
-#: larger. At the worst measured density a 1000-row page is well under a megabyte; at
-#: 5000 it would not be. Size nothing here off verse counts.
-VERSE_MAX_LIMIT = 1000
+#: 10,000 so the web app reads a whole book in one request, as it does on v3 (#1031).
+#: Each v4 request has a fixed cost (0.29 s at ``limit=1`` for Psalms, 0.40 s at 1000),
+#: so at a ceiling of 1000 Psalms took 3 requests and 0.57 s against v3's 0.32 s.
+#: Measured on staging on 26 October 2026. 10,000 rather than 3,000 (Psalms is 2,527
+#: verses) so the verse-level reads the app reads whole share one number.
+#:
+#: A verse row carries the verse text, so page size tracks script and language more than
+#: verse count. Measured whole-revision exports run 250 KB for a gospel to 9.4 MB for a
+#: full Bible, so a 10,000-row page can reach about 3 MB. v3's ``/text`` sends a whole
+#: revision in one response, and has for years, so this is still tighter than v3. The
+#: default stays at :data:`VERSE_DEFAULT_LIMIT`.
+#:
+#: Not tied to :data:`api_v4.schemas.bible.MAX_VREFS`, which stays at 1000 because it is
+#: bounded by URL length, not page size. What matters is that a full ``only_vrefs`` list
+#: fits in one page, and it does.
+VERSE_MAX_LIMIT = 10_000
 
 
 class VersePaginationParams(PaginationParams):
-    """``limit`` / ``offset`` for the verses read: 200 by default, 1000 max.
+    """``limit`` / ``offset`` for the verses read: 200 by default, 10,000 max.
 
     Consumed as ``page: VersePaginationParams = Depends()`` and interchangeable with the
     other two at :meth:`V4Page.create`, for the reason
@@ -365,8 +435,8 @@ class VersePaginationParams(PaginationParams):
 TEXT_SEARCH_DEFAULT_LIMIT = 10
 #: Hard maximum page size for the text search; above this is a 422, not a clamp. 1000 is
 #: v3's own ``le=1000`` on this endpoint, unchanged, so nothing a v3 caller can ask for is
-#: lost — and it is the same ceiling the result and verse reads carry, which keeps one
-#: number to remember across the whole verse-level surface.
+#: lost. The verse read went to 10,000 (#1031) because the web app reads a whole book of
+#: it at once. A search page is read by a person, so nothing asks for that here.
 TEXT_SEARCH_MAX_LIMIT = 1000
 
 
