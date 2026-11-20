@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.30-alpine
     container_name: ${PROJECT_NAME:-aqua-api}-nginx
     ports:
       - "80:80"
